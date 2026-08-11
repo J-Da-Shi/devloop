@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devloop.local/schemas/agent-result.v1.schema.json",
+  "title": "DevLoop Agent Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "summary", "acceptanceCriteria", "risks"],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["succeeded", "blocked", "failed"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "status", "evidence"],
+        "properties": {
+          "criterion": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "not_verifiable"]
+          },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "blockedReason": {
+      "type": ["string", "null"]
+    }
+  }
+}

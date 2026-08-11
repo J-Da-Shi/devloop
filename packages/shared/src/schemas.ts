@@ -1,0 +1,77 @@
+import { z } from "zod";
+import { baseStrategySchema, deviceRoleSchema, taskStatusSchema } from "./domain.js";
+
+export const createProjectInputSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  path: z.string().trim().min(1).max(2048),
+  defaultBaseRef: z.string().trim().min(1).max(200).default("HEAD"),
+});
+
+export const createTaskInputSchema = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().trim().min(1).max(160),
+  goal: z.string().trim().min(1).max(8000),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20),
+  priority: z.number().int().min(0).max(100).default(50),
+});
+
+export const updateTaskInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(160).optional(),
+    goal: z.string().trim().min(1).max(8000).optional(),
+    acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20).optional(),
+    priority: z.number().int().min(0).max(100).optional(),
+    expectedVersion: z.number().int().nonnegative(),
+    idempotencyKey: z.string().uuid(),
+  })
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.goal !== undefined ||
+      value.acceptanceCriteria !== undefined ||
+      value.priority !== undefined,
+    "At least one editable field is required",
+  );
+
+export const taskCommandInputSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
+});
+
+export const confirmTaskInputSchema = taskCommandInputSchema.extend({
+  baseStrategy: baseStrategySchema.default("LATEST_ACCEPTED"),
+  baseRef: z.string().trim().min(1).max(200).default("HEAD"),
+});
+
+export const rejectRunInputSchema = taskCommandInputSchema.extend({
+  feedback: z.string().trim().min(1).max(4000),
+});
+
+export const createPairingSessionInputSchema = z.object({
+  externalBaseUrl: z.string().url().optional(),
+});
+
+export const pairDeviceInputSchema = z.object({
+  code: z.string().regex(/^\d{6}$/),
+  name: z.string().trim().min(1).max(80),
+});
+
+export const updateDeviceInputSchema = z.object({
+  role: deviceRoleSchema,
+  expectedVersion: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
+});
+
+export const taskQuerySchema = z.object({
+  status: taskStatusSchema.optional(),
+  projectId: z.string().uuid().optional(),
+});
+
+export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
+export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
+export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
+export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;
+export type RejectRunInput = z.infer<typeof rejectRunInputSchema>;
+export type PairDeviceInput = z.infer<typeof pairDeviceInputSchema>;
+export type UpdateDeviceInput = z.infer<typeof updateDeviceInputSchema>;

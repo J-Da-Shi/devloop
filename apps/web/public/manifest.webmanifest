@@ -1,0 +1,18 @@
+{
+  "name": "DevLoop 本地开发工作台",
+  "short_name": "DevLoop",
+  "description": "查看和管理本机 Agent 的开发任务与执行状态",
+  "start_url": "/status",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/devloop-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
