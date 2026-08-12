@@ -57,6 +57,7 @@ export interface Task {
   id: string;
   projectId: string;
   projectName: string;
+  targetBranch: string;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -74,6 +75,7 @@ export interface TaskRevision {
   taskId: string;
   revision: number;
   specHash: string;
+  targetBranch: string;
   baseRef: string;
   baseStrategy: BaseStrategy;
   confirmedBaseCommit: string | null;
@@ -84,6 +86,7 @@ export interface TaskRun {
   id: string;
   taskId: string;
   taskRevisionId: string;
+  targetBranch: string;
   runner: string;
   status: RunStatus;
   baseCommit: string | null;
@@ -110,6 +113,8 @@ export interface RunApplicationResult {
   branch: string;
   previousCommit: string;
   currentCommit: string;
+  branchCreated: boolean;
+  workingTreeUpdated: boolean;
 }
 
 export interface WorkerState {

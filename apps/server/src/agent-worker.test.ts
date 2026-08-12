@@ -74,6 +74,18 @@ class ControlledGitService {
   }> = [];
   readonly committed: Array<{ worktreePath: string; message: string }> = [];
 
+  async resolveTargetBase(input: {
+    repositoryPath: string;
+    targetBranch: string;
+    fallbackRef: string;
+  }): Promise<{ targetBranch: string; baseCommit: string; branchExists: boolean }> {
+    return {
+      targetBranch: input.targetBranch,
+      baseCommit: input.targetBranch === "main" ? "base-commit" : "fallback-commit",
+      branchExists: input.targetBranch === "main",
+    };
+  }
+
   async createWorktree(input: (typeof this.created)[number]): Promise<void> {
     this.created.push(input);
   }
@@ -119,6 +131,7 @@ const createReadyTask = (
 ) => {
   const draft = repository.createTask({
     projectId,
+    targetBranch: "main",
     title,
     goal: `完成 ${title}`,
     acceptanceCriteria: ["任务被 AgentWorker 正确领取"],
@@ -316,6 +329,8 @@ describe("AgentWorker", () => {
     expect(run).toMatchObject({
       runner: "codex",
       runnerVersion: "codex-cli test",
+      targetBranch: "main",
+      baseCommit: "base-commit",
       resultCommit: "result-commit",
       branchName: `devloop/run/${runId}`,
     });

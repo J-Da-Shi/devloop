@@ -161,11 +161,19 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (existing) {
       throw new HttpError(409, "该项目已经注册", "ALREADY_EXISTS");
     }
+    const defaultBase = await gitService.resolveTargetBase({
+      repositoryPath: git.path,
+      targetBranch: input.defaultBaseRef,
+      fallbackRef: input.defaultBaseRef,
+    });
+    if (!defaultBase.branchExists) {
+      throw new HttpError(400, "默认分支必须是已存在的本地分支", "INVALID_DEFAULT_BRANCH");
+    }
     const result = repository.createProject({
       name: input.name,
       path: git.path,
-      defaultBaseRef: input.defaultBaseRef,
-      headCommit: git.headCommit,
+      defaultBaseRef: defaultBase.targetBranch,
+      headCommit: defaultBase.baseCommit,
     });
     publish(eventBus, result);
     return reply.code(201).send({ project: result.value });
@@ -189,7 +197,16 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   app.post("/api/tasks", async (request, reply) => {
     const identity = requireRole(request, repository, "editor");
     const input = createTaskInputSchema.parse(request.body);
-    const result = repository.createTask(input);
+    const project = repository.listProjects().find((item) => item.id === input.projectId);
+    if (!project) {
+      throw new HttpError(404, "项目不存在", "NOT_FOUND");
+    }
+    const targetBase = await gitService.resolveTargetBase({
+      repositoryPath: project.path,
+      targetBranch: input.targetBranch,
+      fallbackRef: project.defaultBaseRef,
+    });
+    const result = repository.createTask({ ...input, targetBranch: targetBase.targetBranch });
     publish(eventBus, result);
     const task = autoQueueTask(result.value, identity.id);
     return reply.code(201).send({ task });
@@ -199,6 +216,19 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     const identity = requireRole(request, repository, "editor");
     const { taskId } = taskParamSchema.parse(request.params);
     const input = updateTaskInputSchema.parse(request.body);
+    if (input.targetBranch) {
+      const task = repository.getTask(taskId);
+      const project = repository.listProjects().find((item) => item.id === task?.projectId);
+      if (!task || !project) {
+        throw new HttpError(404, "任务或项目不存在", "NOT_FOUND");
+      }
+      const targetBase = await gitService.resolveTargetBase({
+        repositoryPath: project.path,
+        targetBranch: input.targetBranch,
+        fallbackRef: project.defaultBaseRef,
+      });
+      input.targetBranch = targetBase.targetBranch;
+    }
     const result = repository.updateDraftTask(taskId, identity.id, input);
     publish(eventBus, result);
     const task = autoQueueTask(result.value, identity.id);
@@ -270,6 +300,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     const context = repository.getRunApplicationContext(runId, input.expectedVersion);
     const application = await gitService.applyCommitToWorkingTree({
       repositoryPath: context.projectPath,
+      targetBranch: context.targetBranch,
+      baseCommit: context.baseCommit,
       resultCommit: context.resultCommit,
     });
     const result = repository.recordRunApplication(

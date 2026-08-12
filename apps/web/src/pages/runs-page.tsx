@@ -86,6 +86,13 @@ export function RunsPage() {
                 </code>
               </span>
               <span>
+                <small>目标分支</small>
+                <code>
+                  <GitBranch size={14} />
+                  {details.data.run.targetBranch}
+                </code>
+              </span>
+              <span>
                 <small>结果分支</small>
                 <code>
                   <GitBranch size={14} />

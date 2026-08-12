@@ -64,6 +64,7 @@ const mapTask = (row: TaskRow, projectName: string): Task => ({
   id: row.id,
   projectId: row.projectId,
   projectName,
+  targetBranch: row.targetBranch,
   title: row.title,
   goal: row.goal,
   acceptanceCriteria: parseStringArray(row.acceptanceCriteriaJson),
@@ -80,6 +81,7 @@ const mapRun = (row: TaskRunRow): TaskRun => ({
   id: row.id,
   taskId: row.taskId,
   taskRevisionId: row.taskRevisionId,
+  targetBranch: row.targetBranch,
   runner: row.runner,
   status: row.status,
   baseCommit: row.baseCommit,
@@ -137,12 +139,15 @@ export interface ClaimedTask {
   task: Task;
   run: TaskRun;
   projectPath: string;
+  projectDefaultBaseRef: string;
   goal: string;
   acceptanceCriteria: string[];
 }
 
 export interface RunApplicationContext {
   projectPath: string;
+  targetBranch: string;
+  baseCommit: string;
   resultCommit: string;
 }
 
@@ -227,6 +232,7 @@ export class DevLoopRepository {
         .values({
           id,
           projectId: input.projectId,
+          targetBranch: input.targetBranch,
           title: input.title,
           goal: input.goal,
           acceptanceCriteriaJson: JSON.stringify(input.acceptanceCriteria),
@@ -249,6 +255,7 @@ export class DevLoopRepository {
     taskId: string,
     deviceId: string,
     input: {
+      targetBranch?: string | undefined;
       title?: string | undefined;
       goal?: string | undefined;
       acceptanceCriteria?: string[] | undefined;
@@ -273,6 +280,7 @@ export class DevLoopRepository {
         const row = this.handle.db
           .update(tasks)
           .set({
+            targetBranch: input.targetBranch ?? current.targetBranch,
             title: input.title ?? current.title,
             goal: input.goal ?? current.goal,
             acceptanceCriteriaJson:
@@ -328,7 +336,8 @@ export class DevLoopRepository {
           goal: current.goal,
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
           baseStrategy: input.baseStrategy,
-          baseRef: input.baseRef,
+          baseRef: current.targetBranch,
+          targetBranch: current.targetBranch,
         };
         const specJson = JSON.stringify(spec);
         this.handle.db
@@ -339,7 +348,8 @@ export class DevLoopRepository {
             revision: revisionNumber,
             specJson,
             specHash: hash(specJson),
-            baseRef: input.baseRef,
+            targetBranch: current.targetBranch,
+            baseRef: current.targetBranch,
             baseStrategy: input.baseStrategy,
             confirmedBaseCommit: project.integrationCommit,
             createdFrom: current.activeRevisionId ?? "draft",
@@ -373,12 +383,11 @@ export class DevLoopRepository {
     if (current.status !== "DRAFT" || current.priority !== 100) {
       return null;
     }
-    const project = this.requireProjectRow(current.projectId);
     return this.confirmTask(taskId, deviceId, {
       expectedVersion: current.version,
       idempotencyKey: randomUUID(),
       baseStrategy: "LATEST_ACCEPTED",
-      baseRef: project.defaultBaseRef,
+      baseRef: current.targetBranch,
     });
   }
 
@@ -450,6 +459,7 @@ export class DevLoopRepository {
       const runInputHash = hash(
         JSON.stringify({
           taskRevisionId: revision.id,
+          targetBranch: revision.targetBranch,
           baseCommit,
           runner,
           specHash: revision.specHash,
@@ -461,6 +471,7 @@ export class DevLoopRepository {
           id: runId,
           taskId: current.id,
           taskRevisionId: revision.id,
+          targetBranch: revision.targetBranch,
           runner,
           status: "CLAIMED",
           baseCommit,
@@ -513,6 +524,7 @@ export class DevLoopRepository {
           task: mapTask(taskRow, project.name),
           run: mapRun(runRow),
           projectPath: project.path,
+          projectDefaultBaseRef: project.defaultBaseRef,
           goal: current.goal,
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
         },
@@ -545,6 +557,57 @@ export class DevLoopRepository {
         runId,
         status: row.status,
         message: "独立 Git Worktree 已准备完成",
+      });
+      return { value: mapRun(row), events: [event], replayed: false };
+    })();
+  }
+
+  setRunBaseCommit(
+    runId: string,
+    executionToken: string,
+    input: { targetBranch: string; baseCommit: string },
+  ): EventfulResult<TaskRun> {
+    return this.handle.sqlite.transaction(() => {
+      const current = this.requireRunRow(runId);
+      if (current.executionToken !== executionToken) {
+        throw new Error("当前 Run 的执行令牌已经失去基础 Commit 所有权");
+      }
+      const revision = this.handle.db
+        .select()
+        .from(taskRevisions)
+        .where(eq(taskRevisions.id, current.taskRevisionId))
+        .get();
+      if (!revision) {
+        throw new Error("Run revision not found");
+      }
+      const runInputHash = hash(
+        JSON.stringify({
+          taskRevisionId: revision.id,
+          targetBranch: input.targetBranch,
+          baseCommit: input.baseCommit,
+          runner: current.runner,
+          specHash: revision.specHash,
+        }),
+      );
+      const row = this.handle.db
+        .update(taskRuns)
+        .set({ targetBranch: input.targetBranch, baseCommit: input.baseCommit, runInputHash })
+        .where(and(eq(taskRuns.id, runId), eq(taskRuns.executionToken, executionToken)))
+        .returning()
+        .get();
+      if (!row) {
+        throw new Error("当前 Run 的执行令牌已经失去基础 Commit 所有权");
+      }
+      this.insertRunEvent(
+        runId,
+        "run.base_resolved",
+        `执行基线已解析：${input.baseCommit.slice(0, 12)}`,
+        { baseCommit: input.baseCommit, targetBranch: input.targetBranch },
+      );
+      const event = this.insertDomainEvent("run", runId, "run.step_changed", {
+        runId,
+        status: row.status,
+        message: "目标分支执行基线已解析",
       });
       return { value: mapRun(row), events: [event], replayed: false };
     })();
@@ -744,22 +807,7 @@ export class DevLoopRepository {
       assertTaskTransition(currentTask.status, "COMPLETED");
       this.assertVersion(currentTask.version, expectedVersion);
       const project = this.requireProjectRow(currentTask.projectId);
-      if (project.integrationCommit !== currentRun.baseCommit) {
-        throw new Error("Project integration commit changed; reload before approving");
-      }
       const timestamp = now();
-      const resultCommit = currentRun.resultCommit ?? currentRun.baseCommit;
-      if (resultCommit) {
-        this.handle.db
-          .update(projects)
-          .set({
-            integrationCommit: resultCommit,
-            version: project.version + 1,
-            updatedAt: timestamp,
-          })
-          .where(and(eq(projects.id, project.id), eq(projects.version, project.version)))
-          .run();
-      }
       const taskRow = this.handle.db
         .update(tasks)
         .set({ status: "COMPLETED", version: currentTask.version + 1, updatedAt: timestamp })
@@ -804,11 +852,16 @@ export class DevLoopRepository {
     if (!approval) {
       throw new Error("Only approved runs can be applied");
     }
-    if (!currentRun.resultCommit) {
-      throw new Error("Approved run has no result commit");
+    if (!currentRun.baseCommit || !currentRun.resultCommit) {
+      throw new Error("Approved run has no complete Git result range");
     }
     const project = this.requireProjectRow(currentTask.projectId);
-    return { projectPath: project.path, resultCommit: currentRun.resultCommit };
+    return {
+      projectPath: project.path,
+      targetBranch: currentRun.targetBranch,
+      baseCommit: currentRun.baseCommit,
+      resultCommit: currentRun.resultCommit,
+    };
   }
 
   recordRunApplication(
@@ -827,8 +880,10 @@ export class DevLoopRepository {
         this.getRunApplicationContext(runId, expectedVersion);
         const message =
           application.status === "applied"
-            ? `结果 Commit 已覆盖到当前项目分支 ${application.branch}`
-            : `当前项目分支 ${application.branch} 已包含结果 Commit`;
+            ? application.branchCreated
+              ? `目标分支 ${application.branch} 已创建并写入本次结果`
+              : `本次结果已写入目标分支 ${application.branch}`
+            : `目标分支 ${application.branch} 已包含本次结果`;
         this.insertRunEvent(runId, "run.applied", message, { ...application });
         const event = this.insertDomainEvent("run", runId, "run.applied", {
           runId,
@@ -878,6 +933,7 @@ export class DevLoopRepository {
           revision: revisionNumber,
           specJson,
           specHash: hash(specJson),
+          targetBranch: currentRevision.targetBranch,
           baseRef: currentRevision.baseRef,
           baseStrategy: currentRevision.baseStrategy,
           confirmedBaseCommit: project.integrationCommit,

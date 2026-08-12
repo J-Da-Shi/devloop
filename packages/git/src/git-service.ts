@@ -1,5 +1,6 @@
-import { access, mkdir, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 import type { RunApplicationResult } from "@devloop/shared";
 
@@ -30,14 +31,33 @@ export interface CommitWorktreeInput {
 
 export interface ApplyCommitInput {
   repositoryPath: string;
+  targetBranch: string;
+  baseCommit: string;
   resultCommit: string;
+}
+
+export interface ResolveTargetBaseInput {
+  repositoryPath: string;
+  targetBranch: string;
+  fallbackRef: string;
+}
+
+export interface ResolvedTargetBase {
+  targetBranch: string;
+  baseCommit: string;
+  branchExists: boolean;
 }
 
 export type GitApplyErrorCode =
   | "WORKTREE_DIRTY"
   | "DETACHED_HEAD"
+  | "INVALID_BRANCH"
+  | "BRANCH_CHECKED_OUT"
+  | "TARGET_BRANCH_CHANGED"
+  | "BASE_COMMIT_MISSING"
   | "RESULT_COMMIT_MISSING"
-  | "NON_FAST_FORWARD"
+  | "INVALID_RESULT_RANGE"
+  | "APPLY_CONFLICT"
   | "APPLY_FAILED";
 
 export class GitApplyError extends Error {
@@ -118,6 +138,32 @@ export class GitService {
     return stdout;
   }
 
+  async resolveTargetBase(input: ResolveTargetBaseInput): Promise<ResolvedTargetBase> {
+    const repositoryPath = await realpath(input.repositoryPath);
+    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
+    const branchCommit = await this.resolveLocalBranch(repositoryPath, targetBranch);
+    if (branchCommit) {
+      return { targetBranch, baseCommit: branchCommit, branchExists: true };
+    }
+
+    const fallback = await execa(
+      this.executable,
+      ["-C", repositoryPath, "rev-parse", "--verify", `${input.fallbackRef}^{commit}`],
+      { reject: false },
+    );
+    if (fallback.exitCode !== 0) {
+      throw new GitApplyError(
+        "BASE_COMMIT_MISSING",
+        `目标分支 ${targetBranch} 不存在，且默认基线 ${input.fallbackRef} 无法解析。`,
+      );
+    }
+    return {
+      targetBranch,
+      baseCommit: fallback.stdout.trim(),
+      branchExists: false,
+    };
+  }
+
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const repositoryPath = await realpath(input.repositoryPath);
     await mkdir(dirname(input.worktreePath), { recursive: true });
@@ -178,82 +224,444 @@ export class GitService {
 
   async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {
     const repositoryPath = await realpath(input.repositoryPath);
-    const [{ stdout: branchOutput }, { stdout: headOutput }, commitCheck] = await Promise.all([
-      execa(this.executable, ["-C", repositoryPath, "branch", "--show-current"]),
-      execa(this.executable, ["-C", repositoryPath, "rev-parse", "HEAD"]),
+    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
+    const [baseCommitCheck, resultCommitCheck] = await Promise.all([
+      execa(
+        this.executable,
+        ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`],
+        { reject: false },
+      ),
       execa(
         this.executable,
         ["-C", repositoryPath, "cat-file", "-e", `${input.resultCommit}^{commit}`],
         { reject: false },
       ),
     ]);
-    const branch = branchOutput.trim();
-    const previousCommit = headOutput.trim();
-    if (!branch) {
+    if (baseCommitCheck.exitCode !== 0) {
       throw new GitApplyError(
-        "DETACHED_HEAD",
-        "当前项目处于 detached HEAD，请先切换到需要更新的本地分支。",
+        "BASE_COMMIT_MISSING",
+        "本次运行的基础 Commit 在当前项目中不存在，无法计算需要写回的文件。",
       );
     }
-    if (commitCheck.exitCode !== 0) {
+    if (resultCommitCheck.exitCode !== 0) {
       throw new GitApplyError(
         "RESULT_COMMIT_MISSING",
         "结果 Commit 在当前项目中不存在，无法应用到工作目录。",
       );
     }
-    if (await this.isAncestor(repositoryPath, input.resultCommit, previousCommit)) {
-      return {
-        status: "already_applied",
-        branch,
-        previousCommit,
-        currentCommit: previousCommit,
-      };
-    }
-    if (!(await this.isAncestor(repositoryPath, previousCommit, input.resultCommit))) {
+    if (!(await this.isAncestor(repositoryPath, input.baseCommit, input.resultCommit))) {
       throw new GitApplyError(
-        "NON_FAST_FORWARD",
-        "当前分支与结果 Commit 已产生分叉，无法安全快进，请先处理分支差异。",
+        "INVALID_RESULT_RANGE",
+        "结果 Commit 不是从本次运行的基础 Commit 产生，无法安全写回。",
       );
     }
 
-    const { stdout: status } = await execa(this.executable, [
+    const targetCommit = await this.resolveLocalBranch(repositoryPath, targetBranch);
+    const targetCheckoutPath = targetCommit
+      ? await this.getBranchCheckoutPath(repositoryPath, targetBranch)
+      : null;
+    const workingTreeUpdated = targetCheckoutPath
+      ? (await realpath(targetCheckoutPath)) === repositoryPath
+      : false;
+    if (targetCheckoutPath && !workingTreeUpdated) {
+      throw new GitApplyError(
+        "BRANCH_CHECKED_OUT",
+        `目标分支 ${targetBranch} 正在其他 Worktree 中检出：${targetCheckoutPath}`,
+      );
+    }
+
+    const previousCommit = targetCommit ?? input.baseCommit;
+    const changedPaths = await this.getChangedPaths(
+      repositoryPath,
+      input.baseCommit,
+      input.resultCommit,
+    );
+    if (!targetCommit) {
+      return this.updateTargetBranch({
+        repositoryPath,
+        branch: targetBranch,
+        previousCommit,
+        candidateCommit: input.resultCommit,
+        changedPaths,
+        branchCreated: true,
+        workingTreeUpdated: false,
+      });
+    }
+    if (changedPaths.length === 0) {
+      return {
+        status: "already_applied",
+        branch: targetBranch,
+        previousCommit,
+        currentCommit: previousCommit,
+        branchCreated: false,
+        workingTreeUpdated,
+      };
+    }
+    if (workingTreeUpdated) {
+      await this.assertPathsClean(repositoryPath, changedPaths);
+    }
+
+    if (
+      (await this.isAncestor(repositoryPath, input.resultCommit, previousCommit)) ||
+      (await this.hasAppliedResultMarker(repositoryPath, previousCommit, input.resultCommit)) ||
+      (await this.pathsMatchCommit(
+        repositoryPath,
+        previousCommit,
+        input.resultCommit,
+        changedPaths,
+      ))
+    ) {
+      return {
+        status: "already_applied",
+        branch: targetBranch,
+        previousCommit,
+        currentCommit: previousCommit,
+        branchCreated: false,
+        workingTreeUpdated,
+      };
+    }
+
+    let candidateCommit: string;
+    if (await this.isAncestor(repositoryPath, previousCommit, input.resultCommit)) {
+      candidateCommit = input.resultCommit;
+    } else {
+      candidateCommit = await this.createPatchedCommit(
+        repositoryPath,
+        previousCommit,
+        input.baseCommit,
+        input.resultCommit,
+      );
+    }
+
+    return this.updateTargetBranch({
+      repositoryPath,
+      branch: targetBranch,
+      previousCommit,
+      candidateCommit,
+      changedPaths,
+      branchCreated: false,
+      workingTreeUpdated,
+    });
+  }
+
+  private async createPatchedCommit(
+    repositoryPath: string,
+    previousCommit: string,
+    baseCommit: string,
+    resultCommit: string,
+  ): Promise<string> {
+    const { stdout: patch } = await execa(
+      this.executable,
+      [
+        "-C",
+        repositoryPath,
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-renames",
+        baseCommit,
+        resultCommit,
+      ],
+      { stripFinalNewline: false },
+    );
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "devloop-apply-"));
+    const temporaryWorktree = join(temporaryRoot, "worktree");
+    let worktreeCreated = false;
+    try {
+      const addWorktree = await execa(
+        this.executable,
+        ["-C", repositoryPath, "worktree", "add", "--detach", temporaryWorktree, previousCommit],
+        { reject: false },
+      );
+      if (addWorktree.exitCode !== 0) {
+        throw new GitApplyError(
+          "APPLY_FAILED",
+          `无法创建临时写回目录：${addWorktree.stderr.trim() || addWorktree.stdout.trim()}`,
+        );
+      }
+      worktreeCreated = true;
+
+      const apply = await execa(
+        this.executable,
+        ["-C", temporaryWorktree, "apply", "--3way", "--index", "--whitespace=nowarn", "-"],
+        { input: patch, reject: false },
+      );
+      if (apply.exitCode !== 0) {
+        const message = apply.stderr.trim() || apply.stdout.trim() || "Git 三方应用失败";
+        throw new GitApplyError(
+          "APPLY_CONFLICT",
+          `本次结果与目标分支文件存在冲突，未写入目标分支：${message}`,
+        );
+      }
+
+      const { stdout: resultSubject } = await execa(this.executable, [
+        "-C",
+        repositoryPath,
+        "show",
+        "-s",
+        "--format=%s",
+        resultCommit,
+      ]);
+      const commit = await execa(
+        this.executable,
+        [
+          "-c",
+          "user.name=DevLoop",
+          "-c",
+          "user.email=devloop@local",
+          "-c",
+          "commit.gpgSign=false",
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-C",
+          temporaryWorktree,
+          "commit",
+          "-m",
+          resultSubject.trim() || `DevLoop: 写回结果 ${resultCommit.slice(0, 12)}`,
+          "-m",
+          `DevLoop-Result: ${resultCommit}`,
+        ],
+        { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, reject: false },
+      );
+      if (commit.exitCode !== 0) {
+        throw new Error(commit.stderr.trim() || commit.stdout.trim() || "Git 提交失败");
+      }
+
+      const { stdout: candidateCommit } = await execa(this.executable, [
+        "-C",
+        temporaryWorktree,
+        "rev-parse",
+        "HEAD",
+      ]);
+      return candidateCommit.trim();
+    } catch (error) {
+      if (error instanceof GitApplyError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "未知 Git 错误";
+      throw new GitApplyError("APPLY_FAILED", `结果文件写回失败：${message}`);
+    } finally {
+      if (worktreeCreated) {
+        await execa(
+          this.executable,
+          ["-C", repositoryPath, "worktree", "remove", "--force", temporaryWorktree],
+          { reject: false },
+        );
+      }
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  private async updateTargetBranch(input: {
+    repositoryPath: string;
+    branch: string;
+    previousCommit: string;
+    candidateCommit: string;
+    changedPaths: string[];
+    branchCreated: boolean;
+    workingTreeUpdated: boolean;
+  }): Promise<RunApplicationResult> {
+    const branchRef = `refs/heads/${input.branch}`;
+    if (input.workingTreeUpdated) {
+      const [{ stdout: currentBranch }, { stdout: currentHead }] = await Promise.all([
+        execa(this.executable, ["-C", input.repositoryPath, "branch", "--show-current"]),
+        execa(this.executable, ["-C", input.repositoryPath, "rev-parse", "HEAD"]),
+      ]);
+      if (currentBranch.trim() !== input.branch || currentHead.trim() !== input.previousCommit) {
+        throw new GitApplyError(
+          "TARGET_BRANCH_CHANGED",
+          `写回期间目标分支 ${input.branch} 已发生变化，请刷新后重试。`,
+        );
+      }
+      await this.assertPathsClean(input.repositoryPath, input.changedPaths);
+      const merge = await execa(
+        this.executable,
+        ["-C", input.repositoryPath, "merge", "--ff-only", "--no-edit", input.candidateCommit],
+        { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, reject: false },
+      );
+      if (merge.exitCode !== 0) {
+        const message = merge.stderr.trim() || merge.stdout.trim() || "Git 快进失败";
+        throw new GitApplyError("APPLY_FAILED", `目标分支写入失败：${message}`);
+      }
+    } else {
+      const expectedOld = input.branchCreated ? "0".repeat(40) : input.previousCommit;
+      const update = await execa(
+        this.executable,
+        ["-C", input.repositoryPath, "update-ref", branchRef, input.candidateCommit, expectedOld],
+        { reject: false },
+      );
+      if (update.exitCode !== 0) {
+        const message = update.stderr.trim() || update.stdout.trim() || "Git 引用更新失败";
+        throw new GitApplyError(
+          "TARGET_BRANCH_CHANGED",
+          `目标分支 ${input.branch} 在写回期间发生变化：${message}`,
+        );
+      }
+    }
+
+    return {
+      status: "applied",
+      branch: input.branch,
+      previousCommit: input.previousCommit,
+      currentCommit: input.candidateCommit,
+      branchCreated: input.branchCreated,
+      workingTreeUpdated: input.workingTreeUpdated,
+    };
+  }
+
+  private async getChangedPaths(
+    repositoryPath: string,
+    baseCommit: string,
+    resultCommit: string,
+  ): Promise<string[]> {
+    const { stdout } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "diff",
+      "--name-only",
+      "-z",
+      "--no-renames",
+      baseCommit,
+      resultCommit,
+    ]);
+    return stdout.split("\0").filter(Boolean);
+  }
+
+  private async assertPathsClean(repositoryPath: string, paths: string[]): Promise<void> {
+    const { stdout } = await execa(this.executable, [
       "-C",
       repositoryPath,
       "status",
       "--porcelain=v1",
+      "-z",
       "--untracked-files=all",
+      "--",
+      ...paths,
     ]);
-    if (status.trim()) {
+    if (stdout.length > 0) {
       throw new GitApplyError(
         "WORKTREE_DIRTY",
-        "当前项目存在未提交或未跟踪文件，请先提交、暂存或移走这些内容后再覆盖。",
+        "本次结果涉及的文件存在未提交或未跟踪内容，请先提交、暂存或移走后再写入。",
       );
     }
+  }
 
-    const merge = await execa(
+  private async pathsMatchCommit(
+    repositoryPath: string,
+    currentCommit: string,
+    resultCommit: string,
+    paths: string[],
+  ): Promise<boolean> {
+    const result = await execa(
       this.executable,
-      ["-C", repositoryPath, "merge", "--ff-only", "--no-edit", input.resultCommit],
-      {
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-        reject: false,
-      },
+      [
+        "-C",
+        repositoryPath,
+        "diff",
+        "--quiet",
+        "--no-ext-diff",
+        currentCommit,
+        resultCommit,
+        "--",
+        ...paths,
+      ],
+      { reject: false },
     );
-    if (merge.exitCode !== 0) {
-      const message = merge.stderr.trim() || merge.stdout.trim() || "Git 快进失败";
-      throw new GitApplyError("APPLY_FAILED", `结果 Commit 应用失败：${message}`);
-    }
-    const { stdout: currentCommit } = await execa(this.executable, [
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === 1) return false;
+    throw new GitApplyError(
+      "APPLY_FAILED",
+      `无法比较当前项目与结果文件：${result.stderr.trim() || "Git 命令执行失败"}`,
+    );
+  }
+
+  private async hasAppliedResultMarker(
+    repositoryPath: string,
+    currentCommit: string,
+    resultCommit: string,
+  ): Promise<boolean> {
+    const { stdout } = await execa(this.executable, [
       "-C",
       repositoryPath,
-      "rev-parse",
-      "HEAD",
+      "log",
+      "-1",
+      "--format=%H",
+      "--fixed-strings",
+      `--grep=DevLoop-Result: ${resultCommit}`,
+      currentCommit,
     ]);
-    return {
-      status: "applied",
-      branch,
-      previousCommit,
-      currentCommit: currentCommit.trim(),
-    };
+    return stdout.trim().length > 0;
+  }
+
+  private async normalizeBranchName(repositoryPath: string, branch: string): Promise<string> {
+    if (branch === "HEAD") {
+      const { stdout } = await execa(this.executable, [
+        "-C",
+        repositoryPath,
+        "branch",
+        "--show-current",
+      ]);
+      const currentBranch = stdout.trim();
+      if (!currentBranch) {
+        throw new GitApplyError(
+          "DETACHED_HEAD",
+          "项目当前处于 detached HEAD，无法把 HEAD 解析为目标分支。",
+        );
+      }
+      return currentBranch;
+    }
+    if (branch.startsWith("refs/")) {
+      throw new GitApplyError(
+        "INVALID_BRANCH",
+        "目标分支只填写分支名，不要包含 refs/heads/ 前缀。",
+      );
+    }
+    const result = await execa(
+      this.executable,
+      ["-C", repositoryPath, "check-ref-format", "--branch", branch],
+      { reject: false },
+    );
+    if (result.exitCode !== 0) {
+      throw new GitApplyError(
+        "INVALID_BRANCH",
+        `目标分支名称无效：${result.stderr.trim() || result.stdout.trim() || branch}`,
+      );
+    }
+    return branch;
+  }
+
+  private async resolveLocalBranch(repositoryPath: string, branch: string): Promise<string | null> {
+    const result = await execa(
+      this.executable,
+      ["-C", repositoryPath, "rev-parse", "--verify", `refs/heads/${branch}^{commit}`],
+      { reject: false },
+    );
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  private async getBranchCheckoutPath(
+    repositoryPath: string,
+    branch: string,
+  ): Promise<string | null> {
+    const { stdout } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    const targetRef = `refs/heads/${branch}`;
+    let worktreePath: string | null = null;
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        worktreePath = line.slice("worktree ".length);
+      } else if (line === `branch ${targetRef}`) {
+        return worktreePath;
+      } else if (!line && worktreePath) {
+        worktreePath = null;
+      }
+    }
+    return null;
   }
 
   private async isAncestor(

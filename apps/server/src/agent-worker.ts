@@ -17,7 +17,7 @@ export interface AgentWorkerOptions {
   now?: () => number;
   available?: boolean;
   runnerVersion?: string | null;
-  gitService?: Pick<GitService, "createWorktree" | "commitWorktree">;
+  gitService?: Pick<GitService, "resolveTargetBase" | "createWorktree" | "commitWorktree">;
   worktreesPath?: string;
 }
 
@@ -152,7 +152,10 @@ export class AgentWorker {
     const emit = (event: RunnerEvent) => this.handleRunnerEvent(claimed.run.id, event);
 
     try {
-      const worktreePath = this.runner.id === "codex" ? await this.prepareWorkspace(claimed) : null;
+      const workspace =
+        this.runner.id === "codex"
+          ? await this.prepareWorkspace(claimed)
+          : { path: null, baseCommit: claimed.run.baseCommit };
       this.activeHandle = this.runner.start(
         {
           runId: claimed.run.id,
@@ -160,7 +163,7 @@ export class AgentWorker {
           title: claimed.task.title,
           goal: claimed.goal,
           acceptanceCriteria: claimed.acceptanceCriteria,
-          worktreePath,
+          worktreePath: workspace.path,
           outputSchemaPath: this.outputSchemaPath,
           signal: controller.signal,
         },
@@ -170,7 +173,11 @@ export class AgentWorker {
       const result = await this.activeHandle.result;
       const summary = formatRunnerResult(result);
       if (result.outcome === "succeeded") {
-        const resultCommit = await this.commitWorkspace(claimed, worktreePath);
+        const resultCommit = await this.commitWorkspace(
+          claimed,
+          workspace.path,
+          workspace.baseCommit,
+        );
         this.publish(
           this.repository.completeRun(claimed.run.id, summary, resultCommit ?? undefined),
         );
@@ -198,24 +205,33 @@ export class AgentWorker {
     this.publish(this.repository.setRunPhase(runId, status, event.type, event.message, event.data));
   }
 
-  private async prepareWorkspace(claimed: ClaimedTask): Promise<string | null> {
+  private async prepareWorkspace(
+    claimed: ClaimedTask,
+  ): Promise<{ path: string; baseCommit: string }> {
     if (this.runner.id !== "codex") {
-      return null;
+      throw new Error("只有 Codex 执行器需要准备 Git Worktree");
     }
     if (!this.options.gitService || !this.options.worktreesPath) {
       throw new Error("真实执行器缺少 Git Worktree 配置");
     }
-    if (!claimed.run.baseCommit) {
-      throw new Error("任务运行缺少基础 Commit，无法创建 Worktree");
-    }
-
     this.publish(
       this.repository.setRunPhase(
         claimed.run.id,
         "PREPARING",
         "runner.preparing",
-        "正在创建独立 Git Worktree",
+        `正在从目标分支 ${claimed.run.targetBranch} 准备独立 Git Worktree`,
       ),
+    );
+    const targetBase = await this.options.gitService.resolveTargetBase({
+      repositoryPath: claimed.projectPath,
+      targetBranch: claimed.run.targetBranch,
+      fallbackRef: claimed.projectDefaultBaseRef,
+    });
+    this.publish(
+      this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
+        targetBranch: targetBase.targetBranch,
+        baseCommit: targetBase.baseCommit,
+      }),
     );
     const worktreePath = resolve(this.options.worktreesPath, claimed.run.id);
     const branchName = `devloop/run/${claimed.run.id}`;
@@ -223,7 +239,7 @@ export class AgentWorker {
       repositoryPath: claimed.projectPath,
       worktreePath,
       branchName,
-      baseCommit: claimed.run.baseCommit,
+      baseCommit: targetBase.baseCommit,
     });
     this.publish(
       this.repository.setRunWorkspace(claimed.run.id, claimed.run.executionToken, {
@@ -231,15 +247,16 @@ export class AgentWorker {
         branchName,
       }),
     );
-    return worktreePath;
+    return { path: worktreePath, baseCommit: targetBase.baseCommit };
   }
 
   private async commitWorkspace(
     claimed: ClaimedTask,
     worktreePath: string | null,
+    baseCommit: string | null,
   ): Promise<string | null> {
     if (!worktreePath || !this.options.gitService) {
-      return claimed.run.baseCommit;
+      return baseCommit;
     }
     this.publish(
       this.repository.setRunPhase(

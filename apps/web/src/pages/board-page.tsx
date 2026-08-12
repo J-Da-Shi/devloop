@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Filter, Plus } from "lucide-react";
+import { Filter, GitBranch, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Task, TaskStatus } from "@devloop/shared";
 import { api, getDashboardRefetchInterval, queryKeys } from "../api.js";
@@ -20,7 +20,7 @@ const columns: TaskStatus[] = [
 
 export function BoardPage() {
   const [projectFilter, setProjectFilter] = useState("all");
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const dashboard = useQuery({
     queryKey: queryKeys.dashboard,
@@ -40,6 +40,10 @@ export function BoardPage() {
         (task) => projectFilter === "all" || task.projectId === projectFilter,
       ),
     [dashboard.data?.tasks, projectFilter],
+  );
+  const selectedTask = useMemo<Task | null>(
+    () => dashboard.data?.tasks.find((task) => task.id === selectedTaskId) ?? null,
+    [dashboard.data?.tasks, selectedTaskId],
   );
 
   if (dashboard.isPending) {
@@ -95,12 +99,16 @@ export function BoardPage() {
                         key={task.id}
                         type="button"
                         className="task-card"
-                        onClick={() => setSelectedTask(task)}
+                        onClick={() => setSelectedTaskId(task.id)}
                       >
                         <span className="task-card-project">{task.projectName}</span>
                         <strong>{task.title}</strong>
                         <p>{task.goal}</p>
                         <span className="task-card-meta">
+                          <span className="task-card-branch" title={task.targetBranch}>
+                            <GitBranch size={13} />
+                            <span>{task.targetBranch}</span>
+                          </span>
                           <span>分数 {task.priority}</span>
                           <time>{formatDateTime(task.updatedAt)}</time>
                         </span>
@@ -115,11 +123,11 @@ export function BoardPage() {
       </section>
 
       <TaskDialog
-        open={creating || Boolean(selectedTask)}
+        open={creating || Boolean(selectedTaskId)}
         onOpenChange={(open) => {
           if (!open) {
             setCreating(false);
-            setSelectedTask(null);
+            setSelectedTaskId(null);
           }
         }}
         task={selectedTask}

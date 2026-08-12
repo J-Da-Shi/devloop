@@ -920,8 +920,7 @@ code {
   border: 1px solid var(--border);
   border-radius: 50%;
   background:
-    radial-gradient(circle at center, rgba(17, 24, 39, 0.04) 0 35%, transparent 36%),
-    #ffffff;
+    radial-gradient(circle at center, rgba(17, 24, 39, 0.04) 0 35%, transparent 36%), #ffffff;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
@@ -1249,6 +1248,9 @@ code {
 }
 
 .dialog-content {
+  --text: #000000;
+  --text-soft: #000000;
+  --muted: #000000;
   position: fixed;
   top: 50%;
   left: 50%;
@@ -1260,8 +1262,8 @@ code {
   transform: translate(-50%, -50%);
   border: 1px solid rgba(15, 23, 42, 0.126);
   border-radius: 8px;
-  background: rgba(16, 16, 20, 0.94);
-  backdrop-filter: blur(22px);
+  background: #ffffff;
+  color: #000000;
   box-shadow:
     inset 0 1px rgba(15, 23, 42, 0.045),
     0 28px 80px rgba(15, 23, 42, 0.175);
@@ -1379,7 +1381,7 @@ code {
   width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: rgba(15, 23, 42, 0.0405);
+  background: #ffffff;
   color: var(--text);
   font-size: 13px;
   font-weight: 450;
@@ -1419,13 +1421,13 @@ code {
 .device-row select:focus {
   border-color: var(--primary);
   outline: 0;
-  background: rgba(15, 23, 42, 0.063);
+  background: #ffffff;
   box-shadow: 0 0 0 3px rgba(210, 255, 179, 0.1);
 }
 
 .field input::placeholder,
 .field textarea::placeholder {
-  color: rgba(15, 23, 42, 0.14);
+  color: #6b7280;
 }
 
 .field-error {
@@ -1587,15 +1589,29 @@ code {
 }
 
 .task-card-meta {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 11px;
 }
 
+.task-card-branch {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.task-card-branch > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .task-card-meta time {
+  grid-column: 1 / -1;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
@@ -2038,6 +2054,8 @@ code {
 }
 
 .toast {
+  --text: #000000;
+  --muted: #000000;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 52px;
@@ -2046,9 +2064,8 @@ code {
   padding: 7px 8px 7px 13px;
   border: 1px solid rgba(15, 23, 42, 0.126);
   border-radius: 7px;
-  background: #111827;
-  backdrop-filter: blur(18px);
-  color: var(--text);
+  background: #ffffff;
+  color: #000000;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
   font-size: 13px;
 }

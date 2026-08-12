@@ -86,7 +86,7 @@ export function ProjectsPage() {
               <input value={name} onChange={(event) => setName(event.target.value)} required />
             </label>
             <label className="field">
-              <span>默认基线</span>
+              <span>默认分支</span>
               <input
                 value={baseRef}
                 onChange={(event) => setBaseRef(event.target.value)}
@@ -141,7 +141,7 @@ export function ProjectsPage() {
                   <dd>{project.defaultBaseRef}</dd>
                 </div>
                 <div>
-                  <dt>Commit</dt>
+                  <dt>注册 Commit</dt>
                   <dd>
                     <code>{shortCommit(project.integrationCommit)}</code>
                   </dd>

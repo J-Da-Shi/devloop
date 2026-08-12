@@ -30,6 +30,7 @@ describe("DevLoopRepository 自动入队", () => {
     }).value;
     const draft = repository.createTask({
       projectId: project.id,
+      targetBranch: "main",
       title: "自动入队测试任务",
       goal: "验证满分草稿自动进入待执行",
       acceptanceCriteria: ["草稿生成不可变 Revision", "任务状态变为 READY"],
@@ -47,11 +48,12 @@ describe("DevLoopRepository 自动入队", () => {
     const queued = repository.autoQueueTask(updated.id, "local-desktop");
 
     expect(queued?.value.status).toBe("READY");
+    expect(queued?.value.targetBranch).toBe("main");
     expect(queued?.value.activeRevisionId).not.toBeNull();
     expect(queued?.events.map((event) => event.type)).toContain("task.status_changed");
   });
 
-  it("审核通过后记录结果已覆盖到当前项目", () => {
+  it("审核通过后记录结果已写入目标分支", () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "结果应用测试项目",
@@ -61,6 +63,7 @@ describe("DevLoopRepository 自动入队", () => {
     }).value;
     const draft = repository.createTask({
       projectId: project.id,
+      targetBranch: "feature/result-apply",
       title: "应用结果 Commit",
       goal: "验证审核后的结果应用事件",
       acceptanceCriteria: ["记录 run.applied 事件"],
@@ -74,6 +77,7 @@ describe("DevLoopRepository 自动入队", () => {
     });
     const claimed = repository.claimNextTask("codex");
     expect(claimed).not.toBeNull();
+    expect(claimed!.value.run.targetBranch).toBe("feature/result-apply");
     const completed = repository.completeRun(
       claimed!.value.run.id,
       "执行完成",
@@ -87,15 +91,19 @@ describe("DevLoopRepository 自动入队", () => {
     ).value;
     expect(repository.getRunApplicationContext(claimed!.value.run.id, approved.version)).toEqual({
       projectPath: project.path,
+      targetBranch: "feature/result-apply",
+      baseCommit: "base-commit",
       resultCommit: "result-commit",
     });
 
     const idempotencyKey = randomUUID();
     const application = {
       status: "applied" as const,
-      branch: "main",
+      branch: "feature/result-apply",
       previousCommit: "base-commit",
       currentCommit: "result-commit",
+      branchCreated: true,
+      workingTreeUpdated: false,
     };
     const recorded = repository.recordRunApplication(
       claimed!.value.run.id,
@@ -105,6 +113,7 @@ describe("DevLoopRepository 自动入队", () => {
       application,
     );
     expect(recorded.value).toEqual(application);
+    expect(repository.findProjectByPath(project.path)?.integrationCommit).toBe("base-commit");
     expect(recorded.events.map((event) => event.type)).toContain("run.applied");
     expect(repository.getRunEvents(claimed!.value.run.id).at(-1)?.type).toBe("run.applied");
 

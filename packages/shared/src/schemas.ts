@@ -7,8 +7,15 @@ export const createProjectInputSchema = z.object({
   defaultBaseRef: z.string().trim().min(1).max(200).default("HEAD"),
 });
 
+export const targetBranchSchema = z
+  .string()
+  .trim()
+  .min(1, "目标分支不能为空")
+  .max(200, "目标分支不能超过 200 个字符");
+
 export const createTaskInputSchema = z.object({
   projectId: z.string().uuid(),
+  targetBranch: targetBranchSchema,
   title: z.string().trim().min(1).max(160),
   goal: z.string().trim().min(1).max(8000),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20),
@@ -17,6 +24,7 @@ export const createTaskInputSchema = z.object({
 
 export const updateTaskInputSchema = z
   .object({
+    targetBranch: targetBranchSchema.optional(),
     title: z.string().trim().min(1).max(160).optional(),
     goal: z.string().trim().min(1).max(8000).optional(),
     acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20).optional(),
@@ -27,6 +35,7 @@ export const updateTaskInputSchema = z
   .refine(
     (value) =>
       value.title !== undefined ||
+      value.targetBranch !== undefined ||
       value.goal !== undefined ||
       value.acceptanceCriteria !== undefined ||
       value.priority !== undefined,

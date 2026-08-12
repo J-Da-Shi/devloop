@@ -24,6 +24,7 @@ export async function seedDevelopmentData(
 
   const draft = repository.createTask({
     projectId: projectResult.value.id,
+    targetBranch: git.branch,
     title: "完善手机端任务编辑",
     goal: "让已授权手机可以修改草稿任务，并清楚看到版本冲突和保存结果。",
     acceptanceCriteria: [
@@ -37,6 +38,7 @@ export async function seedDevelopmentData(
 
   const ready = repository.createTask({
     projectId: projectResult.value.id,
+    targetBranch: git.branch,
     title: "验证本地服务与移动端状态同步",
     goal: "跑通任务确认、Worker 领取、阶段事件推送和移动端审核入口。",
     acceptanceCriteria: [

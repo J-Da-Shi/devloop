@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, CornerDownLeft, GitMerge, Play, RotateCcw, Save, X } from "lucide-react";
+import { Check, CornerDownLeft, GitBranch, GitMerge, Play, RotateCcw, Save, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import { StatusBadge } from "./status-badge.js";
 
 const taskFormSchema = z.object({
   projectId: z.string().uuid("请选择项目"),
+  targetBranch: z.string().trim().min(1, "请输入目标分支").max(200, "分支名过长"),
   title: z.string().trim().min(1, "请输入任务标题").max(160, "标题不能超过 160 个字符"),
   goal: z.string().trim().min(1, "请输入任务目标").max(8_000, "目标内容过长"),
   criteriaText: z.string().trim().min(1, "请至少填写一条验收标准"),
@@ -55,16 +56,18 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     queryFn: () => api.run(task?.latestRunId ?? ""),
     enabled: Boolean(task?.latestRunId),
   });
-  const defaults = useMemo<TaskFormValues>(
-    () => ({
-      projectId: task?.projectId ?? projects[0]?.id ?? "",
+  const defaults = useMemo<TaskFormValues>(() => {
+    const projectId = task?.projectId ?? projects[0]?.id ?? "";
+    const project = projects.find((item) => item.id === projectId);
+    return {
+      projectId,
+      targetBranch: task?.targetBranch ?? project?.defaultBaseRef ?? "HEAD",
       title: task?.title ?? "",
       goal: task?.goal ?? "",
       criteriaText: task?.acceptanceCriteria.join("\n") ?? "",
       priority: task?.priority ?? 50,
-    }),
-    [projects, task],
-  );
+    };
+  }, [projects, task]);
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
     defaultValues: defaults,
@@ -90,6 +93,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       const acceptanceCriteria = splitCriteria(values.criteriaText);
       if (task) {
         return api.updateTask(task.id, {
+          targetBranch: values.targetBranch,
           title: values.title,
           goal: values.goal,
           acceptanceCriteria,
@@ -100,6 +104,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       }
       return api.createTask({
         projectId: values.projectId,
+        targetBranch: values.targetBranch,
         title: values.title,
         goal: values.goal,
         acceptanceCriteria,
@@ -132,7 +137,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
           expectedVersion: task.version,
           idempotencyKey,
           baseStrategy: "LATEST_ACCEPTED",
-          baseRef: project?.defaultBaseRef ?? "HEAD",
+          baseRef: task.targetBranch ?? project?.defaultBaseRef ?? "HEAD",
         });
       }
       if (action === "unconfirm") {
@@ -170,13 +175,15 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         approve: "执行结果已通过",
         apply:
           "application" in data && data.application.status === "already_applied"
-            ? "当前项目目录已经包含该结果"
-            : "结果已覆盖到当前项目目录",
+            ? `目标分支 ${data.application.branch} 已包含该结果`
+            : `结果已写入目标分支 ${"application" in data ? data.application.branch : targetBranch}`,
         reject: "审核意见已提交，任务将重新排队",
       };
       notify(messages[action]);
       setConfirmAction(null);
-      onOpenChange(false);
+      if (action !== "approve" && action !== "apply") {
+        onOpenChange(false);
+      }
     },
     onError: (error) => notify(error instanceof Error ? error.message : "操作失败", "danger"),
   });
@@ -188,6 +195,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const appliedToProject =
     runDetails.data?.events.some((event) => event.type === "run.applied") ?? false;
   const projectPath = projects.find((project) => project.id === task?.projectId)?.path;
+  const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
   const confirmCopy = {
     confirm: {
       title: "确认任务并加入队列？",
@@ -203,14 +211,14 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     },
     approve: {
       title: "通过本次执行结果？",
-      description: "任务将进入已完成状态，并推进 DevLoop 的集成基线。",
+      description: `任务将进入已完成状态，随后可把结果写入目标分支 ${targetBranch}。`,
       label: "通过结果",
       danger: false,
     },
     apply: {
-      title: "覆盖到当前项目目录？",
-      description: `仅在 ${projectPath ?? "当前项目"} 工作区干净且可以安全快进时执行。不会丢弃未提交内容，不满足条件时会停止。`,
-      label: "确认覆盖",
+      title: `写入目标分支 ${targetBranch}？`,
+      description: `DevLoop 会在 ${projectPath ?? "当前项目"} 中更新或创建该分支。仅当目标分支正在当前目录检出时才同步工作区文件；冲突时不会修改分支或目录。`,
+      label: "确认写入",
       danger: true,
     },
     reject: {
@@ -267,7 +275,18 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
               >
                 <label className="field">
                   <span>项目</span>
-                  <select disabled={Boolean(task) || !canEdit} {...form.register("projectId")}>
+                  <select
+                    disabled={Boolean(task) || !canEdit}
+                    {...form.register("projectId", {
+                      onChange: (event) => {
+                        const project = projects.find((item) => item.id === event.target.value);
+                        form.setValue("targetBranch", project?.defaultBaseRef ?? "HEAD", {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
+                      },
+                    })}
+                  >
                     <option value="">选择项目</option>
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
@@ -277,6 +296,19 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                   </select>
                   {form.formState.errors.projectId ? (
                     <small className="field-error">{form.formState.errors.projectId.message}</small>
+                  ) : null}
+                </label>
+                <label className="field">
+                  <span>目标分支</span>
+                  <input
+                    disabled={!canEdit}
+                    placeholder="例如 feature/mobile-editor"
+                    {...form.register("targetBranch")}
+                  />
+                  {form.formState.errors.targetBranch ? (
+                    <small className="field-error">
+                      {form.formState.errors.targetBranch.message}
+                    </small>
                   ) : null}
                 </label>
                 <label className="field">
@@ -339,6 +371,13 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
               </form>
             ) : (
               <div className="task-readonly">
+                <section>
+                  <h3>目标分支</h3>
+                  <code>
+                    <GitBranch size={15} />
+                    {task?.targetBranch}
+                  </code>
+                </section>
                 <section>
                   <h3>任务目标</h3>
                   <p>{task?.goal}</p>
@@ -422,13 +461,13 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 ) : null}
                 {task?.status === "COMPLETED" && runDetails.data ? (
                   <section className="apply-actions">
-                    <h3>当前项目目录</h3>
+                    <h3>目标分支</h3>
                     <InlineNotice tone={appliedToProject ? "success" : "info"}>
                       {appliedToProject
-                        ? "结果 Commit 已经应用到当前项目目录。"
+                        ? `本次 Run 结果已经写入 ${runDetails.data.run.targetBranch}。`
                         : isLocalEditor
-                          ? "结果 Commit 仍位于 DevLoop 分支，覆盖前会检查工作区和分支关系。"
-                          : "覆盖项目目录只能在 Mac 本机客户端执行。"}
+                          ? `写入时会更新或自动创建 ${runDetails.data.run.targetBranch}，不会切换当前分支。`
+                          : "写入目标分支只能在 Mac 本机客户端执行。"}
                     </InlineNotice>
                     {isLocalEditor && !appliedToProject && runDetails.data.run.resultCommit ? (
                       <div className="dialog-actions">
@@ -439,7 +478,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                           disabled={pending}
                         >
                           <GitMerge size={17} />
-                          覆盖到当前项目目录
+                          写入目标分支
                         </button>
                       </div>
                     ) : null}

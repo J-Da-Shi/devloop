@@ -195,6 +195,10 @@ export function StatusPage() {
                   <strong>{formatDateTime(currentRun.startedAt)}</strong>
                 </span>
                 <span>
+                  <small>目标分支</small>
+                  <code>{currentRun.targetBranch}</code>
+                </span>
+                <span>
                   <small>基础 Commit</small>
                   <code>{currentRun.baseCommit?.slice(0, 10) ?? "暂无"}</code>
                 </span>

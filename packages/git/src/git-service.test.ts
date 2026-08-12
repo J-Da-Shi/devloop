@@ -16,6 +16,166 @@ afterEach(async () => {
 });
 
 describe("GitService Worktree", () => {
+  it("解析目标分支时兼容 HEAD 并拒绝完整引用名", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-resolve-target-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "README.md"), "初始内容\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: headCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    const service = new GitService();
+
+    await expect(
+      service.resolveTargetBase({
+        repositoryPath,
+        targetBranch: "HEAD",
+        fallbackRef: "HEAD",
+      }),
+    ).resolves.toEqual({
+      targetBranch: "main",
+      baseCommit: headCommit.trim(),
+      branchExists: true,
+    });
+    await expect(
+      service.resolveTargetBase({
+        repositoryPath,
+        targetBranch: "refs/heads/main",
+        fallbackRef: "main",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_BRANCH" });
+  });
+
+  it("目标分支不存在时从运行基线自动创建并写入结果", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-create-target-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const worktreePath = join(root, "worktrees", "run-1");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "README.md"), "初始内容\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: baseCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    const service = new GitService();
+    await service.createWorktree({
+      repositoryPath,
+      worktreePath,
+      branchName: "devloop/run/create-target",
+      baseCommit: baseCommit.trim(),
+    });
+    await writeFile(join(worktreePath, "README.md"), "目标分支内容\n");
+    const resultCommit = await service.commitWorktree({
+      worktreePath,
+      message: "DevLoop: 创建目标分支",
+    });
+
+    const resolved = await service.resolveTargetBase({
+      repositoryPath,
+      targetBranch: "feature/new-target",
+      fallbackRef: "main",
+    });
+    expect(resolved).toEqual({
+      targetBranch: "feature/new-target",
+      baseCommit: baseCommit.trim(),
+      branchExists: false,
+    });
+
+    const application = await service.applyCommitToWorkingTree({
+      repositoryPath,
+      targetBranch: "feature/new-target",
+      baseCommit: resolved.baseCommit,
+      resultCommit,
+    });
+
+    expect(application).toEqual({
+      status: "applied",
+      branch: "feature/new-target",
+      previousCommit: baseCommit.trim(),
+      currentCommit: resultCommit,
+      branchCreated: true,
+      workingTreeUpdated: false,
+    });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("初始内容\n");
+    await expect(
+      execa("git", ["-C", repositoryPath, "show", "feature/new-target:README.md"]),
+    ).resolves.toMatchObject({ stdout: "目标分支内容" });
+  });
+
+  it("已有目标分支未检出时只更新分支引用", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-update-target-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const worktreePath = join(root, "worktrees", "run-1");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "README.md"), "初始内容\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: baseCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    await execa("git", ["-C", repositoryPath, "branch", "feature/existing", baseCommit.trim()]);
+    const service = new GitService();
+    await service.createWorktree({
+      repositoryPath,
+      worktreePath,
+      branchName: "devloop/run/update-target",
+      baseCommit: baseCommit.trim(),
+    });
+    await writeFile(join(worktreePath, "README.md"), "已有目标分支的新内容\n");
+    const resultCommit = await service.commitWorktree({
+      worktreePath,
+      message: "DevLoop: 更新已有目标分支",
+    });
+
+    const application = await service.applyCommitToWorkingTree({
+      repositoryPath,
+      targetBranch: "feature/existing",
+      baseCommit: baseCommit.trim(),
+      resultCommit,
+    });
+
+    expect(application).toMatchObject({
+      status: "applied",
+      branch: "feature/existing",
+      branchCreated: false,
+      workingTreeUpdated: false,
+      currentCommit: resultCommit,
+    });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("初始内容\n");
+    await expect(
+      execa("git", ["-C", repositoryPath, "show", "feature/existing:README.md"]),
+    ).resolves.toMatchObject({ stdout: "已有目标分支的新内容" });
+  });
+
   it("创建独立工作树并提交 Codex 产生的修改", async () => {
     const root = await mkdtemp(join(tmpdir(), "devloop-git-service-"));
     temporaryDirectories.push(root);
@@ -62,6 +222,8 @@ describe("GitService Worktree", () => {
 
     const application = await service.applyCommitToWorkingTree({
       repositoryPath,
+      targetBranch: "main",
+      baseCommit: baseCommit.trim(),
       resultCommit,
     });
     expect(application).toMatchObject({
@@ -72,7 +234,12 @@ describe("GitService Worktree", () => {
     });
     expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("Codex 修改后的内容\n");
     await expect(
-      service.applyCommitToWorkingTree({ repositoryPath, resultCommit }),
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
     ).resolves.toMatchObject({ status: "already_applied", currentCommit: resultCommit });
   });
 
@@ -111,8 +278,226 @@ describe("GitService Worktree", () => {
     await writeFile(join(repositoryPath, "README.md"), "本地未提交内容\n");
 
     await expect(
-      service.applyCommitToWorkingTree({ repositoryPath, resultCommit }),
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
     ).rejects.toMatchObject({ code: "WORKTREE_DIRTY" });
     expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("本地未提交内容\n");
+  });
+
+  it("当前分支已经前进时只写回本次结果涉及的文件", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-apply-diverged-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const worktreePath = join(root, "worktrees", "run-1");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "README.md"), "初始内容\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: baseCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    const service = new GitService();
+    await service.createWorktree({
+      repositoryPath,
+      worktreePath,
+      branchName: "devloop/run/diverged-test",
+      baseCommit: baseCommit.trim(),
+    });
+    await writeFile(join(worktreePath, "README.md"), "Codex 修改后的内容\n");
+    await writeFile(join(worktreePath, "AGENT.txt"), "Agent 新文件\n");
+    const resultCommit = await service.commitWorktree({
+      worktreePath,
+      message: "DevLoop: 分叉写回测试",
+    });
+
+    await writeFile(join(repositoryPath, "LOCAL.txt"), "主项目后续内容\n");
+    await execa("git", ["-C", repositoryPath, "add", "LOCAL.txt"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "主项目继续开发",
+    ]);
+    const { stdout: previousCommit } = await execa("git", [
+      "-C",
+      repositoryPath,
+      "rev-parse",
+      "HEAD",
+    ]);
+
+    const application = await service.applyCommitToWorkingTree({
+      repositoryPath,
+      targetBranch: "main",
+      baseCommit: baseCommit.trim(),
+      resultCommit,
+    });
+
+    expect(application).toMatchObject({
+      status: "applied",
+      branch: "main",
+      previousCommit: previousCommit.trim(),
+    });
+    expect(application.currentCommit).not.toBe(previousCommit.trim());
+    expect(application.currentCommit).not.toBe(resultCommit);
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("Codex 修改后的内容\n");
+    expect(await readFile(join(repositoryPath, "AGENT.txt"), "utf8")).toBe("Agent 新文件\n");
+    expect(await readFile(join(repositoryPath, "LOCAL.txt"), "utf8")).toBe("主项目后续内容\n");
+    await expect(
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
+    ).resolves.toMatchObject({
+      status: "already_applied",
+      currentCommit: application.currentCommit,
+    });
+  });
+
+  it("当前分支修改了同一文件的其他区域时保留双方改动", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-apply-merge-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const worktreePath = join(root, "worktrees", "run-1");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "settings.txt"), "标题=初始\n\n计数=1\n");
+    await execa("git", ["-C", repositoryPath, "add", "settings.txt"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: baseCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    const service = new GitService();
+    await service.createWorktree({
+      repositoryPath,
+      worktreePath,
+      branchName: "devloop/run/merge-test",
+      baseCommit: baseCommit.trim(),
+    });
+    await writeFile(join(worktreePath, "settings.txt"), "标题=初始\n\n计数=100\n");
+    const resultCommit = await service.commitWorktree({
+      worktreePath,
+      message: "DevLoop: 同文件合并测试",
+    });
+
+    await writeFile(join(repositoryPath, "settings.txt"), "标题=主项目新版\n\n计数=1\n");
+    await execa("git", ["-C", repositoryPath, "add", "settings.txt"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "更新标题",
+    ]);
+
+    await service.applyCommitToWorkingTree({
+      repositoryPath,
+      targetBranch: "main",
+      baseCommit: baseCommit.trim(),
+      resultCommit,
+    });
+
+    expect(await readFile(join(repositoryPath, "settings.txt"), "utf8")).toBe(
+      "标题=主项目新版\n\n计数=100\n",
+    );
+  });
+
+  it("三方应用发生冲突时不修改当前项目", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-apply-conflict-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const worktreePath = join(root, "worktrees", "run-1");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await writeFile(join(repositoryPath, "README.md"), "计数=1\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "初始提交",
+    ]);
+    const { stdout: baseCommit } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
+    const service = new GitService();
+    await service.createWorktree({
+      repositoryPath,
+      worktreePath,
+      branchName: "devloop/run/conflict-test",
+      baseCommit: baseCommit.trim(),
+    });
+    await writeFile(join(worktreePath, "README.md"), "计数=100\n");
+    const resultCommit = await service.commitWorktree({
+      worktreePath,
+      message: "DevLoop: 冲突测试",
+    });
+
+    await writeFile(join(repositoryPath, "README.md"), "计数=200\n");
+    await execa("git", ["-C", repositoryPath, "add", "README.md"]);
+    await execa("git", [
+      "-c",
+      "user.name=DevLoop Test",
+      "-c",
+      "user.email=devloop-test@local",
+      "-C",
+      repositoryPath,
+      "commit",
+      "-m",
+      "主项目修改同一行",
+    ]);
+    const { stdout: previousCommit } = await execa("git", [
+      "-C",
+      repositoryPath,
+      "rev-parse",
+      "HEAD",
+    ]);
+
+    await expect(
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
+    ).rejects.toMatchObject({ code: "APPLY_CONFLICT" });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+    await expect(execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"])).resolves.toMatchObject({
+      stdout: previousCommit.trim(),
+    });
+    await expect(
+      execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
+    ).resolves.toMatchObject({ stdout: "" });
   });
 });

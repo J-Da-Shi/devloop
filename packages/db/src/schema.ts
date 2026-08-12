@@ -1,10 +1,20 @@
-import type { BaseStrategy, DeviceRole, RunStatus, TaskStatus, WorkerStatus } from "@devloop/shared";
+import type {
+  BaseStrategy,
+  DeviceRole,
+  RunStatus,
+  TaskStatus,
+  WorkerStatus,
+} from "@devloop/shared";
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const timestamps = () => ({
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const projects = sqliteTable(
@@ -29,6 +39,7 @@ export const tasks = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    targetBranch: text("target_branch").notNull().default("HEAD"),
     title: text("title").notNull(),
     goal: text("goal").notNull(),
     acceptanceCriteriaJson: text("acceptance_criteria_json").notNull(),
@@ -55,6 +66,7 @@ export const taskRevisions = sqliteTable(
     revision: integer("revision").notNull(),
     specJson: text("spec_json").notNull(),
     specHash: text("spec_hash").notNull(),
+    targetBranch: text("target_branch").notNull().default("HEAD"),
     baseRef: text("base_ref").notNull(),
     baseStrategy: text("base_strategy").$type<BaseStrategy>().notNull(),
     confirmedBaseCommit: text("confirmed_base_commit"),
@@ -75,6 +87,7 @@ export const taskRuns = sqliteTable(
     taskRevisionId: text("task_revision_id")
       .notNull()
       .references(() => taskRevisions.id, { onDelete: "restrict" }),
+    targetBranch: text("target_branch").notNull().default("HEAD"),
     runner: text("runner").notNull(),
     status: text("status").$type<RunStatus>().notNull(),
     baseCommit: text("base_commit"),
@@ -197,10 +210,7 @@ export const remoteCommands = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [
-    uniqueIndex("remote_commands_idempotency_unique").on(
-      table.deviceId,
-      table.idempotencyKey,
-    ),
+    uniqueIndex("remote_commands_idempotency_unique").on(table.deviceId, table.idempotencyKey),
   ],
 );
 

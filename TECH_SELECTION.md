@@ -386,12 +386,14 @@ SQLite 仍然是事实来源。每次转换必须在数据库事务内：
 
 Task Revision 一经确认不可修改。手机或桌面端对 RUNNING、BLOCKED、FAILED 或被驳回任务的修改必须创建新 Revision；当前 Run 永远引用原 Revision。
 
+Task、Revision 和 Run 都保存 `target_branch`。Task 中的字段允许草稿编辑；确认后复制到不可变 Revision；领取后再复制到 Run，保证执行和审核始终引用同一个目标分支快照。
+
 Revision 保存 `base_strategy`：
 
-- `LATEST_ACCEPTED`：Scheduler 领取时读取项目持久化的 DevLoop integration commit，适合连续任务队列。
-- `PINNED`：始终使用确认时指定的固定 Commit。
+- `LATEST_ACCEPTED`：Worker 准备 Worktree 时读取目标分支最新 Commit；目标分支不存在时读取项目默认分支 Commit。
+- `PINNED`：始终使用确认时固定的 Commit。
 
-Scheduler 在领取事务中保存实际 `base_commit`、Revision、Policy 和 Runner 配置，生成不可变 Run Input Snapshot 和校验值。后续 integration commit 变化不能改变已经领取的 Run。
+Scheduler 在领取事务中保存目标分支、Revision、Policy 和 Runner 配置。Worker 在创建 Worktree 前解析实际 `base_commit`，更新不可变 Run Input Snapshot 和校验值；之后目标分支继续变化也不能改变已经开始的 Run。
 
 所有可被 SSE 消费的状态变化同时写入全局 `domain_events`。详细 Agent 事件继续写 `run_events` 或 Artifact，避免用 Run 专属表承载 Device、Task 和 Worker 事件。
 
@@ -517,6 +519,7 @@ diff
 branch
 merge-base --is-ancestor
 merge --ff-only
+apply --3way --index
 update-ref
 worktree add
 worktree remove
@@ -526,11 +529,13 @@ commit
 
 MVP 不开放任意 Git 命令给 Agent。
 
-每个项目在 SQLite 中维护 DevLoop 自有 integration commit，并同步一个内部 Git ref；初始值来自用户选择的基础分支 Commit。成功 Run 在进入 REVIEW 前由控制器执行 `add` 和 `commit`，创建 DevLoop 结果 Commit。审核通过时只有在数据库 integration commit 仍等于 Run 的 base commit 时才允许事务更新为结果 Commit；冲突则保留 REVIEW 并要求用户处理。事务提交后幂等执行 `git update-ref`，启动恢复任务负责对账尚未完成的 ref 同步。该过程不修改用户基础分支。
+成功 Run 在进入 REVIEW 前由控制器执行 `add` 和 `commit`，创建 `devloop/run/<run-id>` 内部结果分支。审核通过只记录业务决策，不直接修改用户分支。
 
-审核通过后，本机 editor 可以显式执行“覆盖到当前项目目录”。Git Service 必须先确认当前项目位于本地分支、结果 Commit 存在、当前工作区完全干净，并且当前 HEAD 可以 fast-forward 到结果 Commit；随后只允许执行 `git merge --ff-only`。工作区存在未提交或未跟踪内容、分支已经分叉或处于 detached HEAD 时必须停止，禁止使用 `reset --hard`、强制 checkout 或逐文件覆盖。
+审核通过后，本机 editor 可以显式执行“写入目标分支”。Git Service 先用 `check-ref-format --branch` 校验名称，并确认本次 Run 的 base/result Commit 存在且关系有效。目标分支不存在时，以 Run 的 `base_commit` 为父链，通过带预期旧值的 `git update-ref` 原子创建分支。目标分支存在且已经前进时，在系统临时目录创建该分支 HEAD 的隔离 Worktree，通过 `git apply --3way --index` 合并本次 Run 的补丁并生成可回退 Commit，成功后再原子更新目标分支。
 
-Worktree 只有在 Commit、Diff Artifact 和校验值均持久化后才允许清理。默认 `LATEST_ACCEPTED` 任务在领取时使用最新 integration commit，因此后续任务可以继承前一个已通过结果。
+目标分支未检出时只更新 Git 引用，不切换或修改当前项目目录。目标分支正在当前项目目录检出时，先检查本次结果涉及的文件没有未提交或未跟踪内容，再通过 fast-forward 同步分支和目录。目标分支若被其他 Worktree 检出则停止写入，避免引用与目录状态不一致。三方应用冲突、目标分支并发变化或任一步骤失败时删除临时 Worktree，目标分支和项目目录均不产生半成品；禁止使用 `reset --hard` 和强制 checkout。
+
+Worktree 只有在 Commit、Diff Artifact 和校验值均持久化后才允许清理。后续 `LATEST_ACCEPTED` 任务重新读取各自目标分支最新 Commit，因此不同分支的任务不会共享一条全局执行基线。
 
 ## 10. 校验与 Schema
 
