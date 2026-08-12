@@ -71,7 +71,7 @@ export function StatusPage() {
     return [
       {
         label: "待执行",
-        value: tasks.filter((task) => task.status === "READY").length,
+        value: 100,
         icon: Clock3,
         tone: "info",
       },
