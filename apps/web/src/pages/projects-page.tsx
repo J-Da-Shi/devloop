@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, GitBranch, Plus, X } from "lucide-react";
+import { GitBranch, Plus, RefreshCw, Server, X } from "lucide-react";
 import { useState } from "react";
+import type { Project } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, InlineNotice, LoadingPanel } from "../components/feedback.js";
 import { useNotice } from "../components/notice-provider.js";
@@ -11,51 +12,53 @@ export function ProjectsPage() {
   const { notify } = useNotice();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
-  const [path, setPath] = useState("");
-  const [baseRef, setBaseRef] = useState("HEAD");
+  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [baseRef, setBaseRef] = useState("main");
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects });
   const session = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
     staleTime: 60_000,
   });
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    ]);
+  };
   const createProject = useMutation({
     mutationFn: api.createProject,
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
-      ]);
+      await refresh();
       setShowForm(false);
       setName("");
-      setPath("");
-      notify("项目已注册");
+      setRepositoryUrl("");
+      notify("远程项目已注册");
     },
     onError: (error) => notify(error instanceof Error ? error.message : "项目注册失败", "danger"),
   });
+  const syncProject = useMutation({
+    mutationFn: (project: Project) => api.syncProject(project.id),
+    onSuccess: async (data) => {
+      await refresh();
+      notify(`${data.project.name} 已同步远程仓库`);
+    },
+    onError: (error) => notify(error instanceof Error ? error.message : "项目同步失败", "danger"),
+  });
 
-  if (projects.isPending) {
+  if (projects.isPending || session.isPending) {
     return <LoadingPanel label="正在加载项目" />;
   }
   if (projects.isError) {
     return <ErrorPanel error={projects.error} />;
   }
 
-  const local = session.data?.identity.local === true;
-  const chooseDirectory = async () => {
-    const selected = await window.devloopDesktop?.selectDirectory();
-    if (selected) {
-      setPath(selected);
-      if (!name) {
-        setName(selected.split("/").filter(Boolean).at(-1) ?? "");
-      }
-    }
-  };
+  const canEdit = session.data?.identity.role === "editor";
 
   return (
     <div className="page-stack">
       <div className="page-actions page-actions-end">
-        {local ? (
+        {canEdit ? (
           <button
             type="button"
             className="button button-primary"
@@ -67,18 +70,22 @@ export function ProjectsPage() {
         ) : null}
       </div>
 
-      {!local ? <InlineNotice tone="info">本地项目目录只能在桌面端注册。</InlineNotice> : null}
+      {!canEdit ? <InlineNotice tone="info">当前角色只能查看项目。</InlineNotice> : null}
 
       {showForm ? (
         <form
           className="tool-panel project-form"
           onSubmit={(event) => {
             event.preventDefault();
-            createProject.mutate({ name, path, defaultBaseRef: baseRef });
+            createProject.mutate({ name, repositoryUrl, defaultBaseRef: baseRef });
           }}
         >
           <div className="section-heading">
-            <h2>注册 Git 项目</h2>
+            <div>
+              <h2>注册远程 Git 项目</h2>
+              <span>服务器会克隆仓库并托管执行目录</span>
+            </div>
+            <Server size={19} />
           </div>
           <div className="form-grid">
             <label className="field">
@@ -90,40 +97,40 @@ export function ProjectsPage() {
               <input
                 value={baseRef}
                 onChange={(event) => setBaseRef(event.target.value)}
+                placeholder="main"
                 required
               />
             </label>
             <label className="field field-wide">
-              <span>项目根目录</span>
-              <span className="input-action-row">
-                <input value={path} onChange={(event) => setPath(event.target.value)} required />
-                {window.devloopDesktop ? (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={chooseDirectory}
-                  >
-                    <FolderOpen size={17} />
-                    选择目录
-                  </button>
-                ) : null}
-              </span>
+              <span>SSH 仓库地址</span>
+              <input
+                value={repositoryUrl}
+                onChange={(event) => setRepositoryUrl(event.target.value)}
+                placeholder="git@github.com:team/project.git"
+                autoComplete="off"
+                required
+              />
             </label>
           </div>
           <div className="dialog-actions">
             <button
               type="submit"
               className="button button-primary"
-              disabled={createProject.isPending || !name.trim() || !path.trim()}
+              disabled={
+                createProject.isPending ||
+                !name.trim() ||
+                !repositoryUrl.trim() ||
+                !baseRef.trim()
+              }
             >
-              {createProject.isPending ? "正在检查" : "注册项目"}
+              {createProject.isPending ? "正在克隆" : "注册项目"}
             </button>
           </div>
         </form>
       ) : null}
 
       {projects.data.projects.length === 0 ? (
-        <EmptyState title="还没有注册项目" />
+        <EmptyState title="还没有注册远程项目" detail="先添加一个服务器可访问的 SSH Git 仓库" />
       ) : (
         <section className="object-list">
           {projects.data.projects.map((project) => (
@@ -133,24 +140,36 @@ export function ProjectsPage() {
               </span>
               <div className="object-main">
                 <strong>{project.name}</strong>
-                <code>{project.path}</code>
+                <code>{project.repositoryUrl ?? "旧本地项目，需要重新注册远程仓库"}</code>
               </div>
               <dl className="object-facts">
                 <div>
-                  <dt>基线</dt>
+                  <dt>默认分支</dt>
                   <dd>{project.defaultBaseRef}</dd>
                 </div>
                 <div>
-                  <dt>注册 Commit</dt>
+                  <dt>同步 Commit</dt>
                   <dd>
                     <code>{shortCommit(project.integrationCommit)}</code>
                   </dd>
                 </div>
                 <div>
-                  <dt>更新时间</dt>
-                  <dd>{formatDateTime(project.updatedAt)}</dd>
+                  <dt>最近同步</dt>
+                  <dd>{formatDateTime(project.lastFetchedAt)}</dd>
                 </div>
               </dl>
+              {canEdit && project.repositoryUrl ? (
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`同步 ${project.name}`}
+                  title="同步远程仓库"
+                  disabled={syncProject.isPending}
+                  onClick={() => syncProject.mutate(project)}
+                >
+                  <RefreshCw size={17} className={syncProject.isPending ? "spin" : undefined} />
+                </button>
+              ) : null}
             </article>
           ))}
         </section>

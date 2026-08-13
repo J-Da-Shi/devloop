@@ -23,13 +23,18 @@ export const projects = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     path: text("path").notNull(),
+    repositoryUrl: text("repository_url"),
+    lastFetchedAt: text("last_fetched_at"),
     defaultBaseRef: text("default_base_ref").notNull(),
     integrationRef: text("integration_ref").notNull(),
     integrationCommit: text("integration_commit"),
     version: integer("version").notNull().default(0),
     ...timestamps(),
   },
-  (table) => [uniqueIndex("projects_path_unique").on(table.path)],
+  (table) => [
+    uniqueIndex("projects_path_unique").on(table.path),
+    uniqueIndex("projects_repository_url_unique").on(table.repositoryUrl),
+  ],
 );
 
 export const tasks = sqliteTable(
@@ -47,6 +52,8 @@ export const tasks = sqliteTable(
     priority: integer("priority").notNull().default(50),
     activeRevisionId: text("active_revision_id"),
     latestRunId: text("latest_run_id"),
+    deletedAt: text("deleted_at"),
+    deletedByDeviceId: text("deleted_by_device_id"),
     version: integer("version").notNull().default(0),
     ...timestamps(),
   },
@@ -97,6 +104,8 @@ export const taskRuns = sqliteTable(
     executionToken: text("execution_token").notNull(),
     processGroupId: integer("process_group_id"),
     runnerVersion: text("runner_version"),
+    pushedAt: text("pushed_at"),
+    pushedCommit: text("pushed_commit"),
     runInputHash: text("run_input_hash").notNull(),
     summary: text("summary"),
     startedAt: text("started_at").notNull(),
@@ -229,6 +238,36 @@ export const auditEvents = sqliteTable(
   (table) => [index("audit_events_aggregate_idx").on(table.aggregateType, table.aggregateId)],
 );
 
+export const skills = sqliteTable(
+  "skills",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    currentVersionId: text("current_version_id").notNull(),
+    version: integer("version").notNull().default(0),
+    ...timestamps(),
+  },
+  (table) => [uniqueIndex("skills_name_unique").on(table.name)],
+);
+
+export const skillVersions = sqliteTable(
+  "skill_versions",
+  {
+    id: text("id").primaryKey(),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    contentHash: text("content_hash").notNull(),
+    storagePath: text("storage_path").notNull(),
+    createdByDeviceId: text("created_by_device_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("skill_versions_number_unique").on(table.skillId, table.version)],
+);
+
 export const schema = {
   projects,
   tasks,
@@ -243,6 +282,8 @@ export const schema = {
   pairingSessions,
   remoteCommands,
   auditEvents,
+  skills,
+  skillVersions,
 };
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -252,3 +293,5 @@ export type TaskRunRow = typeof taskRuns.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
 export type DomainEventRow = typeof domainEvents.$inferSelect;
 export type PairedDeviceRow = typeof pairedDevices.$inferSelect;
+export type SkillRow = typeof skills.$inferSelect;
+export type SkillVersionRow = typeof skillVersions.$inferSelect;

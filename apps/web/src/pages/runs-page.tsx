@@ -50,7 +50,10 @@ export function RunsPage() {
             <div className="section-heading">
               <div>
                 <h2>{details.data.task?.title ?? "未知任务"}</h2>
-                <span>{details.data.task?.projectName}</span>
+                <span>
+                  {details.data.task?.projectName}
+                  {details.data.task?.deletedAt ? " · 任务已删除" : ""}
+                </span>
               </div>
               <StatusBadge status={details.data.run.status}>
                 {runStatusText[details.data.run.status]}
@@ -97,6 +100,13 @@ export function RunsPage() {
                 <code>
                   <GitBranch size={14} />
                   {details.data.run.branchName ?? "暂无"}
+                </code>
+              </span>
+              <span>
+                <small>远程推送</small>
+                <code>
+                  <GitCommitHorizontal size={14} />
+                  {details.data.run.pushedCommit?.slice(0, 10) ?? "尚未推送"}
                 </code>
               </span>
             </div>

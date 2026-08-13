@@ -1,26 +1,13 @@
-import {
-  Outlet,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  redirect,
-  useRouterState,
-} from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { AppShell } from "./components/app-shell.js";
 import { BoardPage } from "./pages/board-page.js";
-import { DevicesPage } from "./pages/devices-page.js";
-import { PairPage } from "./pages/pair-page.js";
 import { ProjectsPage } from "./pages/projects-page.js";
 import { RunsPage } from "./pages/runs-page.js";
 import { SettingsPage } from "./pages/settings-page.js";
+import { SkillsPage } from "./pages/skills-page.js";
 import { StatusPage } from "./pages/status-page.js";
 
-function RootComponent() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  return pathname === "/pair" ? <Outlet /> : <AppShell />;
-}
-
-const rootRoute = createRootRoute({ component: RootComponent });
+const rootRoute = createRootRoute({ component: AppShell });
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
@@ -43,36 +30,29 @@ const projectsRoute = createRoute({
   path: "/projects",
   component: ProjectsPage,
 });
+const skillsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/skills",
+  component: SkillsPage,
+});
 const runsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs",
   component: RunsPage,
-});
-const devicesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/devices",
-  component: DevicesPage,
 });
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
   component: SettingsPage,
 });
-const pairRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/pair",
-  component: PairPage,
-});
-
 const routeTree = rootRoute.addChildren([
   indexRoute,
   statusRoute,
   boardRoute,
   projectsRoute,
+  skillsRoute,
   runsRoute,
-  devicesRoute,
   settingsRoute,
-  pairRoute,
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });

@@ -16,6 +16,7 @@ const columns: TaskStatus[] = [
   "BLOCKED",
   "FAILED",
   "COMPLETED",
+  "CANCELLED",
 ];
 
 export function BoardPage() {

@@ -1,101 +1,212 @@
 # DevLoop 项目目录说明
 
-## 1. 为什么目录看起来很多
-
-当前仓库采用 pnpm Workspace Monorepo，将可以独立运行的程序放在 `apps`，将可复用的代码放在 `packages`。
-
-目录数量主要来自两部分：
-
-- `desktop`、`web`、`server` 具有真实的运行和安全边界。
-- 数据库、Git、Runner 和 Workflow 按长期架构提前拆成了独立 Workspace 包。
-
-第一部分有保留价值，第二部分对当前 MVP 来说拆分得偏早，可以适当合并。
-
-## 2. 必须保留的运行边界
-
-```text
-Electron 客户端
-├── desktop：窗口和受控的系统能力
-└── web：桌面端与手机端共用的用户界面
-        │ HTTP / SSE
-        ▼
-server：文件、Git、SQLite 和 Codex CLI
-```
-
-浏览器页面不能直接启动 Codex CLI，也不能任意访问本地文件。因此，本地文件、Git、数据库和命令执行能力必须位于 Server 或 Electron 主进程中，不能直接放进 Web 页面。
-
-手机端同样只连接本机 Server，不直接连接 Electron，也不直接操作本地文件系统。
-
-## 3. apps 目录
-
-| 目录           | 当前职责                                                | 判断         |
-| -------------- | ------------------------------------------------------- | ------------ |
-| `apps/desktop` | Electron 主进程、窗口、菜单、原生目录选择和安全 Preload | 应当独立保留 |
-| `apps/web`     | React 页面，同时服务于 Electron 和手机 Web/PWA          | 应当独立保留 |
-| `apps/server`  | 本机 API、实时事件、任务调度和 Worker 生命周期          | 应当独立保留 |
-
-这三个目录分别对应桌面壳、用户界面和本机后台服务。即使精简项目，也不建议把它们合并成一个目录。
-
-## 4. packages 目录
-
-| 目录                | 当前职责                                          | 当前判断                             |
-| ------------------- | ------------------------------------------------- | ------------------------------------ |
-| `packages/shared`   | Web 与 Server 共用的领域类型、状态和 Zod 校验规则 | 应当独立保留                         |
-| `packages/db`       | SQLite、Drizzle Schema 和 Repository              | 当前可以并入 Server                  |
-| `packages/git`      | Git 仓库检测与 Git 命令封装                       | 规模较小，拆分偏早                   |
-| `packages/runners`  | Codex Runner、Fake Runner 和 Runner 接口          | 当前可以并入 Server                  |
-| `packages/workflow` | 任务状态机与状态转换                              | 当前代码很少，且尚未形成独立使用边界 |
-
-目前只有 `shared` 同时被 Web 和 Server 使用。`db`、`git`、`runners` 和 `workflow` 基本都只有 Server 一个消费者，因此暂时不需要承担独立 Workspace 的构建和维护成本。
-
-## 5. 不属于业务拆分的目录
-
-以下目录虽然会出现在编辑器中，但不代表系统又增加了一层架构：
-
-- `node_modules`：pnpm 为各 Workspace 建立的依赖链接。
-- `dist`：TypeScript 或 Vite 生成的构建结果，可以重新生成。
-- `design-system`：界面设计规范和视觉约束。
-- `schemas`：Codex 等 Agent 结构化输出使用的 JSON Schema。
-- 根目录的 Markdown 文件：开发方案、技术选型和项目说明文档。
-
-在编辑器中可以隐藏 `node_modules` 和 `dist`，让目录树更容易阅读。
-
-## 6. 当前建议的精简结构
-
-当前阶段建议收缩为三个应用和一个共享包：
+## 1. 顶层结构
 
 ```text
 devloop/
 ├── apps/
 │   ├── desktop/
-│   ├── web/
-│   └── server/
-│       └── src/
-│           ├── db/
-│           ├── git/
-│           ├── runners/
-│           └── workflow/
+│   ├── server/
+│   └── web/
 ├── packages/
-│   └── shared/
+│   ├── db/
+│   ├── git/
+│   ├── runners/
+│   ├── shared/
+│   └── workflow/
 ├── schemas/
+├── deploy/
+├── design-system/
+├── Dockerfile
+├── compose.yaml
+├── DEPLOYMENT.md
 ├── DEVELOPMENT_PLAN.md
-├── PROJECT_STRUCTURE.md
-└── TECH_SELECTION.md
+├── TECH_SELECTION.md
+└── PROJECT_STRUCTURE.md
 ```
 
-这样可以将当前 8 个 Workspace 收缩为 4 个，同时继续维持 Electron、Web、Server 之间必要的安全边界。
+仓库使用 pnpm Workspace Monorepo。可以独立运行的程序放在 `apps`，具有明确边界的共享能力放在 `packages`。
 
-## 7. 什么时候再拆成独立 package
+## 2. 为什么需要三个应用
 
-满足以下任一条件时，再将 Server 内部模块拆为独立 package 更合适：
+### 2.1 `apps/desktop`
 
-- 同一个模块开始被两个或更多应用使用。
-- 模块需要独立发布、独立版本或独立构建。
-- 模块具有稳定的公共接口，并且内部实现需要被隔离。
-- 出现独立 Worker、插件系统、CLI 或其他服务，需要复用相同能力。
+Electron 桌面外壳，负责：
 
-在这些条件出现以前，优先使用 Server 内部目录能够减少配置、构建和依赖管理成本。
+- 创建原生窗口。
+- 管理 macOS 红绿灯和全屏布局。
+- 提供受控 Preload 接口。
+- 连接本机或远程 DevLoop Server。
+- 后续承载本地 Server 的安装与生命周期管理。
 
-## 8. 结论
+Electron 不保存任务事实，也不直接实现 Scheduler。
 
-当前整体架构方向没有问题，但包级拆分超前于实际规模。`desktop`、`web`、`server` 和 `shared` 应继续保留；`db`、`git`、`runners` 和 `workflow` 更适合作为 Server 内部模块，等出现真实的复用边界后再拆分。
+### 2.2 `apps/web`
+
+React 单页应用，同时用于：
+
+- Electron 窗口。
+- 桌面浏览器。
+- 手机浏览器/PWA。
+
+它只通过 HTTP 和 SSE 使用 Server，不直接访问 Node.js、SQLite、Git、Codex 或任意本地文件。
+
+### 2.3 `apps/server`
+
+实例核心，负责：
+
+- Fastify API 和 Web 静态资源。
+- 内置实例所有者身份。
+- Scheduler 与 AgentWorker。
+- Codex Runner 生命周期。
+- 项目注册、任务、审核和 Skill API。
+- Server 启动与关闭。
+
+本地模式和 Docker 模式运行的是同一个 Server。
+
+## 3. packages 目录
+
+### 3.1 `packages/shared`
+
+Web 与 Server 共用：
+
+- 领域类型。
+- 状态枚举。
+- 中文状态名称。
+- Zod 输入 Schema。
+- 状态转换规则。
+
+该包不依赖数据库或 Node.js 文件系统，适合在浏览器中使用。
+
+### 3.2 `packages/db`
+
+SQLite 与 Drizzle 数据层：
+
+- 数据库连接和 WAL 配置。
+- Schema 与迁移。
+- Repository。
+- 原子任务领取。
+- 乐观版本和幂等命令。
+- 领域事件、审核记录和软删除。
+
+`drizzle` 目录必须进入服务器镜像，否则新实例无法初始化数据库。
+
+### 3.3 `packages/git`
+
+Git 命令边界：
+
+- SSH 仓库地址规范化。
+- clone、fetch 和远程分支解析。
+- Worktree 创建。
+- 结果 Commit。
+- 安全推送。
+- 旧本地写回能力及相关测试。
+
+所有 Git 操作使用参数数组调用系统 Git，不拼接 Shell 命令。
+
+### 3.4 `packages/runners`
+
+Agent Runner 抽象：
+
+- `CodexRunner` 调用真实 Codex CLI。
+- `FakeRunner` 用于页面和状态测试。
+- Runner 输入、事件和结构化结果类型。
+- 超时、取消、日志脱敏和 JSON 修复。
+
+### 3.5 `packages/workflow`
+
+任务状态机和允许的状态转换。它与 Repository 的事务检查共同防止客户端绕过流程。
+
+## 4. 其他目录
+
+### 4.1 `schemas`
+
+保存 Agent 最终结果的 JSON Schema。自定义 Provider 模式不会把它传给 `--output-schema`，但会放进 Prompt，并用于本地结果校验约束。
+
+### 4.2 `deploy`
+
+保存宝塔、Nginx 和后续部署平台模板。当前包含关闭 SSE 缓冲的宝塔 Nginx 片段。
+
+### 4.3 `design-system`
+
+保存界面视觉规范，不参与运行时逻辑。
+
+### 4.4 生成目录
+
+以下目录不属于源码架构：
+
+- `node_modules`：Workspace 依赖。
+- `dist`：TypeScript 或 Vite 构建产物。
+- `.devloop-data`：本地开发数据库、仓库、Worktree 和 Skill。
+- `data`：Docker 部署的宿主持久化目录。
+- `config`：Docker 部署的 Codex 和 Git SSH 配置。
+
+这些目录都不应提交到 Git。
+
+## 5. 运行依赖方向
+
+```text
+desktop ───────────────> DevLoop Server URL
+
+web ──────────────────> shared
+  │ HTTP / SSE
+  v
+server ────────────────> db
+  ├────────────────────> git
+  ├────────────────────> runners
+  ├────────────────────> shared
+  └────────────────────> workflow
+
+db / git / runners / workflow ──> shared
+```
+
+Web 不依赖 Server 源码，Desktop 不依赖数据库实现。这个边界保证同一页面可以连接本机实例或个人服务器实例。
+
+## 6. 数据目录
+
+### 本地开发
+
+```text
+.devloop-data/
+├── devloop.db
+├── repositories/
+├── worktrees/
+└── skills/
+```
+
+### Docker
+
+```text
+data/
+├── devloop.db
+├── repositories/
+├── worktrees/
+└── skills/
+```
+
+日志当前主要通过 Pino 输出到标准输出，由开发终端或 Docker 日志驱动保存；独立文件日志目录仍属于后续完善项。
+
+## 7. 是否需要合并 packages
+
+从纯代码规模看，`db`、`git`、`runners` 和 `workflow` 仍然可以并入 Server。但当前远程 Git、Docker 构建和独立测试已经形成了较明确的模块边界，立即搬迁只会产生大量路径和构建改动。
+
+当前决定是：
+
+- 保留 `desktop`、`web`、`server` 和 `shared` 的必要边界。
+- 暂时保留现有 Server 能力包。
+- 不继续拆出更细的 package。
+- 等出现独立 Worker、CLI 或第二个真实消费者时再重新评估。
+
+## 8. 新代码放在哪里
+
+- 页面、组件、样式：`apps/web/src`。
+- Electron 窗口和系统能力：`apps/desktop/src`。
+- API、Worker、Skill 文件管理：`apps/server/src`。
+- SQLite 和事务：`packages/db/src`。
+- Git 命令：`packages/git/src`。
+- Codex 或新 Runner：`packages/runners/src`。
+- 前后端共享类型与输入校验：`packages/shared/src`。
+- 状态机：`packages/workflow/src`。
+- 部署模板：`deploy` 或仓库根目录。
+
+不要让 Web 页面直接导入数据库、Git 或 Runner 包。

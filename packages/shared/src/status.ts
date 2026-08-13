@@ -1,28 +1,28 @@
 import type { RunStatus, TaskStatus } from "./domain.js";
 
 export const taskStatusLabels: Record<TaskStatus, string> = {
-  DRAFT: "Draft",
-  READY: "Ready",
-  RUNNING: "Running",
-  REVIEW: "Review",
-  BLOCKED: "Blocked",
-  FAILED: "Failed",
-  COMPLETED: "Completed",
-  CANCELLED: "Cancelled",
+  DRAFT: "草稿",
+  READY: "待执行",
+  RUNNING: "执行中",
+  REVIEW: "待审核",
+  BLOCKED: "已阻塞",
+  FAILED: "失败",
+  COMPLETED: "已完成",
+  CANCELLED: "已取消",
 };
 
 export const runStatusLabels: Record<RunStatus, string> = {
-  CLAIMED: "Claimed",
-  PREPARING: "Preparing",
-  AGENT_RUNNING: "Agent running",
-  VERIFYING: "Verifying",
-  REPAIRING: "Repairing",
-  PREPARING_REVIEW: "Preparing review",
-  SUCCEEDED: "Succeeded",
-  BLOCKED: "Blocked",
-  FAILED: "Failed",
-  INTERRUPTED: "Interrupted",
-  CANCELLED: "Cancelled",
+  CLAIMED: "已领取",
+  PREPARING: "准备中",
+  AGENT_RUNNING: "Agent 执行中",
+  VERIFYING: "验证中",
+  REPAIRING: "修复中",
+  PREPARING_REVIEW: "整理审核结果",
+  SUCCEEDED: "执行成功",
+  BLOCKED: "已阻塞",
+  FAILED: "失败",
+  INTERRUPTED: "已中断",
+  CANCELLED: "已取消",
 };
 
 export const boardStatuses: TaskStatus[] = [

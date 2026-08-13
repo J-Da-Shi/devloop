@@ -6,12 +6,12 @@ export interface RuntimeConfig {
   host: string;
   port: number;
   databasePath: string;
+  repositoriesPath: string;
   worktreesPath: string;
+  skillsPath: string;
   migrationsFolder: string;
   webDistPath: string;
   outputSchemaPath: string;
-  externalBaseUrl: string | null;
-  seed: boolean;
   logLevel: string;
   runner: "codex" | "fake";
   codexExecutable: string;
@@ -24,7 +24,7 @@ export interface RuntimeConfig {
 const parseInteger = (value: string | undefined, fallback: number, name: string): number => {
   const parsed = value === undefined ? fallback : Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new Error(`${name} 必须是正整数`);
   }
   return parsed;
 };
@@ -49,22 +49,21 @@ export function loadRuntimeConfig(): RuntimeConfig {
   const host = process.env.DEVLOOP_HOST ?? "127.0.0.1";
   const allowLan = parseBoolean(process.env.DEVLOOP_ALLOW_LAN, false);
   if (!["127.0.0.1", "localhost", "::1"].includes(host) && !allowLan) {
-    throw new Error("Non-loopback binding requires DEVLOOP_ALLOW_LAN=true");
+    throw new Error("监听非回环地址时必须设置 DEVLOOP_ALLOW_LAN=true");
   }
 
   const dataDirectory = resolve(repositoryRoot, process.env.DEVLOOP_DATA_DIR ?? ".devloop-data");
-
   return {
     repositoryRoot,
     host,
     port: parseInteger(process.env.DEVLOOP_PORT, 4317, "DEVLOOP_PORT"),
     databasePath: resolve(dataDirectory, "devloop.db"),
+    repositoriesPath: resolve(dataDirectory, "repositories"),
     worktreesPath: resolve(dataDirectory, "worktrees"),
+    skillsPath: resolve(dataDirectory, "skills"),
     migrationsFolder: resolve(repositoryRoot, "packages/db/drizzle"),
     webDistPath: resolve(repositoryRoot, "apps/web/dist"),
     outputSchemaPath: resolve(repositoryRoot, "schemas/agent-result.v1.schema.json"),
-    externalBaseUrl: process.env.DEVLOOP_EXTERNAL_URL ?? null,
-    seed: parseBoolean(process.env.DEVLOOP_SEED, false),
     logLevel: process.env.DEVLOOP_LOG_LEVEL ?? "info",
     runner: parseRunner(process.env.DEVLOOP_RUNNER),
     codexExecutable: process.env.DEVLOOP_CODEX_EXECUTABLE ?? "codex",

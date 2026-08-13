@@ -44,10 +44,11 @@ export type BaseStrategy = z.infer<typeof baseStrategySchema>;
 export interface Project {
   id: string;
   name: string;
-  path: string;
+  repositoryUrl: string | null;
   defaultBaseRef: string;
   integrationRef: string;
   integrationCommit: string | null;
+  lastFetchedAt: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -65,6 +66,7 @@ export interface Task {
   priority: number;
   activeRevisionId: string | null;
   latestRunId: string | null;
+  deletedAt: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -94,6 +96,8 @@ export interface TaskRun {
   branchName: string | null;
   runnerVersion: string | null;
   executionToken: string;
+  pushedAt: string | null;
+  pushedCommit: string | null;
   summary: string | null;
   startedAt: string;
   finishedAt: string | null;
@@ -117,6 +121,14 @@ export interface RunApplicationResult {
   workingTreeUpdated: boolean;
 }
 
+export interface RunPublishResult {
+  status: "pushed" | "already_pushed";
+  branch: string;
+  previousCommit: string | null;
+  currentCommit: string;
+  branchCreated: boolean;
+}
+
 export interface WorkerState {
   status: WorkerStatus;
   heartbeatAt: string;
@@ -134,9 +146,51 @@ export interface PairedDevice {
   createdAt: string;
 }
 
+export interface SkillVersion {
+  id: string;
+  skillId: string;
+  version: number;
+  contentHash: string;
+  createdByDeviceId: string | null;
+  createdAt: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  currentVersionId: string;
+  currentVersion: number;
+  contentHash: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillDetails {
+  skill: Skill;
+  versions: SkillVersion[];
+  content: string;
+}
+
+export interface SkillValidationIssue {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+}
+
+export interface SkillValidationResult {
+  valid: boolean;
+  name: string | null;
+  description: string | null;
+  contentHash: string | null;
+  issues: SkillValidationIssue[];
+}
+
 export interface DomainEvent<TPayload = unknown> {
   id: number;
-  aggregateType: "project" | "task" | "run" | "worker" | "device";
+  aggregateType: "project" | "task" | "run" | "worker" | "device" | "skill" | "user";
   aggregateId: string;
   type: string;
   payload: TPayload;

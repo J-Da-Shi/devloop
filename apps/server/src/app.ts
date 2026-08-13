@@ -1,34 +1,38 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { DevLoopRepository, EventfulResult } from "@devloop/db";
 import { GitApplyError, type GitService } from "@devloop/git";
 import type { AgentRunner } from "@devloop/runners";
 import {
   confirmTaskInputSchema,
-  createPairingSessionInputSchema,
+  createSkillInputSchema,
+  createSkillVersionInputSchema,
   createProjectInputSchema,
   createTaskInputSchema,
-  pairDeviceInputSchema,
   rejectRunInputSchema,
   taskCommandInputSchema,
-  updateDeviceInputSchema,
+  updateSkillInputSchema,
   updateTaskInputSchema,
+  validateSkillInputSchema,
   workerStatusSchema,
   type DomainEvent,
   type Task,
 } from "@devloop/shared";
-import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { DomainEventBus } from "./event-bus.js";
 import type { AgentWorker } from "./agent-worker.js";
-import { HttpError, deviceCookieName, requireLocalEditor, requireRole } from "./http.js";
+import { HttpError, requireRole } from "./http.js";
 import type { RuntimeConfig } from "./runtime-config.js";
+import { SkillValidationError, type SkillService } from "./skill-service.js";
 
 export interface CreateAppOptions {
   config: RuntimeConfig;
   repository: DevLoopRepository;
   gitService: GitService;
+  skillService: SkillService;
   runners: AgentRunner[];
   eventBus: DomainEventBus;
   worker: AgentWorker;
@@ -36,7 +40,8 @@ export interface CreateAppOptions {
 
 const taskParamSchema = z.object({ taskId: z.string().uuid() });
 const runParamSchema = z.object({ runId: z.string().uuid() });
-const deviceParamSchema = z.object({ deviceId: z.string().uuid() });
+const projectParamSchema = z.object({ projectId: z.string().uuid() });
+const skillParamSchema = z.object({ skillId: z.string().uuid() });
 const runQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 
 const publish = (eventBus: DomainEventBus, result: EventfulResult<unknown>): void => {
@@ -47,14 +52,24 @@ const mapRepositoryError = (error: Error): HttpError | null => {
   if (error instanceof GitApplyError) {
     return new HttpError(409, error.message, error.code);
   }
-  if (error.message.includes("not found")) {
+  if (
+    error.message.includes("not found") ||
+    error.message.endsWith("不存在") ||
+    error.message.includes("Revision 不存在")
+  ) {
     return new HttpError(404, "请求的资源不存在", "NOT_FOUND");
   }
   if (
     error.message.startsWith("Version conflict") ||
     error.message.startsWith("Invalid task transition") ||
     error.message.startsWith("Only ") ||
-    error.message.includes("changed; reload")
+    error.message.includes("changed; reload") ||
+    error.message.includes("当前执行已经变化") ||
+    error.message.includes("执行中的任务不能删除") ||
+    error.message.includes("只有执行中的任务可以取消") ||
+    error.message.includes("只有草稿任务可以编辑") ||
+    error.message === "Skill 内容没有变化" ||
+    error.message === "Skill 名称发布后不能修改"
   ) {
     return new HttpError(409, error.message, "STATE_CONFLICT");
   }
@@ -71,7 +86,11 @@ const writeSseEvent = (response: NodeJS.WritableStream, event: DomainEvent): voi
 };
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
-  const { config, repository, gitService, runners, eventBus, worker } = options;
+  const { config, repository, gitService, skillService, runners, eventBus, worker } = options;
+  const requireRequestRole = (
+    request: Parameters<typeof requireRole>[0],
+    role: Parameters<typeof requireRole>[1],
+  ) => requireRole(request, role);
   const autoQueueTask = (task: Task, deviceId: string): Task => {
     const queued = repository.autoQueueTask(task.id, deviceId);
     if (queued) {
@@ -84,8 +103,6 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     logger: { level: config.logLevel },
     trustProxy: true,
   });
-
-  await app.register(cookie);
 
   let capabilityCache: Awaited<ReturnType<AgentRunner["detectCapabilities"]>>[] | null = null;
   const getRunnerCapabilities = async () => {
@@ -103,6 +120,15 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         },
       });
     }
+    if (error instanceof SkillValidationError) {
+      return reply.code(400).send({
+        error: {
+          code: "INVALID_SKILL",
+          message: error.message,
+          details: error.validation,
+        },
+      });
+    }
     const httpError =
       error instanceof HttpError
         ? error
@@ -116,7 +142,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     }
     request.log.error(error);
     return reply.code(500).send({
-      error: { code: "INTERNAL_ERROR", message: "本地服务处理请求时发生错误" },
+      error: { code: "INTERNAL_ERROR", message: "服务器处理请求时发生错误" },
     });
   });
 
@@ -127,17 +153,12 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   }));
 
   app.get("/api/session", async (request) => {
-    const identity = requireRole(request, repository, "viewer");
+    const identity = requireRequestRole(request, "viewer");
     return { identity };
   });
 
-  app.post("/api/session/logout", async (_request, reply) => {
-    reply.clearCookie(deviceCookieName, { path: "/" });
-    return { ok: true };
-  });
-
   app.get("/api/dashboard", async (request) => {
-    requireRole(request, repository, "viewer");
+    requireRequestRole(request, "viewer");
     const workerState = repository.getWorkerState();
     return {
       worker: workerState,
@@ -149,43 +170,118 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   app.get("/api/projects", async (request) => {
-    requireRole(request, repository, "viewer");
+    requireRequestRole(request, "viewer");
     return { projects: repository.listProjects() };
   });
 
   app.post("/api/projects", async (request, reply) => {
-    requireLocalEditor(request, repository);
+    requireRequestRole(request, "editor");
     const input = createProjectInputSchema.parse(request.body);
-    const git = await gitService.inspectRepository(input.path);
-    const existing = repository.findProjectByPath(git.path);
+    const repositoryUrl = gitService.normalizeRepositoryUrl(input.repositoryUrl);
+    const existing = repository.findProjectByRepositoryUrl(repositoryUrl);
     if (existing) {
       throw new HttpError(409, "该项目已经注册", "ALREADY_EXISTS");
     }
-    const defaultBase = await gitService.resolveTargetBase({
-      repositoryPath: git.path,
-      targetBranch: input.defaultBaseRef,
-      fallbackRef: input.defaultBaseRef,
-    });
-    if (!defaultBase.branchExists) {
-      throw new HttpError(400, "默认分支必须是已存在的本地分支", "INVALID_DEFAULT_BRANCH");
+    const projectId = randomUUID();
+    const repositoryPath = resolve(config.repositoriesPath, projectId);
+    let cloned = false;
+    try {
+      const git = await gitService.cloneRepository({
+        repositoryUrl,
+        destinationPath: repositoryPath,
+        defaultBranch: input.defaultBaseRef,
+      });
+      cloned = true;
+      const result = repository.createProject({
+        id: projectId,
+        name: input.name,
+        repositoryUrl: git.repositoryUrl,
+        repositoryPath: git.path,
+        defaultBaseRef: git.defaultBranch,
+        headCommit: git.headCommit,
+      });
+      publish(eventBus, result);
+      return reply.code(201).send({ project: result.value });
+    } catch (error) {
+      if (cloned) {
+        await gitService.removeManagedRepository(repositoryPath);
+      }
+      throw error;
     }
-    const result = repository.createProject({
-      name: input.name,
-      path: git.path,
-      defaultBaseRef: defaultBase.targetBranch,
-      headCommit: defaultBase.baseCommit,
+  });
+
+  app.post("/api/projects/:projectId/sync", async (request) => {
+    requireRequestRole(request, "editor");
+    const { projectId } = projectParamSchema.parse(request.params);
+    const context = repository.getProjectExecutionContext(projectId);
+    if (!context || !context.project.repositoryUrl) {
+      throw new HttpError(404, "远程项目不存在", "NOT_FOUND");
+    }
+    await gitService.fetchRepository(context.repositoryPath);
+    const base = await gitService.resolveRemoteTargetBase({
+      repositoryPath: context.repositoryPath,
+      targetBranch: context.project.defaultBaseRef,
+      fallbackRef: context.project.defaultBaseRef,
     });
+    const result = repository.recordProjectFetch(projectId, base.baseCommit);
     publish(eventBus, result);
-    return reply.code(201).send({ project: result.value });
+    return { project: result.value };
+  });
+
+  app.get("/api/skills", async (request) => {
+    requireRequestRole(request, "viewer");
+    return { skills: skillService.list() };
+  });
+
+  app.get("/api/skills/:skillId", async (request) => {
+    requireRequestRole(request, "viewer");
+    const { skillId } = skillParamSchema.parse(request.params);
+    const details = await skillService.get(skillId);
+    if (!details) {
+      throw new HttpError(404, "Skill 不存在", "NOT_FOUND");
+    }
+    return details;
+  });
+
+  app.post("/api/skills/validate", async (request) => {
+    requireRequestRole(request, "editor");
+    const input = validateSkillInputSchema.parse(request.body);
+    return { validation: skillService.validate(input.content) };
+  });
+
+  app.post("/api/skills", async (request, reply) => {
+    const identity = requireRequestRole(request, "editor");
+    const input = createSkillInputSchema.parse(request.body);
+    const result = await skillService.create(input.content, identity.id);
+    publish(eventBus, result);
+    return reply.code(201).send({ skill: result.value });
+  });
+
+  app.post("/api/skills/:skillId/versions", async (request, reply) => {
+    const identity = requireRequestRole(request, "editor");
+    const { skillId } = skillParamSchema.parse(request.params);
+    const input = createSkillVersionInputSchema.parse(request.body);
+    const result = await skillService.createVersion(skillId, input, identity.id);
+    publish(eventBus, result);
+    return reply.code(201).send({ skill: result.value, replayed: result.replayed });
+  });
+
+  app.patch("/api/skills/:skillId", async (request) => {
+    const identity = requireRequestRole(request, "editor");
+    const { skillId } = skillParamSchema.parse(request.params);
+    const input = updateSkillInputSchema.parse(request.body);
+    const result = skillService.setEnabled(skillId, input, identity.id);
+    publish(eventBus, result);
+    return { skill: result.value, replayed: result.replayed };
   });
 
   app.get("/api/tasks", async (request) => {
-    requireRole(request, repository, "viewer");
+    requireRequestRole(request, "viewer");
     return { tasks: repository.listTasks() };
   });
 
   app.get("/api/tasks/:taskId", async (request) => {
-    requireRole(request, repository, "viewer");
+    requireRequestRole(request, "viewer");
     const { taskId } = taskParamSchema.parse(request.params);
     const task = repository.getTask(taskId);
     if (!task) {
@@ -195,39 +291,40 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   app.post("/api/tasks", async (request, reply) => {
-    const identity = requireRole(request, repository, "editor");
+    const identity = requireRequestRole(request, "editor");
     const input = createTaskInputSchema.parse(request.body);
-    const project = repository.listProjects().find((item) => item.id === input.projectId);
-    if (!project) {
+    const context = repository.getProjectExecutionContext(input.projectId);
+    if (!context) {
       throw new HttpError(404, "项目不存在", "NOT_FOUND");
     }
-    const targetBase = await gitService.resolveTargetBase({
-      repositoryPath: project.path,
-      targetBranch: input.targetBranch,
-      fallbackRef: project.defaultBaseRef,
-    });
-    const result = repository.createTask({ ...input, targetBranch: targetBase.targetBranch });
+    if (!context.project.repositoryUrl) {
+      throw new HttpError(409, "旧本地项目需要重新注册远程 Git 仓库", "PROJECT_MIGRATION_REQUIRED");
+    }
+    const targetBranch = await gitService.validateBranchName(input.targetBranch);
+    const result = repository.createTask({ ...input, targetBranch });
     publish(eventBus, result);
     const task = autoQueueTask(result.value, identity.id);
     return reply.code(201).send({ task });
   });
 
   app.patch("/api/tasks/:taskId", async (request) => {
-    const identity = requireRole(request, repository, "editor");
+    const identity = requireRequestRole(request, "editor");
     const { taskId } = taskParamSchema.parse(request.params);
     const input = updateTaskInputSchema.parse(request.body);
     if (input.targetBranch) {
       const task = repository.getTask(taskId);
-      const project = repository.listProjects().find((item) => item.id === task?.projectId);
-      if (!task || !project) {
+      const context = task ? repository.getProjectExecutionContext(task.projectId) : null;
+      if (!task || !context) {
         throw new HttpError(404, "任务或项目不存在", "NOT_FOUND");
       }
-      const targetBase = await gitService.resolveTargetBase({
-        repositoryPath: project.path,
-        targetBranch: input.targetBranch,
-        fallbackRef: project.defaultBaseRef,
-      });
-      input.targetBranch = targetBase.targetBranch;
+      if (!context.project.repositoryUrl) {
+        throw new HttpError(
+          409,
+          "旧本地项目需要重新注册远程 Git 仓库",
+          "PROJECT_MIGRATION_REQUIRED",
+        );
+      }
+      input.targetBranch = await gitService.validateBranchName(input.targetBranch);
     }
     const result = repository.updateDraftTask(taskId, identity.id, input);
     publish(eventBus, result);
@@ -236,7 +333,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   app.post("/api/tasks/:taskId/confirm", async (request) => {
-    const identity = requireRole(request, repository, "editor");
+    const identity = requireRequestRole(request, "editor");
     const { taskId } = taskParamSchema.parse(request.params);
     const input = confirmTaskInputSchema.parse(request.body);
     const result = repository.confirmTask(taskId, identity.id, input);
@@ -246,7 +343,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   app.post("/api/tasks/:taskId/unconfirm", async (request) => {
-    const identity = requireRole(request, repository, "editor");
+    const identity = requireRequestRole(request, "editor");
     const { taskId } = taskParamSchema.parse(request.params);
     const input = taskCommandInputSchema.parse(request.body);
     const result = repository.unconfirmTask(
@@ -259,32 +356,27 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return { task: result.value, replayed: result.replayed };
   });
 
-  app.get("/api/runs", async (request) => {
-    requireRole(request, repository, "viewer");
-    const { limit } = runQuerySchema.parse(request.query);
-    return { runs: repository.listRuns(limit) };
-  });
-
-  app.get("/api/runs/:runId", async (request) => {
-    requireRole(request, repository, "viewer");
-    const { runId } = runParamSchema.parse(request.params);
-    const run = repository.getRun(runId);
-    if (!run) {
-      throw new HttpError(404, "执行记录不存在", "NOT_FOUND");
-    }
-    return {
-      run,
-      task: repository.getTask(run.taskId),
-      events: repository.getRunEvents(runId),
-    };
-  });
-
-  app.post("/api/runs/:runId/approve", async (request) => {
-    const identity = requireRole(request, repository, "operator");
-    const { runId } = runParamSchema.parse(request.params);
+  app.post("/api/tasks/:taskId/cancel", async (request) => {
+    const identity = requireRequestRole(request, "operator");
+    const { taskId } = taskParamSchema.parse(request.params);
     const input = taskCommandInputSchema.parse(request.body);
-    const result = repository.approveRun(
-      runId,
+    const result = worker.cancelTask(
+      taskId,
+      identity.id,
+      input.expectedVersion,
+      input.idempotencyKey,
+    );
+    publish(eventBus, result);
+    worker.wake();
+    return { ...result.value, replayed: result.replayed };
+  });
+
+  app.delete("/api/tasks/:taskId", async (request) => {
+    const identity = requireRequestRole(request, "editor");
+    const { taskId } = taskParamSchema.parse(request.params);
+    const input = taskCommandInputSchema.parse(request.body);
+    const result = repository.deleteTask(
+      taskId,
       identity.id,
       input.expectedVersion,
       input.idempotencyKey,
@@ -293,30 +385,49 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return { task: result.value, replayed: result.replayed };
   });
 
-  app.post("/api/runs/:runId/apply", async (request) => {
-    const identity = requireLocalEditor(request, repository);
+  app.get("/api/runs", async (request) => {
+    requireRequestRole(request, "viewer");
+    const { limit } = runQuerySchema.parse(request.query);
+    return { runs: repository.listRuns(limit) };
+  });
+
+  app.get("/api/runs/:runId", async (request) => {
+    requireRequestRole(request, "viewer");
+    const { runId } = runParamSchema.parse(request.params);
+    const run = repository.getRun(runId);
+    if (!run) {
+      throw new HttpError(404, "执行记录不存在", "NOT_FOUND");
+    }
+    return {
+      run,
+      task: repository.getTaskIncludingDeleted(run.taskId),
+      events: repository.getRunEvents(runId),
+    };
+  });
+
+  app.post("/api/runs/:runId/approve", async (request) => {
+    const identity = requireRequestRole(request, "operator");
     const { runId } = runParamSchema.parse(request.params);
     const input = taskCommandInputSchema.parse(request.body);
-    const context = repository.getRunApplicationContext(runId, input.expectedVersion);
-    const application = await gitService.applyCommitToWorkingTree({
-      repositoryPath: context.projectPath,
-      targetBranch: context.targetBranch,
-      baseCommit: context.baseCommit,
-      resultCommit: context.resultCommit,
-    });
-    const result = repository.recordRunApplication(
+    const replay = repository.getRunApprovalReplay(identity.id, input.idempotencyKey);
+    if (replay) {
+      return { ...replay, replayed: true };
+    }
+    const context = repository.getRunPublishContext(runId, input.expectedVersion);
+    const publication = await gitService.pushResult(context);
+    const result = repository.approvePublishedRun(
       runId,
       identity.id,
       input.expectedVersion,
       input.idempotencyKey,
-      application,
+      publication,
     );
     publish(eventBus, result);
-    return { application: result.value, replayed: result.replayed };
+    return { ...result.value, replayed: result.replayed };
   });
 
   app.post("/api/runs/:runId/reject", async (request) => {
-    const identity = requireRole(request, repository, "operator");
+    const identity = requireRequestRole(request, "operator");
     const { runId } = runParamSchema.parse(request.params);
     const input = rejectRunInputSchema.parse(request.body);
     const result = repository.rejectRun(
@@ -332,7 +443,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   app.post("/api/worker/status", async (request) => {
-    requireRole(request, repository, "operator");
+    requireRequestRole(request, "operator");
     const input = z.object({ status: workerStatusSchema }).parse(request.body);
     if (input.status !== "RUNNING" && input.status !== "PAUSED") {
       throw new HttpError(400, "只允许启动或暂停 Worker", "INVALID_WORKER_STATUS");
@@ -341,65 +452,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return { worker: repository.getWorkerState() };
   });
 
-  app.get("/api/devices", async (request) => {
-    requireLocalEditor(request, repository);
-    return { devices: repository.listDevices() };
-  });
-
-  app.post("/api/devices/pairing", async (request, reply) => {
-    requireLocalEditor(request, repository);
-    const input = createPairingSessionInputSchema.parse(request.body ?? {});
-    const pairing = repository.createPairingSession(
-      input.externalBaseUrl ?? config.externalBaseUrl,
-    );
-    return reply.code(201).send({ pairing });
-  });
-
-  app.post("/api/pair", async (request, reply) => {
-    const input = pairDeviceInputSchema.parse(request.body);
-    const result = repository.pairDevice(input.code, input.name);
-    eventBus.publish(result.events);
-    reply.setCookie(deviceCookieName, result.token, {
-      path: "/",
-      httpOnly: true,
-      sameSite: "strict",
-      secure: request.protocol === "https",
-      maxAge: 60 * 60 * 24 * 90,
-    });
-    return reply.code(201).send({ device: result.device });
-  });
-
-  app.patch("/api/devices/:deviceId", async (request) => {
-    const identity = requireLocalEditor(request, repository);
-    const { deviceId } = deviceParamSchema.parse(request.params);
-    const input = updateDeviceInputSchema.parse(request.body);
-    const result = repository.updateDeviceRole(
-      deviceId,
-      input.role,
-      input.expectedVersion,
-      identity.id,
-      input.idempotencyKey,
-    );
-    publish(eventBus, result);
-    return { device: result.value, replayed: result.replayed };
-  });
-
-  app.delete("/api/devices/:deviceId", async (request) => {
-    const identity = requireLocalEditor(request, repository);
-    const { deviceId } = deviceParamSchema.parse(request.params);
-    const input = taskCommandInputSchema.parse(request.body);
-    const result = repository.revokeDevice(
-      deviceId,
-      input.expectedVersion,
-      identity.id,
-      input.idempotencyKey,
-    );
-    publish(eventBus, result);
-    return { device: result.value, replayed: result.replayed };
-  });
-
   app.get("/api/events", async (request, reply) => {
-    requireRole(request, repository, "viewer");
+    requireRequestRole(request, "viewer");
     const headerEventId = request.headers["last-event-id"];
     const query = z
       .object({ after: z.coerce.number().int().nonnegative().optional() })

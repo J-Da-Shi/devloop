@@ -17,7 +17,10 @@ export interface AgentWorkerOptions {
   now?: () => number;
   available?: boolean;
   runnerVersion?: string | null;
-  gitService?: Pick<GitService, "resolveTargetBase" | "createWorktree" | "commitWorktree">;
+  gitService?: Pick<
+    GitService,
+    "fetchRepository" | "resolveRemoteTargetBase" | "createWorktree" | "commitWorktree"
+  >;
   worktreesPath?: string;
 }
 
@@ -40,7 +43,14 @@ export class AgentWorker {
   private timer: NodeJS.Timeout | null = null;
   private pulling = false;
   private execution: Promise<void> | null = null;
-  private activeHandle: RunnerHandle | null = null;
+  private activeExecution: {
+    taskId: string;
+    runId: string;
+    executionToken: string;
+    controller: AbortController;
+    handle: RunnerHandle | null;
+    cancelled: boolean;
+  } | null = null;
 
   public constructor(
     private readonly repository: DevLoopRepository,
@@ -58,10 +68,15 @@ export class AgentWorker {
     const persisted = this.repository.getWorkerState();
     if (persisted.activeRunId) {
       try {
+        const interruptedRun = this.repository.getRun(persisted.activeRunId);
+        if (!interruptedRun) {
+          throw new Error("找不到上次执行记录");
+        }
         this.publish(
           this.repository.failRun(
             persisted.activeRunId,
-            "本地服务重启，上一轮执行已标记为中断，请检查后重试。",
+            interruptedRun.executionToken,
+            "服务器重启，上一轮执行已标记为中断，请检查后重试。",
           ),
         );
       } catch {
@@ -83,7 +98,8 @@ export class AgentWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.activeHandle?.cancel();
+    this.activeExecution?.controller.abort();
+    this.activeExecution?.handle?.cancel();
     await this.execution?.catch(() => undefined);
     if (this.repository.getWorkerState().status !== "STOPPED") {
       this.publish(this.repository.setWorkerStatus("STOPPED"));
@@ -100,6 +116,22 @@ export class AgentWorker {
     if (nextStatus === "RUNNING") {
       this.wake();
     }
+  }
+
+  cancelTask(taskId: string, deviceId: string, expectedVersion: number, idempotencyKey: string) {
+    const result = this.repository.cancelRunningTask(
+      taskId,
+      deviceId,
+      expectedVersion,
+      idempotencyKey,
+    );
+    const active = this.activeExecution;
+    if (active?.taskId === taskId && active.runId === result.value.run.id) {
+      active.cancelled = true;
+      active.controller.abort();
+      active.handle?.cancel();
+    }
+    return result;
   }
 
   pullNextTask(): boolean {
@@ -130,7 +162,9 @@ export class AgentWorker {
       const execution = this.execute(claimed.value).finally(() => {
         if (this.execution === execution) {
           this.execution = null;
-          this.activeHandle = null;
+        }
+        if (this.activeExecution?.runId === claimed.value.run.id) {
+          this.activeExecution = null;
         }
         if (this.timer) {
           this.wake();
@@ -149,14 +183,27 @@ export class AgentWorker {
 
   private async execute(claimed: ClaimedTask): Promise<void> {
     const controller = new AbortController();
-    const emit = (event: RunnerEvent) => this.handleRunnerEvent(claimed.run.id, event);
+    const active = {
+      taskId: claimed.task.id,
+      runId: claimed.run.id,
+      executionToken: claimed.run.executionToken,
+      controller,
+      handle: null as RunnerHandle | null,
+      cancelled: false,
+    };
+    this.activeExecution = active;
+    const emit = (event: RunnerEvent) =>
+      this.handleRunnerEvent(claimed.run.id, claimed.run.executionToken, event);
 
     try {
       const workspace =
         this.runner.id === "codex"
           ? await this.prepareWorkspace(claimed)
           : { path: null, baseCommit: claimed.run.baseCommit };
-      this.activeHandle = this.runner.start(
+      if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+        return;
+      }
+      active.handle = this.runner.start(
         {
           runId: claimed.run.id,
           taskId: claimed.task.id,
@@ -170,7 +217,10 @@ export class AgentWorker {
         emit,
       );
 
-      const result = await this.activeHandle.result;
+      const result = await active.handle.result;
+      if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+        return;
+      }
       const summary = formatRunnerResult(result);
       if (result.outcome === "succeeded") {
         const resultCommit = await this.commitWorkspace(
@@ -178,31 +228,67 @@ export class AgentWorker {
           workspace.path,
           workspace.baseCommit,
         );
+        if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+          return;
+        }
         this.publish(
-          this.repository.completeRun(claimed.run.id, summary, resultCommit ?? undefined),
+          this.repository.completeRun(
+            claimed.run.id,
+            claimed.run.executionToken,
+            summary,
+            resultCommit ?? undefined,
+          ),
         );
       } else if (result.outcome === "blocked") {
-        this.publish(this.repository.blockRun(claimed.run.id, summary));
+        this.publish(this.repository.blockRun(claimed.run.id, claimed.run.executionToken, summary));
       } else {
-        this.publish(this.repository.failRun(claimed.run.id, summary));
+        this.publish(this.repository.failRun(claimed.run.id, claimed.run.executionToken, summary));
       }
     } catch (error) {
+      if (
+        active.cancelled ||
+        !this.isExecutionActive(claimed.run.id, claimed.run.executionToken) ||
+        this.isInvalidExecutionError(error)
+      ) {
+        return;
+      }
       const message =
         error instanceof Error && error.name === "AbortError"
-          ? "执行已由本机服务中断。"
+          ? "执行已由服务器中断。"
           : error instanceof Error
             ? error.message
             : "执行器发生未知错误。";
-      this.publish(this.repository.failRun(claimed.run.id, message));
+      try {
+        this.publish(this.repository.failRun(claimed.run.id, claimed.run.executionToken, message));
+      } catch (failureError) {
+        if (!this.isInvalidExecutionError(failureError)) {
+          throw failureError;
+        }
+      }
     }
   }
 
-  private handleRunnerEvent(runId: string, event: RunnerEvent): void {
+  private handleRunnerEvent(runId: string, executionToken: string, event: RunnerEvent): void {
     const status = phaseByEvent[event.type];
-    if (!status) {
+    if (!status || !this.isExecutionActive(runId, executionToken)) {
       return;
     }
-    this.publish(this.repository.setRunPhase(runId, status, event.type, event.message, event.data));
+    try {
+      this.publish(
+        this.repository.setRunPhase(
+          runId,
+          executionToken,
+          status,
+          event.type,
+          event.message,
+          event.data,
+        ),
+      );
+    } catch (error) {
+      if (!this.isInvalidExecutionError(error)) {
+        throw error;
+      }
+    }
   }
 
   private async prepareWorkspace(
@@ -217,12 +303,14 @@ export class AgentWorker {
     this.publish(
       this.repository.setRunPhase(
         claimed.run.id,
+        claimed.run.executionToken,
         "PREPARING",
         "runner.preparing",
         `正在从目标分支 ${claimed.run.targetBranch} 准备独立 Git Worktree`,
       ),
     );
-    const targetBase = await this.options.gitService.resolveTargetBase({
+    await this.options.gitService.fetchRepository(claimed.projectPath);
+    const targetBase = await this.options.gitService.resolveRemoteTargetBase({
       repositoryPath: claimed.projectPath,
       targetBranch: claimed.run.targetBranch,
       fallbackRef: claimed.projectDefaultBaseRef,
@@ -261,6 +349,7 @@ export class AgentWorker {
     this.publish(
       this.repository.setRunPhase(
         claimed.run.id,
+        claimed.run.executionToken,
         "VERIFYING",
         "runner.verifying",
         "Codex 执行完成，正在固化 Git 结果",
@@ -271,15 +360,36 @@ export class AgentWorker {
       worktreePath,
       message: `DevLoop: ${title}`,
     });
+    if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+      return resultCommit;
+    }
     this.publish(
       this.repository.setRunPhase(
         claimed.run.id,
+        claimed.run.executionToken,
         "PREPARING_REVIEW",
         "runner.review",
         `结果 Commit 已创建：${resultCommit.slice(0, 12)}`,
       ),
     );
     return resultCommit;
+  }
+
+  private isExecutionActive(runId: string, executionToken: string): boolean {
+    const active = this.activeExecution;
+    return active?.runId === runId && active.executionToken === executionToken && !active.cancelled;
+  }
+
+  private isInvalidExecutionError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    return (
+      error.message.includes("执行令牌已经失效") ||
+      error.message.includes("不再由此 Run 执行") ||
+      error.message.includes("已经失去基础 Commit 所有权") ||
+      error.message.includes("已经失去 Worktree 所有权")
+    );
   }
 
   private publish(result: EventfulResult<unknown>): void {

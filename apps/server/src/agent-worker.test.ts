@@ -18,12 +18,16 @@ const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", i
 class ControlledRunner implements AgentRunner {
   readonly id: string;
   readonly inputs: RunnerInput[] = [];
+  cancelCount = 0;
   private readonly pending: Array<{
     resolve: (result: RunnerResult) => void;
     reject: (error: Error) => void;
   }> = [];
 
-  constructor(id = "controlled") {
+  constructor(
+    id = "controlled",
+    private readonly ignoreCancellation = false,
+  ) {
     this.id = id;
   }
 
@@ -48,11 +52,22 @@ class ControlledRunner implements AgentRunner {
       resolveResult = resolve;
       rejectResult = reject;
     });
-    this.pending.push({ resolve: resolveResult, reject: rejectResult });
+    const pending = { resolve: resolveResult, reject: rejectResult };
+    this.pending.push(pending);
 
     return {
       result,
-      cancel: () => rejectResult(new DOMException("任务已取消", "AbortError")),
+      cancel: () => {
+        this.cancelCount += 1;
+        if (this.ignoreCancellation) {
+          return;
+        }
+        const index = this.pending.indexOf(pending);
+        if (index >= 0) {
+          this.pending.splice(index, 1);
+        }
+        rejectResult(new DOMException("任务已取消", "AbortError"));
+      },
     };
   }
 
@@ -66,6 +81,7 @@ class ControlledRunner implements AgentRunner {
 }
 
 class ControlledGitService {
+  readonly fetched: string[] = [];
   readonly created: Array<{
     repositoryPath: string;
     worktreePath: string;
@@ -74,7 +90,11 @@ class ControlledGitService {
   }> = [];
   readonly committed: Array<{ worktreePath: string; message: string }> = [];
 
-  async resolveTargetBase(input: {
+  async fetchRepository(repositoryPath: string): Promise<void> {
+    this.fetched.push(repositoryPath);
+  }
+
+  async resolveRemoteTargetBase(input: {
     repositoryPath: string;
     targetBranch: string;
     fallbackRef: string;
@@ -180,7 +200,8 @@ describe("AgentWorker", () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "测试项目",
-      path: "/tmp/devloop-agent-worker-test",
+      repositoryUrl: "git@example.com:team/agent-worker.git",
+      repositoryPath: "/tmp/devloop-agent-worker-test",
       defaultBaseRef: "main",
       headCommit: "test-base-commit",
     }).value;
@@ -216,7 +237,8 @@ describe("AgentWorker", () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "测试项目",
-      path: "/tmp/devloop-agent-worker-paused-test",
+      repositoryUrl: "git@example.com:team/agent-worker-paused.git",
+      repositoryPath: "/tmp/devloop-agent-worker-paused-test",
       defaultBaseRef: "main",
       headCommit: "test-base-commit",
     }).value;
@@ -237,7 +259,8 @@ describe("AgentWorker", () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "测试项目",
-      path: "/tmp/devloop-agent-worker-failure-test",
+      repositoryUrl: "git@example.com:team/agent-worker-failure.git",
+      repositoryPath: "/tmp/devloop-agent-worker-failure-test",
       defaultBaseRef: "main",
       headCommit: "test-base-commit",
     }).value;
@@ -264,7 +287,8 @@ describe("AgentWorker", () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "测试项目",
-      path: "/tmp/devloop-agent-worker-delay-test",
+      repositoryUrl: "git@example.com:team/agent-worker-delay.git",
+      repositoryPath: "/tmp/devloop-agent-worker-delay-test",
       defaultBaseRef: "main",
       headCommit: "test-base-commit",
     }).value;
@@ -290,11 +314,48 @@ describe("AgentWorker", () => {
     await waitForTaskStatus(repository, task.id, "REVIEW");
   });
 
+  it("取消当前执行后不会被迟到结果覆盖，并可继续领取下一条任务", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "取消执行测试项目",
+      repositoryUrl: "git@example.com:team/agent-worker-cancel.git",
+      repositoryPath: "/tmp/devloop-agent-worker-cancel-test",
+      defaultBaseRef: "main",
+      headCommit: "test-base-commit",
+    }).value;
+    const first = createReadyTask(repository, project.id, "需要取消的任务", 80);
+    const second = createReadyTask(repository, project.id, "取消后继续的任务", 40);
+    const runner = new ControlledRunner("controlled", true);
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const running = repository.getTask(first.id);
+    expect(running?.status).toBe("RUNNING");
+
+    worker.cancelTask(first.id, "local-desktop", running!.version, randomUUID());
+    await waitForTaskStatus(repository, first.id, "CANCELLED");
+    expect(runner.cancelCount).toBe(1);
+    expect(repository.getRun(running!.latestRunId!)?.status).toBe("CANCELLED");
+    expect(worker.pullNextTask()).toBe(false);
+
+    runner.succeedNext();
+
+    await waitFor(() => worker.pullNextTask());
+    expect(runner.inputs[1]?.taskId).toBe(second.id);
+    runner.succeedNext();
+    await waitForTaskStatus(repository, second.id, "REVIEW");
+    expect(repository.getTask(first.id)?.status).toBe("CANCELLED");
+  });
+
   it("Codex 执行前创建 Worktree，成功后保存结果 Commit", async () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "Codex 测试项目",
-      path: "/tmp/devloop-codex-worker-project",
+      repositoryUrl: "git@example.com:team/codex-worker.git",
+      repositoryPath: "/tmp/devloop-codex-worker-project",
       defaultBaseRef: "main",
       headCommit: "base-commit",
     }).value;
@@ -312,8 +373,9 @@ describe("AgentWorker", () => {
     await waitFor(() => runner.inputs.length === 1);
     const runId = repository.getTask(task.id)?.latestRunId;
     expect(runId).toBeTruthy();
+    expect(gitService.fetched).toEqual(["/tmp/devloop-codex-worker-project"]);
     expect(gitService.created[0]).toMatchObject({
-      repositoryPath: project.path,
+      repositoryPath: "/tmp/devloop-codex-worker-project",
       branchName: `devloop/run/${runId}`,
       baseCommit: "base-commit",
     });

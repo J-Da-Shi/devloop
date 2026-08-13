@@ -1,0 +1,13 @@
+node_modules
+.pnpm-store
+.git
+.devloop-data
+apps/desktop
+apps/web/dist
+apps/server/dist
+packages/*/dist
+coverage
+playwright-report
+test-results
+*.log
+.DS_Store

@@ -8,14 +8,17 @@ import {
   type PairedDevice,
   type Project,
   type RunApplicationResult,
+  type RunPublishResult,
   type RunEvent,
   type RunStatus,
+  type Skill,
+  type SkillVersion,
   type Task,
   type TaskRun,
   type TaskStatus,
   type WorkerState,
 } from "@devloop/shared";
-import { and, desc, eq, gt, isNull, lte, max } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lte, max } from "drizzle-orm";
 import type { DatabaseHandle } from "./client.js";
 import {
   domainEvents,
@@ -25,6 +28,8 @@ import {
   remoteCommands,
   reviewDecisions,
   runEvents,
+  skills,
+  skillVersions,
   taskRevisions,
   taskRuns,
   tasks,
@@ -33,6 +38,8 @@ import {
   type PairedDeviceRow,
   type ProjectRow,
   type RunEventRow,
+  type SkillRow,
+  type SkillVersionRow,
   type TaskRow,
   type TaskRunRow,
 } from "./schema.js";
@@ -43,7 +50,7 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const parseStringArray = (value: string): string[] => {
   const parsed: unknown = JSON.parse(value);
   if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
-    throw new Error("Invalid string array payload in database");
+    throw new Error("数据库中的字符串数组格式无效");
   }
   return parsed;
 };
@@ -51,10 +58,11 @@ const parseStringArray = (value: string): string[] => {
 const mapProject = (row: ProjectRow): Project => ({
   id: row.id,
   name: row.name,
-  path: row.path,
+  repositoryUrl: row.repositoryUrl,
   defaultBaseRef: row.defaultBaseRef,
   integrationRef: row.integrationRef,
   integrationCommit: row.integrationCommit,
+  lastFetchedAt: row.lastFetchedAt,
   version: row.version,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
@@ -72,6 +80,7 @@ const mapTask = (row: TaskRow, projectName: string): Task => ({
   priority: row.priority,
   activeRevisionId: row.activeRevisionId,
   latestRunId: row.latestRunId,
+  deletedAt: row.deletedAt,
   version: row.version,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
@@ -89,6 +98,8 @@ const mapRun = (row: TaskRunRow): TaskRun => ({
   branchName: row.branchName,
   runnerVersion: row.runnerVersion,
   executionToken: row.executionToken,
+  pushedAt: row.pushedAt,
+  pushedCommit: row.pushedCommit,
   summary: row.summary,
   startedAt: row.startedAt,
   finishedAt: row.finishedAt,
@@ -113,6 +124,28 @@ const mapDevice = (row: PairedDeviceRow): PairedDevice => ({
   createdAt: row.createdAt,
 });
 
+const mapSkillVersion = (row: SkillVersionRow): SkillVersion => ({
+  id: row.id,
+  skillId: row.skillId,
+  version: row.version,
+  contentHash: row.contentHash,
+  createdByDeviceId: row.createdByDeviceId,
+  createdAt: row.createdAt,
+});
+
+const mapSkill = (row: SkillRow, currentVersion: SkillVersionRow): Skill => ({
+  id: row.id,
+  name: row.name,
+  description: row.description,
+  enabled: row.enabled,
+  currentVersionId: row.currentVersionId,
+  currentVersion: currentVersion.version,
+  contentHash: currentVersion.contentHash,
+  version: row.version,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
 const mapDomainEvent = (row: DomainEventRow): DomainEvent => ({
   id: row.id,
   aggregateType: row.aggregateType as DomainEvent["aggregateType"],
@@ -129,10 +162,18 @@ export interface EventfulResult<T> {
 }
 
 export interface RegisteredProjectInput {
+  id?: string;
   name: string;
-  path: string;
+  repositoryUrl: string | null;
+  repositoryPath: string;
   defaultBaseRef: string;
   headCommit: string;
+  lastFetchedAt?: string | null;
+}
+
+export interface ProjectExecutionContext {
+  project: Project;
+  repositoryPath: string;
 }
 
 export interface ClaimedTask {
@@ -151,6 +192,31 @@ export interface RunApplicationContext {
   resultCommit: string;
 }
 
+export interface RunPublishContext {
+  repositoryPath: string;
+  targetBranch: string;
+  baseCommit: string;
+  resultCommit: string;
+}
+
+export interface PublishedRunApproval {
+  task: Task;
+  publication: RunPublishResult;
+}
+
+export interface StoredSkillVersionInput {
+  name: string;
+  description: string;
+  contentHash: string;
+  storagePath: string;
+}
+
+export interface StoredSkillDetails {
+  skill: Skill;
+  versions: SkillVersion[];
+  storagePath: string;
+}
+
 export class DevLoopRepository {
   public constructor(private readonly handle: DatabaseHandle) {}
 
@@ -159,7 +225,7 @@ export class DevLoopRepository {
   }
 
   createProject(input: RegisteredProjectInput): EventfulResult<Project> {
-    const id = randomUUID();
+    const id = input.id ?? randomUUID();
     const timestamp = now();
     const integrationRef = `refs/devloop/${id}/accepted`;
 
@@ -169,7 +235,9 @@ export class DevLoopRepository {
         .values({
           id,
           name: input.name,
-          path: input.path,
+          path: input.repositoryPath,
+          repositoryUrl: input.repositoryUrl,
+          lastFetchedAt: input.lastFetchedAt ?? timestamp,
           defaultBaseRef: input.defaultBaseRef,
           integrationRef,
           integrationCommit: input.headCommit,
@@ -188,9 +256,211 @@ export class DevLoopRepository {
     return result;
   }
 
-  findProjectByPath(path: string): Project | null {
-    const row = this.handle.db.select().from(projects).where(eq(projects.path, path)).get();
+  findProjectByRepositoryUrl(repositoryUrl: string): Project | null {
+    const row = this.handle.db
+      .select()
+      .from(projects)
+      .where(eq(projects.repositoryUrl, repositoryUrl))
+      .get();
     return row ? mapProject(row) : null;
+  }
+
+  getProjectExecutionContext(projectId: string): ProjectExecutionContext | null {
+    const row = this.handle.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    return row ? { project: mapProject(row), repositoryPath: row.path } : null;
+  }
+
+  recordProjectFetch(projectId: string, headCommit?: string): EventfulResult<Project> {
+    return this.handle.sqlite.transaction(() => {
+      const current = this.requireProjectRow(projectId);
+      const timestamp = now();
+      const row = this.handle.db
+        .update(projects)
+        .set({
+          lastFetchedAt: timestamp,
+          integrationCommit: headCommit ?? current.integrationCommit,
+          version: current.version + 1,
+          updatedAt: timestamp,
+        })
+        .where(and(eq(projects.id, projectId), eq(projects.version, current.version)))
+        .returning()
+        .get();
+      if (!row) {
+        throw new Error("Version conflict: 项目已被其他请求更新");
+      }
+      const event = this.insertDomainEvent("project", projectId, "project.synced", {
+        projectId,
+        lastFetchedAt: timestamp,
+      });
+      return { value: mapProject(row), events: [event], replayed: false };
+    })();
+  }
+
+  listSkills(): Skill[] {
+    return this.handle.db
+      .select({ skill: skills, currentVersion: skillVersions })
+      .from(skills)
+      .innerJoin(skillVersions, eq(skillVersions.id, skills.currentVersionId))
+      .orderBy(skills.name)
+      .all()
+      .map(({ skill, currentVersion }) => mapSkill(skill, currentVersion));
+  }
+
+  getSkillDetails(skillId: string): StoredSkillDetails | null {
+    const current = this.handle.db
+      .select({ skill: skills, currentVersion: skillVersions })
+      .from(skills)
+      .innerJoin(skillVersions, eq(skillVersions.id, skills.currentVersionId))
+      .where(eq(skills.id, skillId))
+      .get();
+    if (!current) {
+      return null;
+    }
+    const versions = this.handle.db
+      .select()
+      .from(skillVersions)
+      .where(eq(skillVersions.skillId, skillId))
+      .orderBy(desc(skillVersions.version))
+      .all();
+    return {
+      skill: mapSkill(current.skill, current.currentVersion),
+      versions: versions.map(mapSkillVersion),
+      storagePath: current.currentVersion.storagePath,
+    };
+  }
+
+  createSkill(input: StoredSkillVersionInput, deviceId: string): EventfulResult<Skill> {
+    const skillId = randomUUID();
+    const versionId = randomUUID();
+    const timestamp = now();
+    return this.handle.sqlite.transaction(() => {
+      const skillRow = this.handle.db
+        .insert(skills)
+        .values({
+          id: skillId,
+          name: input.name,
+          description: input.description,
+          enabled: true,
+          currentVersionId: versionId,
+          version: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })
+        .returning()
+        .get();
+      const versionRow = this.handle.db
+        .insert(skillVersions)
+        .values({
+          id: versionId,
+          skillId,
+          version: 1,
+          contentHash: input.contentHash,
+          storagePath: input.storagePath,
+          createdByDeviceId: deviceId,
+          createdAt: timestamp,
+        })
+        .returning()
+        .get();
+      const event = this.insertDomainEvent("skill", skillId, "skill.created", {
+        skillId,
+        version: 1,
+      });
+      return { value: mapSkill(skillRow, versionRow), events: [event], replayed: false };
+    })();
+  }
+
+  createSkillVersion(
+    skillId: string,
+    deviceId: string,
+    input: StoredSkillVersionInput & { expectedVersion: number; idempotencyKey: string },
+  ): EventfulResult<Skill> {
+    return this.executeIdempotent(
+      deviceId,
+      input.idempotencyKey,
+      "skill.create_version",
+      input.expectedVersion,
+      () => {
+        const current = this.requireSkillRow(skillId);
+        this.assertVersion(current.version, input.expectedVersion);
+        if (input.name !== current.name) {
+          throw new Error("Skill 名称发布后不能修改");
+        }
+        const currentVersion = this.requireSkillVersionRow(current.currentVersionId);
+        if (currentVersion.contentHash === input.contentHash) {
+          throw new Error("Skill 内容没有变化");
+        }
+        const nextVersion = currentVersion.version + 1;
+        const versionId = randomUUID();
+        const timestamp = now();
+        const versionRow = this.handle.db
+          .insert(skillVersions)
+          .values({
+            id: versionId,
+            skillId,
+            version: nextVersion,
+            contentHash: input.contentHash,
+            storagePath: input.storagePath,
+            createdByDeviceId: deviceId,
+            createdAt: timestamp,
+          })
+          .returning()
+          .get();
+        const skillRow = this.handle.db
+          .update(skills)
+          .set({
+            description: input.description,
+            currentVersionId: versionId,
+            version: current.version + 1,
+            updatedAt: timestamp,
+          })
+          .where(and(eq(skills.id, skillId), eq(skills.version, input.expectedVersion)))
+          .returning()
+          .get();
+        if (!skillRow) {
+          throw new Error("Version conflict: Skill 已被其他设备修改");
+        }
+        const event = this.insertDomainEvent("skill", skillId, "skill.version_created", {
+          skillId,
+          version: nextVersion,
+        });
+        return { value: mapSkill(skillRow, versionRow), events: [event] };
+      },
+    );
+  }
+
+  setSkillEnabled(
+    skillId: string,
+    enabled: boolean,
+    expectedVersion: number,
+    deviceId: string,
+    idempotencyKey: string,
+  ): EventfulResult<Skill> {
+    return this.executeIdempotent(
+      deviceId,
+      idempotencyKey,
+      "skill.set_enabled",
+      expectedVersion,
+      () => {
+        const current = this.requireSkillRow(skillId);
+        this.assertVersion(current.version, expectedVersion);
+        const currentVersion = this.requireSkillVersionRow(current.currentVersionId);
+        const timestamp = now();
+        const row = this.handle.db
+          .update(skills)
+          .set({ enabled, version: current.version + 1, updatedAt: timestamp })
+          .where(and(eq(skills.id, skillId), eq(skills.version, expectedVersion)))
+          .returning()
+          .get();
+        if (!row) {
+          throw new Error("Version conflict: Skill 已被其他设备修改");
+        }
+        const event = this.insertDomainEvent("skill", skillId, "skill.updated", {
+          skillId,
+          enabled,
+        });
+        return { value: mapSkill(row, currentVersion), events: [event] };
+      },
+    );
   }
 
   listTasks(): Task[] {
@@ -198,12 +468,23 @@ export class DevLoopRepository {
       .select({ task: tasks, projectName: projects.name })
       .from(tasks)
       .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .where(isNull(tasks.deletedAt))
       .orderBy(desc(tasks.updatedAt))
       .all()
       .map(({ task, projectName }) => mapTask(task, projectName));
   }
 
   getTask(taskId: string): Task | null {
+    const row = this.handle.db
+      .select({ task: tasks, projectName: projects.name })
+      .from(tasks)
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
+      .get();
+    return row ? mapTask(row.task, row.projectName) : null;
+  }
+
+  getTaskIncludingDeleted(taskId: string): Task | null {
     const row = this.handle.db
       .select({ task: tasks, projectName: projects.name })
       .from(tasks)
@@ -224,7 +505,7 @@ export class DevLoopRepository {
         .where(eq(projects.id, input.projectId))
         .get();
       if (!project) {
-        throw new Error("Project not found");
+        throw new Error("项目不存在");
       }
 
       const row = this.handle.db
@@ -240,6 +521,8 @@ export class DevLoopRepository {
           priority: input.priority,
           activeRevisionId: null,
           latestRunId: null,
+          deletedAt: null,
+          deletedByDeviceId: null,
           version: 0,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -272,7 +555,7 @@ export class DevLoopRepository {
       () => {
         const current = this.requireTaskRow(taskId);
         if (current.status !== "DRAFT") {
-          throw new Error("Only DRAFT tasks can be edited");
+          throw new Error("只有草稿任务可以编辑");
         }
         this.assertVersion(current.version, input.expectedVersion);
         const timestamp = now();
@@ -423,18 +706,68 @@ export class DevLoopRepository {
     );
   }
 
+  deleteTask(
+    taskId: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): EventfulResult<Task> {
+    return this.executeIdempotent(deviceId, idempotencyKey, "task.delete", expectedVersion, () => {
+      const current = this.requireTaskRow(taskId);
+      if (current.status === "RUNNING") {
+        throw new Error("执行中的任务不能删除，请先取消执行");
+      }
+      this.assertVersion(current.version, expectedVersion);
+      const project = this.requireProjectRow(current.projectId);
+      const timestamp = now();
+      const row = this.handle.db
+        .update(tasks)
+        .set({
+          deletedAt: timestamp,
+          deletedByDeviceId: deviceId,
+          version: current.version + 1,
+          updatedAt: timestamp,
+        })
+        .where(
+          and(eq(tasks.id, taskId), eq(tasks.version, expectedVersion), isNull(tasks.deletedAt)),
+        )
+        .returning()
+        .get();
+      if (!row) {
+        throw new Error("Version conflict: 任务已被其他设备修改");
+      }
+      const event = this.insertDomainEvent("task", taskId, "task.deleted", {
+        taskId,
+        deletedAt: timestamp,
+        deletedByDeviceId: deviceId,
+      });
+      return { value: mapTask(row, project.name), events: [event] };
+    });
+  }
+
   claimNextTask(
     runner: string,
     readyBefore = now(),
     runnerVersion: string | null = null,
   ): EventfulResult<ClaimedTask> | null {
     return this.handle.sqlite.transaction(() => {
-      const current = this.handle.db
-        .select()
+      const selected = this.handle.db
+        .select({ task: tasks })
         .from(tasks)
-        .where(and(eq(tasks.status, "READY"), lte(tasks.updatedAt, readyBefore)))
+        .innerJoin(
+          projects,
+          and(eq(projects.id, tasks.projectId), isNotNull(projects.repositoryUrl)),
+        )
+        .where(
+          and(
+            eq(tasks.status, "READY"),
+            isNull(tasks.deletedAt),
+            lte(tasks.updatedAt, readyBefore),
+          ),
+        )
         .orderBy(desc(tasks.priority), tasks.createdAt)
         .get();
+      const current = selected?.task;
       if (!current || !current.activeRevisionId) {
         return null;
       }
@@ -445,7 +778,7 @@ export class DevLoopRepository {
         .where(eq(taskRevisions.id, current.activeRevisionId))
         .get();
       if (!revision) {
-        throw new Error("Active task revision not found");
+        throw new Error("任务的当前 Revision 不存在");
       }
       const project = this.requireProjectRow(current.projectId);
       assertTaskTransition(current.status, "RUNNING");
@@ -481,6 +814,8 @@ export class DevLoopRepository {
           executionToken,
           processGroupId: null,
           runnerVersion: runner === "fake" ? "built-in" : runnerVersion,
+          pushedAt: null,
+          pushedCommit: null,
           runInputHash,
           summary: null,
           startedAt: timestamp,
@@ -543,7 +878,13 @@ export class DevLoopRepository {
       const row = this.handle.db
         .update(taskRuns)
         .set({ worktreePath: input.worktreePath, branchName: input.branchName })
-        .where(and(eq(taskRuns.id, runId), eq(taskRuns.executionToken, executionToken)))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
       if (!row) {
@@ -569,7 +910,7 @@ export class DevLoopRepository {
   ): EventfulResult<TaskRun> {
     return this.handle.sqlite.transaction(() => {
       const current = this.requireRunRow(runId);
-      if (current.executionToken !== executionToken) {
+      if (current.executionToken !== executionToken || current.finishedAt !== null) {
         throw new Error("当前 Run 的执行令牌已经失去基础 Commit 所有权");
       }
       const revision = this.handle.db
@@ -578,7 +919,7 @@ export class DevLoopRepository {
         .where(eq(taskRevisions.id, current.taskRevisionId))
         .get();
       if (!revision) {
-        throw new Error("Run revision not found");
+        throw new Error("执行记录关联的 Revision 不存在");
       }
       const runInputHash = hash(
         JSON.stringify({
@@ -592,7 +933,13 @@ export class DevLoopRepository {
       const row = this.handle.db
         .update(taskRuns)
         .set({ targetBranch: input.targetBranch, baseCommit: input.baseCommit, runInputHash })
-        .where(and(eq(taskRuns.id, runId), eq(taskRuns.executionToken, executionToken)))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
       if (!row) {
@@ -615,6 +962,7 @@ export class DevLoopRepository {
 
   setRunPhase(
     runId: string,
+    executionToken: string,
     status: RunStatus,
     eventType: string,
     message: string,
@@ -622,12 +970,24 @@ export class DevLoopRepository {
   ): EventfulResult<TaskRun> {
     return this.handle.sqlite.transaction(() => {
       const current = this.requireRunRow(runId);
+      if (current.executionToken !== executionToken || current.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const row = this.handle.db
         .update(taskRuns)
         .set({ status })
-        .where(and(eq(taskRuns.id, runId), eq(taskRuns.executionToken, current.executionToken)))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!row) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       this.insertRunEvent(runId, eventType, message, data ? { status, ...data } : { status });
       const event = this.insertDomainEvent("run", runId, "run.step_changed", {
         runId,
@@ -640,12 +1000,19 @@ export class DevLoopRepository {
 
   completeRun(
     runId: string,
+    executionToken: string,
     summary: string,
     resultCommit?: string,
   ): EventfulResult<{ task: Task; run: TaskRun }> {
     return this.handle.sqlite.transaction(() => {
       const currentRun = this.requireRunRow(runId);
+      if (currentRun.executionToken !== executionToken || currentRun.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (currentTask.status !== "RUNNING" || currentTask.latestRunId !== runId) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       assertTaskTransition(currentTask.status, "REVIEW");
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
@@ -657,9 +1024,18 @@ export class DevLoopRepository {
           resultCommit: resultCommit ?? currentRun.baseCommit,
           finishedAt: timestamp,
         })
-        .where(and(eq(taskRuns.id, runId), eq(taskRuns.executionToken, currentRun.executionToken)))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!runRow) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const taskRow = this.handle.db
         .update(tasks)
         .set({
@@ -667,9 +1043,20 @@ export class DevLoopRepository {
           version: currentTask.version + 1,
           updatedAt: timestamp,
         })
-        .where(eq(tasks.id, currentTask.id))
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, currentTask.version),
+            eq(tasks.status, "RUNNING"),
+            eq(tasks.latestRunId, runId),
+            isNull(tasks.deletedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!taskRow) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       const worker = this.getWorkerState();
       this.handle.db
         .update(workerState)
@@ -678,9 +1065,9 @@ export class DevLoopRepository {
           heartbeatAt: timestamp,
           version: worker.version + 1,
         })
-        .where(eq(workerState.id, "primary"))
+        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
         .run();
-      this.insertRunEvent(runId, "run.finished", "Review package is ready", { summary });
+      this.insertRunEvent(runId, "run.finished", "审核结果包已准备完成", { summary });
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
         from: "RUNNING",
@@ -698,25 +1085,55 @@ export class DevLoopRepository {
     })();
   }
 
-  failRun(runId: string, errorMessage: string): EventfulResult<{ task: Task; run: TaskRun }> {
+  failRun(
+    runId: string,
+    executionToken: string,
+    errorMessage: string,
+  ): EventfulResult<{ task: Task; run: TaskRun }> {
     return this.handle.sqlite.transaction(() => {
       const currentRun = this.requireRunRow(runId);
+      if (currentRun.executionToken !== executionToken || currentRun.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (currentTask.status !== "RUNNING" || currentTask.latestRunId !== runId) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       assertTaskTransition(currentTask.status, "FAILED");
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
       const runRow = this.handle.db
         .update(taskRuns)
         .set({ status: "FAILED", summary: errorMessage, finishedAt: timestamp })
-        .where(eq(taskRuns.id, runId))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!runRow) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const taskRow = this.handle.db
         .update(tasks)
         .set({ status: "FAILED", version: currentTask.version + 1, updatedAt: timestamp })
-        .where(eq(tasks.id, currentTask.id))
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, currentTask.version),
+            eq(tasks.status, "RUNNING"),
+            eq(tasks.latestRunId, runId),
+            isNull(tasks.deletedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!taskRow) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       const worker = this.getWorkerState();
       this.handle.db
         .update(workerState)
@@ -725,7 +1142,7 @@ export class DevLoopRepository {
           heartbeatAt: timestamp,
           version: worker.version + 1,
         })
-        .where(eq(workerState.id, "primary"))
+        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
         .run();
       this.insertRunEvent(runId, "run.failed", errorMessage, {});
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
@@ -745,25 +1162,55 @@ export class DevLoopRepository {
     })();
   }
 
-  blockRun(runId: string, reason: string): EventfulResult<{ task: Task; run: TaskRun }> {
+  blockRun(
+    runId: string,
+    executionToken: string,
+    reason: string,
+  ): EventfulResult<{ task: Task; run: TaskRun }> {
     return this.handle.sqlite.transaction(() => {
       const currentRun = this.requireRunRow(runId);
+      if (currentRun.executionToken !== executionToken || currentRun.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (currentTask.status !== "RUNNING" || currentTask.latestRunId !== runId) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       assertTaskTransition(currentTask.status, "BLOCKED");
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
       const runRow = this.handle.db
         .update(taskRuns)
         .set({ status: "BLOCKED", summary: reason, finishedAt: timestamp })
-        .where(eq(taskRuns.id, runId))
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!runRow) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
       const taskRow = this.handle.db
         .update(tasks)
         .set({ status: "BLOCKED", version: currentTask.version + 1, updatedAt: timestamp })
-        .where(eq(tasks.id, currentTask.id))
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, currentTask.version),
+            eq(tasks.status, "RUNNING"),
+            eq(tasks.latestRunId, runId),
+            isNull(tasks.deletedAt),
+          ),
+        )
         .returning()
         .get();
+      if (!taskRow) {
+        throw new Error("当前任务已经不再由此 Run 执行");
+      }
       const worker = this.getWorkerState();
       this.handle.db
         .update(workerState)
@@ -772,7 +1219,7 @@ export class DevLoopRepository {
           heartbeatAt: timestamp,
           version: worker.version + 1,
         })
-        .where(eq(workerState.id, "primary"))
+        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
         .run();
       this.insertRunEvent(runId, "run.blocked", reason, {});
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
@@ -792,28 +1239,199 @@ export class DevLoopRepository {
     })();
   }
 
-  approveRun(
+  cancelRunningTask(
+    taskId: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): EventfulResult<{ task: Task; run: TaskRun }> {
+    return this.executeIdempotent(deviceId, idempotencyKey, "task.cancel", expectedVersion, () => {
+      const currentTask = this.requireTaskRow(taskId);
+      if (currentTask.status !== "RUNNING" || !currentTask.latestRunId) {
+        throw new Error("只有执行中的任务可以取消");
+      }
+      this.assertVersion(currentTask.version, expectedVersion);
+      const currentRun = this.requireRunRow(currentTask.latestRunId);
+      const worker = this.getWorkerState();
+      if (
+        currentRun.taskId !== currentTask.id ||
+        currentRun.finishedAt !== null ||
+        worker.activeRunId !== currentRun.id
+      ) {
+        throw new Error("当前执行已经变化，请刷新后重试");
+      }
+      assertTaskTransition(currentTask.status, "CANCELLED");
+      const project = this.requireProjectRow(currentTask.projectId);
+      const timestamp = now();
+      const runRow = this.handle.db
+        .update(taskRuns)
+        .set({
+          status: "CANCELLED",
+          summary: "执行已由用户取消，Worktree 和运行日志已保留。",
+          executionToken: randomUUID(),
+          finishedAt: timestamp,
+        })
+        .where(
+          and(
+            eq(taskRuns.id, currentRun.id),
+            eq(taskRuns.executionToken, currentRun.executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!runRow) {
+        throw new Error("当前执行已经变化，请刷新后重试");
+      }
+      const taskRow = this.handle.db
+        .update(tasks)
+        .set({
+          status: "CANCELLED",
+          version: currentTask.version + 1,
+          updatedAt: timestamp,
+        })
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, expectedVersion),
+            eq(tasks.status, "RUNNING"),
+            isNull(tasks.deletedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!taskRow) {
+        throw new Error("当前执行已经变化，请刷新后重试");
+      }
+      this.handle.db
+        .update(workerState)
+        .set({
+          activeRunId: null,
+          heartbeatAt: timestamp,
+          version: worker.version + 1,
+        })
+        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, currentRun.id)))
+        .run();
+      this.insertRunEvent(currentRun.id, "run.cancelled", "执行已由用户取消", {
+        deviceId,
+      });
+      const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
+        taskId: currentTask.id,
+        from: "RUNNING",
+        to: "CANCELLED",
+      });
+      const runEvent = this.insertDomainEvent("run", currentRun.id, "run.finished", {
+        runId: currentRun.id,
+        outcome: "cancelled",
+      });
+      return {
+        value: { task: mapTask(taskRow, project.name), run: mapRun(runRow) },
+        events: [taskEvent, runEvent],
+      };
+    });
+  }
+
+  getRunPublishContext(runId: string, expectedVersion: number): RunPublishContext {
+    const currentRun = this.requireRunRow(runId);
+    const currentTask = this.requireTaskRow(currentRun.taskId);
+    if (currentRun.status !== "SUCCEEDED" || currentTask.status !== "REVIEW") {
+      throw new Error("只有审核中的成功执行可以推送");
+    }
+    if (currentTask.latestRunId !== runId) {
+      throw new Error("只有任务最近一次成功执行可以推送");
+    }
+    this.assertVersion(currentTask.version, expectedVersion);
+    if (!currentRun.baseCommit || !currentRun.resultCommit) {
+      throw new Error("执行记录缺少完整的 Git 结果范围");
+    }
+    const project = this.requireProjectRow(currentTask.projectId);
+    if (!project.repositoryUrl) {
+      throw new Error("旧本地项目需要重新注册远程 Git 仓库后才能推送");
+    }
+    return {
+      repositoryPath: project.path,
+      targetBranch: currentRun.targetBranch,
+      baseCommit: currentRun.baseCommit,
+      resultCommit: currentRun.resultCommit,
+    };
+  }
+
+  getRunApprovalReplay(
+    deviceId: string,
+    idempotencyKey: string,
+  ): PublishedRunApproval | null {
+    const command = this.handle.db
+      .select()
+      .from(remoteCommands)
+      .where(
+        and(
+          eq(remoteCommands.deviceId, deviceId),
+          eq(remoteCommands.idempotencyKey, idempotencyKey),
+          eq(remoteCommands.commandType, "run.approve"),
+        ),
+      )
+      .get();
+    return command ? (JSON.parse(command.resultJson) as PublishedRunApproval) : null;
+  }
+
+  approvePublishedRun(
     runId: string,
     deviceId: string,
     expectedVersion: number,
     idempotencyKey: string,
-  ): EventfulResult<Task> {
+    publication: RunPublishResult,
+  ): EventfulResult<PublishedRunApproval> {
     return this.executeIdempotent(deviceId, idempotencyKey, "run.approve", expectedVersion, () => {
       const currentRun = this.requireRunRow(runId);
       const currentTask = this.requireTaskRow(currentRun.taskId);
       if (currentRun.status !== "SUCCEEDED") {
-        throw new Error("Only successful runs can be approved");
+        throw new Error("只有成功执行可以通过审核");
       }
       assertTaskTransition(currentTask.status, "COMPLETED");
       this.assertVersion(currentTask.version, expectedVersion);
+      if (
+        !currentRun.resultCommit ||
+        publication.branch !== currentRun.targetBranch ||
+        (publication.status === "pushed" && publication.currentCommit !== currentRun.resultCommit)
+      ) {
+        throw new Error("远程推送结果与当前 Run 的结果 Commit 不一致");
+      }
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
+      this.handle.db
+        .update(taskRuns)
+        .set({ pushedAt: timestamp, pushedCommit: publication.currentCommit })
+        .where(eq(taskRuns.id, runId))
+        .run();
       const taskRow = this.handle.db
         .update(tasks)
         .set({ status: "COMPLETED", version: currentTask.version + 1, updatedAt: timestamp })
-        .where(eq(tasks.id, currentTask.id))
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, expectedVersion),
+            eq(tasks.status, "REVIEW"),
+          ),
+        )
         .returning()
         .get();
+      if (!taskRow) {
+        throw new Error("Version conflict: 任务审核状态已发生变化");
+      }
+      const projectRow = this.handle.db
+        .update(projects)
+        .set({
+          integrationCommit: publication.currentCommit,
+          lastFetchedAt: timestamp,
+          version: project.version + 1,
+          updatedAt: timestamp,
+        })
+        .where(and(eq(projects.id, project.id), eq(projects.version, project.version)))
+        .returning()
+        .get();
+      if (!projectRow) {
+        throw new Error("Version conflict: 项目同步状态已发生变化");
+      }
       this.handle.db
         .insert(reviewDecisions)
         .values({
@@ -825,12 +1443,27 @@ export class DevLoopRepository {
           createdAt: timestamp,
         })
         .run();
-      const event = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
+      this.insertRunEvent(
+        runId,
+        "run.pushed",
+        publication.status === "already_pushed"
+          ? `远程分支 ${publication.branch} 已包含本次结果`
+          : `本次结果已推送到远程分支 ${publication.branch}`,
+        { ...publication },
+      );
+      const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
         from: "REVIEW",
         to: "COMPLETED",
       });
-      return { value: mapTask(taskRow, project.name), events: [event] };
+      const runEvent = this.insertDomainEvent("run", runId, "run.pushed", {
+        runId,
+        ...publication,
+      });
+      return {
+        value: { task: mapTask(taskRow, project.name), publication },
+        events: [taskEvent, runEvent],
+      };
     });
   }
 
@@ -912,7 +1545,7 @@ export class DevLoopRepository {
         .where(eq(taskRevisions.id, currentRun.taskRevisionId))
         .get();
       if (!currentRevision) {
-        throw new Error("Run revision not found");
+        throw new Error("执行记录关联的 Revision 不存在");
       }
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
@@ -1285,9 +1918,13 @@ export class DevLoopRepository {
   }
 
   private requireTaskRow(taskId: string): TaskRow {
-    const row = this.handle.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    const row = this.handle.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
+      .get();
     if (!row) {
-      throw new Error("Task not found");
+      throw new Error("任务不存在");
     }
     return row;
   }
@@ -1295,7 +1932,7 @@ export class DevLoopRepository {
   private requireProjectRow(projectId: string): ProjectRow {
     const row = this.handle.db.select().from(projects).where(eq(projects.id, projectId)).get();
     if (!row) {
-      throw new Error("Project not found");
+      throw new Error("项目不存在");
     }
     return row;
   }
@@ -1303,7 +1940,27 @@ export class DevLoopRepository {
   private requireRunRow(runId: string): TaskRunRow {
     const row = this.handle.db.select().from(taskRuns).where(eq(taskRuns.id, runId)).get();
     if (!row) {
-      throw new Error("Run not found");
+      throw new Error("执行记录不存在");
+    }
+    return row;
+  }
+
+  private requireSkillRow(skillId: string): SkillRow {
+    const row = this.handle.db.select().from(skills).where(eq(skills.id, skillId)).get();
+    if (!row) {
+      throw new Error("Skill not found");
+    }
+    return row;
+  }
+
+  private requireSkillVersionRow(versionId: string): SkillVersionRow {
+    const row = this.handle.db
+      .select()
+      .from(skillVersions)
+      .where(eq(skillVersions.id, versionId))
+      .get();
+    if (!row) {
+      throw new Error("Skill version not found");
     }
     return row;
   }

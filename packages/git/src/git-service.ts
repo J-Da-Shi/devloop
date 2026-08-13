@@ -1,8 +1,8 @@
-import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
-import type { RunApplicationResult } from "@devloop/shared";
+import type { RunApplicationResult, RunPublishResult } from "@devloop/shared";
 
 export interface GitRepositoryInfo {
   path: string;
@@ -15,6 +15,32 @@ export interface GitCapabilities {
   version: string | null;
   executablePath: string | null;
   error: string | null;
+}
+
+export interface CloneRepositoryInput {
+  repositoryUrl: string;
+  destinationPath: string;
+  defaultBranch: string;
+}
+
+export interface ClonedRepositoryInfo {
+  repositoryUrl: string;
+  path: string;
+  defaultBranch: string;
+  headCommit: string;
+}
+
+export interface ResolveRemoteTargetBaseInput {
+  repositoryPath: string;
+  targetBranch: string;
+  fallbackRef: string;
+}
+
+export interface PushResultInput {
+  repositoryPath: string;
+  targetBranch: string;
+  baseCommit: string;
+  resultCommit: string;
 }
 
 export interface CreateWorktreeInput {
@@ -57,6 +83,10 @@ export type GitApplyErrorCode =
   | "BASE_COMMIT_MISSING"
   | "RESULT_COMMIT_MISSING"
   | "INVALID_RESULT_RANGE"
+  | "INVALID_REPOSITORY_URL"
+  | "REPOSITORY_EXISTS"
+  | "REMOTE_ACCESS_FAILED"
+  | "REMOTE_PUSH_REJECTED"
   | "APPLY_CONFLICT"
   | "APPLY_FAILED";
 
@@ -124,6 +154,228 @@ export class GitService {
       path: repositoryPath,
       branch: branch.trim() || "HEAD",
       headCommit: headCommit.trim(),
+    };
+  }
+
+  normalizeRepositoryUrl(value: string): string {
+    const repositoryUrl = value.trim();
+    if (repositoryUrl.startsWith("ssh://")) {
+      let url: URL;
+      try {
+        url = new URL(repositoryUrl);
+      } catch {
+        throw new GitApplyError("INVALID_REPOSITORY_URL", "SSH Git 仓库地址格式无效。");
+      }
+      if (
+        url.protocol !== "ssh:" ||
+        !url.hostname ||
+        url.password ||
+        !url.pathname ||
+        url.pathname === "/"
+      ) {
+        throw new GitApplyError(
+          "INVALID_REPOSITORY_URL",
+          "首版仅支持不含密码的 SSH Git 仓库地址。",
+        );
+      }
+      url.hostname = url.hostname.toLowerCase();
+      url.pathname = url.pathname.replace(/\/+$/, "");
+      return url.toString().replace(/\/$/, "");
+    }
+
+    if (repositoryUrl.includes("://")) {
+      throw new GitApplyError(
+        "INVALID_REPOSITORY_URL",
+        "首版仅支持 SSH Git 地址，例如 git@github.com:team/project.git。",
+      );
+    }
+
+    const match = /^(?:(?<user>[A-Za-z0-9._-]+)@)?(?<host>[A-Za-z0-9._-]+):(?<path>[^\s]+)$/.exec(
+      repositoryUrl,
+    );
+    if (!match?.groups?.host || !match.groups.path) {
+      throw new GitApplyError(
+        "INVALID_REPOSITORY_URL",
+        "首版仅支持 SSH Git 地址，例如 git@github.com:team/project.git。",
+      );
+    }
+    const user = match.groups.user ? `${match.groups.user}@` : "";
+    const path = match.groups.path.replace(/\/+$/, "");
+    if (!path || path.startsWith(":")) {
+      throw new GitApplyError("INVALID_REPOSITORY_URL", "SSH Git 仓库路径不能为空。");
+    }
+    return `${user}${match.groups.host.toLowerCase()}:${path}`;
+  }
+
+  async validateBranchName(branch: string): Promise<string> {
+    const candidate = branch.trim();
+    if (candidate === "HEAD" || candidate.startsWith("refs/")) {
+      throw new GitApplyError(
+        "INVALID_BRANCH",
+        "分支只填写实际分支名，不要使用 HEAD 或 refs/heads/ 前缀。",
+      );
+    }
+    const result = await execa(this.executable, ["check-ref-format", "--branch", candidate], {
+      reject: false,
+    });
+    if (result.exitCode !== 0) {
+      throw new GitApplyError(
+        "INVALID_BRANCH",
+        `分支名称无效：${result.stderr.trim() || result.stdout.trim() || candidate}`,
+      );
+    }
+    return candidate;
+  }
+
+  async cloneRepository(input: CloneRepositoryInput): Promise<ClonedRepositoryInfo> {
+    const repositoryUrl = this.normalizeRepositoryUrl(input.repositoryUrl);
+    const defaultBranch = await this.validateBranchName(input.defaultBranch);
+    await mkdir(dirname(input.destinationPath), { recursive: true });
+    if (await pathExists(input.destinationPath)) {
+      throw new GitApplyError("REPOSITORY_EXISTS", "服务器托管仓库目录已经存在。");
+    }
+
+    const temporaryRoot = await mkdtemp(join(dirname(input.destinationPath), ".devloop-clone-"));
+    const temporaryRepository = join(temporaryRoot, "repository");
+    try {
+      const clone = await execa(
+        this.executable,
+        ["clone", "--no-checkout", "--origin", "origin", repositoryUrl, temporaryRepository],
+        { env: this.nonInteractiveEnvironment(), reject: false },
+      );
+      if (clone.exitCode !== 0) {
+        throw new GitApplyError(
+          "REMOTE_ACCESS_FAILED",
+          `远程仓库克隆失败：${clone.stderr.trim() || clone.stdout.trim() || "Git 命令执行失败"}`,
+        );
+      }
+      const resolved = await this.resolveRemoteTargetBase({
+        repositoryPath: temporaryRepository,
+        targetBranch: defaultBranch,
+        fallbackRef: defaultBranch,
+      });
+      if (!resolved.branchExists) {
+        throw new GitApplyError(
+          "BASE_COMMIT_MISSING",
+          `远程仓库中不存在默认分支 ${defaultBranch}。`,
+        );
+      }
+      await rename(temporaryRepository, input.destinationPath);
+      return {
+        repositoryUrl,
+        path: await realpath(input.destinationPath),
+        defaultBranch,
+        headCommit: resolved.baseCommit,
+      };
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  async removeManagedRepository(repositoryPath: string): Promise<void> {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+
+  async fetchRepository(repositoryPath: string): Promise<void> {
+    const resolvedPath = await realpath(repositoryPath);
+    const fetch = await execa(
+      this.executable,
+      ["-C", resolvedPath, "fetch", "--prune", "origin"],
+      { env: this.nonInteractiveEnvironment(), reject: false },
+    );
+    if (fetch.exitCode !== 0) {
+      throw new GitApplyError(
+        "REMOTE_ACCESS_FAILED",
+        `远程仓库同步失败：${fetch.stderr.trim() || fetch.stdout.trim() || "Git 命令执行失败"}`,
+      );
+    }
+  }
+
+  async resolveRemoteTargetBase(
+    input: ResolveRemoteTargetBaseInput,
+  ): Promise<ResolvedTargetBase> {
+    const repositoryPath = await realpath(input.repositoryPath);
+    const targetBranch = await this.validateBranchName(input.targetBranch);
+    const fallbackRef = await this.validateBranchName(input.fallbackRef);
+    const branchCommit = await this.resolveRemoteBranch(repositoryPath, targetBranch);
+    if (branchCommit) {
+      return { targetBranch, baseCommit: branchCommit, branchExists: true };
+    }
+    const fallbackCommit = await this.resolveRemoteBranch(repositoryPath, fallbackRef);
+    if (!fallbackCommit) {
+      throw new GitApplyError(
+        "BASE_COMMIT_MISSING",
+        `目标分支 ${targetBranch} 不存在，且远程默认分支 ${fallbackRef} 无法解析。`,
+      );
+    }
+    return { targetBranch, baseCommit: fallbackCommit, branchExists: false };
+  }
+
+  async pushResult(input: PushResultInput): Promise<RunPublishResult> {
+    const repositoryPath = await realpath(input.repositoryPath);
+    const targetBranch = await this.validateBranchName(input.targetBranch);
+    await this.fetchRepository(repositoryPath);
+    const [baseCommitCheck, resultCommitCheck] = await Promise.all([
+      execa(this.executable, ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`], {
+        reject: false,
+      }),
+      execa(
+        this.executable,
+        ["-C", repositoryPath, "cat-file", "-e", `${input.resultCommit}^{commit}`],
+        { reject: false },
+      ),
+    ]);
+    if (baseCommitCheck.exitCode !== 0) {
+      throw new GitApplyError("BASE_COMMIT_MISSING", "本次运行的基础 Commit 已不存在。");
+    }
+    if (resultCommitCheck.exitCode !== 0) {
+      throw new GitApplyError("RESULT_COMMIT_MISSING", "本次运行的结果 Commit 已不存在。");
+    }
+    if (!(await this.isAncestor(repositoryPath, input.baseCommit, input.resultCommit))) {
+      throw new GitApplyError(
+        "INVALID_RESULT_RANGE",
+        "结果 Commit 不是从本次运行的基础 Commit 产生，拒绝推送。",
+      );
+    }
+
+    const remoteCommit = await this.resolveRemoteBranch(repositoryPath, targetBranch);
+    if (
+      remoteCommit &&
+      (remoteCommit === input.resultCommit ||
+        (await this.isAncestor(repositoryPath, input.resultCommit, remoteCommit)))
+    ) {
+      return {
+        status: "already_pushed",
+        branch: targetBranch,
+        previousCommit: remoteCommit,
+        currentCommit: remoteCommit,
+        branchCreated: false,
+      };
+    }
+    if (remoteCommit && remoteCommit !== input.baseCommit) {
+      throw new GitApplyError(
+        "REMOTE_PUSH_REJECTED",
+        `远程目标分支 ${targetBranch} 已从执行基线前进，DevLoop 不会强制覆盖。`,
+      );
+    }
+
+    const push = await execa(
+      this.executable,
+      ["-C", repositoryPath, "push", "--porcelain", "origin", `${input.resultCommit}:refs/heads/${targetBranch}`],
+      { env: this.nonInteractiveEnvironment(), reject: false },
+    );
+    if (push.exitCode !== 0) {
+      throw new GitApplyError(
+        "REMOTE_PUSH_REJECTED",
+        `远程分支推送失败：${push.stderr.trim() || push.stdout.trim() || "远程拒绝更新"}`,
+      );
+    }
+    return {
+      status: "pushed",
+      branch: targetBranch,
+      previousCommit: remoteCommit,
+      currentCommit: input.resultCommit,
+      branchCreated: remoteCommit === null,
     };
   }
 
@@ -637,6 +889,19 @@ export class GitService {
       { reject: false },
     );
     return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  private async resolveRemoteBranch(repositoryPath: string, branch: string): Promise<string | null> {
+    const result = await execa(
+      this.executable,
+      ["-C", repositoryPath, "rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`],
+      { reject: false },
+    );
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  private nonInteractiveEnvironment(): NodeJS.ProcessEnv {
+    return { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   }
 
   private async getBranchCheckoutPath(

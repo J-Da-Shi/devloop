@@ -1,11 +1,21 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, CornerDownLeft, GitBranch, GitMerge, Play, RotateCcw, Save, X } from "lucide-react";
+import {
+  Ban,
+  Check,
+  CornerDownLeft,
+  GitBranch,
+  Play,
+  RotateCcw,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Project, Task } from "@devloop/shared";
+import type { Project, RunPublishResult, Task } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { formatDateTime, runStatusText, taskStatusText } from "../utils.js";
 import { ConfirmDialog } from "./confirm-dialog.js";
@@ -24,7 +34,8 @@ const taskFormSchema = z.object({
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
-type ConfirmAction = "confirm" | "unconfirm" | "approve" | "apply" | "reject" | null;
+type ConfirmAction =
+  "confirm" | "unconfirm" | "cancel" | "delete" | "approve" | "reject" | null;
 
 interface TaskDialogProps {
   open: boolean;
@@ -143,17 +154,17 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       if (action === "unconfirm") {
         return api.unconfirmTask(task.id, { expectedVersion: task.version, idempotencyKey });
       }
+      if (action === "cancel") {
+        return api.cancelTask(task.id, { expectedVersion: task.version, idempotencyKey });
+      }
+      if (action === "delete") {
+        return api.deleteTask(task.id, { expectedVersion: task.version, idempotencyKey });
+      }
       if (!task.latestRunId) {
         throw new Error("任务没有可审核的执行记录");
       }
       if (action === "approve") {
         return api.approveRun(task.latestRunId, {
-          expectedVersion: task.version,
-          idempotencyKey,
-        });
-      }
-      if (action === "apply") {
-        return api.applyRun(task.latestRunId, {
           expectedVersion: task.version,
           idempotencyKey,
         });
@@ -169,19 +180,24 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     },
     onSuccess: async (data, action) => {
       await invalidate();
+      const publication =
+        action === "approve" && "publication" in data
+          ? (data.publication as RunPublishResult)
+          : null;
       const messages: Record<Exclude<ConfirmAction, null>, string> = {
         confirm: "任务已确认并加入队列",
         unconfirm: "任务已撤回为草稿",
-        approve: "执行结果已通过",
-        apply:
-          "application" in data && data.application.status === "already_applied"
-            ? `目标分支 ${data.application.branch} 已包含该结果`
-            : `结果已写入目标分支 ${"application" in data ? data.application.branch : targetBranch}`,
+        cancel: "执行已取消，Worktree 和日志已保留",
+        delete: "任务已删除，执行历史仍会保留",
+        approve:
+          publication?.status === "already_pushed"
+            ? `远程分支 ${publication.branch} 已包含该结果`
+            : `结果已推送到远程分支 ${publication?.branch ?? targetBranch}`,
         reject: "审核意见已提交，任务将重新排队",
       };
       notify(messages[action]);
       setConfirmAction(null);
-      if (action !== "approve" && action !== "apply") {
+      if (action !== "approve") {
         onOpenChange(false);
       }
     },
@@ -189,12 +205,11 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   });
 
   const canEdit = session.data ? roleAllowsEdit(session.data.identity.role) : false;
-  const isLocalEditor = canEdit && session.data?.identity.local === true;
+  const canOperate = session.data ? session.data.identity.role !== "viewer" : false;
   const editable = !task || task.status === "DRAFT";
+  const canCancel = Boolean(task?.status === "RUNNING" && canOperate);
+  const canDelete = Boolean(task && task.status !== "RUNNING" && canEdit);
   const pending = saveMutation.isPending || commandMutation.isPending;
-  const appliedToProject =
-    runDetails.data?.events.some((event) => event.type === "run.applied") ?? false;
-  const projectPath = projects.find((project) => project.id === task?.projectId)?.path;
   const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
   const confirmCopy = {
     confirm: {
@@ -209,17 +224,24 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       label: "撤回任务",
       danger: false,
     },
-    approve: {
-      title: "通过本次执行结果？",
-      description: `任务将进入已完成状态，随后可把结果写入目标分支 ${targetBranch}。`,
-      label: "通过结果",
-      danger: false,
-    },
-    apply: {
-      title: `写入目标分支 ${targetBranch}？`,
-      description: `DevLoop 会在 ${projectPath ?? "当前项目"} 中更新或创建该分支。仅当目标分支正在当前目录检出时才同步工作区文件；冲突时不会修改分支或目录。`,
-      label: "确认写入",
+    cancel: {
+      title: "取消当前执行？",
+      description:
+        "Codex CLI 会被终止，任务和 Run 将进入已取消状态；Worktree、代码修改和运行日志会保留。",
+      label: "确认取消",
       danger: true,
+    },
+    delete: {
+      title: "删除这个任务？",
+      description: "任务会从看板和调度队列中移除，但 Revision、执行记录、日志和 Git 结果仍会保留。",
+      label: "确认删除",
+      danger: true,
+    },
+    approve: {
+      title: "通过并推送本次结果？",
+      description: `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
+      label: "通过并推送",
+      danger: false,
     },
     reject: {
       title: "驳回并重新排队？",
@@ -264,7 +286,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
 
             {!canEdit && editable ? (
               <InlineNotice tone="warning">
-                当前设备是只读角色，需要在桌面端提升为 editor。
+                当前实例处于只读模式，无法修改任务。
               </InlineNotice>
             ) : null}
 
@@ -441,7 +463,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         disabled={pending}
                       >
                         <Check size={17} />
-                        通过
+                        通过并推送
                       </button>
                     </div>
                   </section>
@@ -461,31 +483,45 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 ) : null}
                 {task?.status === "COMPLETED" && runDetails.data ? (
                   <section className="apply-actions">
-                    <h3>目标分支</h3>
-                    <InlineNotice tone={appliedToProject ? "success" : "info"}>
-                      {appliedToProject
-                        ? `本次 Run 结果已经写入 ${runDetails.data.run.targetBranch}。`
-                        : isLocalEditor
-                          ? `写入时会更新或自动创建 ${runDetails.data.run.targetBranch}，不会切换当前分支。`
-                          : "写入目标分支只能在 Mac 本机客户端执行。"}
+                    <h3>远程目标分支</h3>
+                    <InlineNotice tone="success">
+                      本次 Run 结果已推送到 {runDetails.data.run.targetBranch}
+                      {runDetails.data.run.pushedCommit
+                        ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
+                        : ""}
+                      。
                     </InlineNotice>
-                    {isLocalEditor && !appliedToProject && runDetails.data.run.resultCommit ? (
-                      <div className="dialog-actions">
-                        <button
-                          type="button"
-                          className="button button-danger-quiet"
-                          onClick={() => setConfirmAction("apply")}
-                          disabled={pending}
-                        >
-                          <GitMerge size={17} />
-                          写入目标分支
-                        </button>
-                      </div>
-                    ) : null}
                   </section>
                 ) : null}
               </div>
             )}
+
+            {task && (canCancel || canDelete) ? (
+              <div className="task-destructive-actions">
+                {canCancel ? (
+                  <button
+                    type="button"
+                    className="button button-danger-quiet"
+                    onClick={() => setConfirmAction("cancel")}
+                    disabled={pending}
+                  >
+                    <Ban size={17} />
+                    取消执行
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    className="button button-danger-quiet"
+                    onClick={() => setConfirmAction("delete")}
+                    disabled={pending}
+                  >
+                    <Trash2 size={17} />
+                    删除任务
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

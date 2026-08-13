@@ -1,6 +1,13 @@
 import * as Switch from "@radix-ui/react-switch";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, CircleX, Database, Radio, ShieldCheck, TerminalSquare } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleX,
+  Database,
+  Radio,
+  ShieldCheck,
+  TerminalSquare,
+} from "lucide-react";
 import { api, queryKeys } from "../api.js";
 import { ErrorPanel, LoadingPanel } from "../components/feedback.js";
 import { StatusBadge } from "../components/status-badge.js";
@@ -53,6 +60,13 @@ export function SettingsPage() {
           </span>
           <code>{session.data?.identity.role}</code>
         </div>
+        <div className="setting-row">
+          <span>
+            <strong>访问模式</strong>
+            <small>无 DevLoop 账户，由本机、Tailscale 或反向代理保护入口</small>
+          </span>
+          <StatusBadge status="COMPLETED">单用户</StatusBadge>
+        </div>
       </section>
       <section className="tool-panel settings-section">
         <div className="section-heading">
@@ -74,20 +88,20 @@ export function SettingsPage() {
       </section>
       <section className="tool-panel settings-section">
         <div className="section-heading">
-          <h2>本地边界</h2>
+          <h2>服务器边界</h2>
           <ShieldCheck size={18} />
         </div>
         <div className="setting-row">
           <span>
-            <strong>项目文件</strong>
-            <small>仅本地 Service 与 Electron Main</small>
+            <strong>项目仓库</strong>
+            <small>服务器托管目录，不向浏览器公开绝对路径</small>
           </span>
           <StatusBadge status="COMPLETED">受限</StatusBadge>
         </div>
         <div className="setting-row">
           <span>
             <strong>事实存储</strong>
-            <small>SQLite WAL</small>
+            <small>服务器 SQLite WAL</small>
           </span>
           <Database size={18} />
         </div>

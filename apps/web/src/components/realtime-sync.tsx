@@ -22,8 +22,9 @@ export function RealtimeSync() {
     let invalidateTasks = false;
     let invalidateRuns = false;
     let invalidateProjects = false;
-    let invalidateDevices = false;
+    let invalidateSkills = false;
     const runIds = new Set<string>();
+    const skillIds = new Set<string>();
     const storedEventId = Number.parseInt(
       window.sessionStorage.getItem("devloop:last-event-id") ?? "0",
       10,
@@ -42,18 +43,22 @@ export function RealtimeSync() {
       if (invalidateProjects) {
         requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.projects }));
       }
-      if (invalidateDevices) {
-        requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.devices }));
+      if (invalidateSkills) {
+        requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.skills }));
       }
       for (const runId of runIds) {
         requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) }));
+      }
+      for (const skillId of skillIds) {
+        requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.skill(skillId) }));
       }
 
       invalidateTasks = false;
       invalidateRuns = false;
       invalidateProjects = false;
-      invalidateDevices = false;
+      invalidateSkills = false;
       runIds.clear();
+      skillIds.clear();
       void Promise.all(requests);
     };
 
@@ -68,8 +73,9 @@ export function RealtimeSync() {
       if (event.aggregateType === "project") {
         invalidateProjects = true;
       }
-      if (event.aggregateType === "device") {
-        invalidateDevices = true;
+      if (event.aggregateType === "skill") {
+        invalidateSkills = true;
+        skillIds.add(event.aggregateId);
       }
       invalidateTimer ??= window.setTimeout(flushInvalidations, 50);
     };

@@ -6,13 +6,13 @@ import {
   Columns3,
   FolderGit2,
   History,
+  Puzzle,
   Settings,
-  Smartphone,
   Wifi,
   WifiOff,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ApiError, api, queryKeys } from "../api.js";
+import { api, queryKeys } from "../api.js";
 import { useUiStore } from "../store.js";
 import { ErrorPanel, LoadingPanel } from "./feedback.js";
 import { RealtimeSync } from "./realtime-sync.js";
@@ -21,16 +21,16 @@ const navigation = [
   { to: "/status", label: "状态", icon: Activity },
   { to: "/board", label: "任务", icon: Columns3 },
   { to: "/projects", label: "项目", icon: FolderGit2 },
+  { to: "/skills", label: "技能", icon: Puzzle },
   { to: "/runs", label: "执行", icon: History },
-  { to: "/devices", label: "设备", icon: Smartphone },
 ] as const;
 
 const pageTitle: Record<string, string> = {
   "/status": "执行概览",
   "/board": "任务看板",
   "/projects": "项目",
+  "/skills": "Skill 管理",
   "/runs": "执行记录",
-  "/devices": "设备",
   "/settings": "设置",
 };
 
@@ -53,19 +53,6 @@ function SystemClock() {
   );
 }
 
-function AccessRequired({ error }: { error: ApiError }) {
-  return (
-    <main className="access-page">
-      <img src="/devloop-mark.svg" alt="DevLoop" width="52" height="52" />
-      <h1>需要设备配对</h1>
-      <p>{error.message}</p>
-      <Link to="/pair" className="button button-primary">
-        输入配对码
-      </Link>
-    </main>
-  );
-}
-
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const realtimeStatus = useUiStore((state) => state.realtimeStatus);
@@ -77,10 +64,7 @@ export function AppShell() {
   });
 
   if (session.isPending) {
-    return <LoadingPanel label="正在连接本地服务" />;
-  }
-  if (session.error instanceof ApiError && session.error.status === 401) {
-    return <AccessRequired error={session.error} />;
+    return <LoadingPanel label="正在连接 DevLoop 服务器" />;
   }
   if (session.isError) {
     return <ErrorPanel error={session.error} />;
@@ -95,7 +79,7 @@ export function AppShell() {
           <img src="/devloop-mark.svg" alt="" width="32" height="32" />
           <span>
             <strong>DevLoop</strong>
-            <small>本地执行工作台</small>
+            <small>个人开发执行工作台</small>
           </span>
         </Link>
         <nav className="sidebar-nav" aria-label="主导航">
@@ -123,9 +107,7 @@ export function AppShell() {
             <span className="identity-avatar">{session.data.identity.name.slice(0, 1)}</span>
             <span>
               <strong>{session.data.identity.name}</strong>
-              <small>
-                {session.data.identity.local ? "本机编辑端" : session.data.identity.role}
-              </small>
+              <small>单用户实例 · {session.data.identity.role}</small>
             </span>
           </div>
         </div>
@@ -161,7 +143,11 @@ export function AppShell() {
         </main>
       </div>
 
-      <nav className="mobile-nav" aria-label="手机主导航">
+      <nav
+        className="mobile-nav"
+        aria-label="手机主导航"
+        style={{ "--mobile-nav-count": navigation.length } as React.CSSProperties}
+      >
         {navigation.map((item) => {
           const Icon = item.icon;
           return (

@@ -5,7 +5,7 @@ import { AgentWorker } from "./agent-worker.js";
 import { createApp } from "./app.js";
 import { DomainEventBus } from "./event-bus.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
-import { seedDevelopmentData } from "./seed.js";
+import { SkillService } from "./skill-service.js";
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
@@ -15,6 +15,7 @@ async function main(): Promise<void> {
   });
   const repository = new DevLoopRepository(database);
   const gitService = new GitService();
+  const skillService = new SkillService(repository, config.skillsPath);
   const eventBus = new DomainEventBus();
   const fakeRunner = new FakeRunner(config.fakeRunnerDelayMs);
   const codexRunner = new CodexRunner({
@@ -34,14 +35,11 @@ async function main(): Promise<void> {
     worktreesPath: config.worktreesPath,
   });
 
-  if (config.seed) {
-    await seedDevelopmentData(repository, gitService, eventBus, config.repositoryRoot);
-  }
-
   const app = await createApp({
     config,
     repository,
     gitService,
+    skillService,
     runners,
     eventBus,
     worker,

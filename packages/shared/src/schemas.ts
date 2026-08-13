@@ -1,10 +1,29 @@
 import { z } from "zod";
-import { baseStrategySchema, deviceRoleSchema, taskStatusSchema } from "./domain.js";
+import { baseStrategySchema, taskStatusSchema } from "./domain.js";
+
+const isSshRepositoryUrl = (value: string): boolean => {
+  if (value.startsWith("ssh://")) {
+    return /^ssh:\/\/(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+(?::\d+)?\/[^\s/][^\s]*$/.test(
+      value,
+    );
+  }
+  if (value.includes("://")) {
+    return false;
+  }
+  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:[^\s]+$/.test(value);
+};
+
+export const repositoryUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "仓库地址不能为空")
+  .max(2048, "仓库地址不能超过 2048 个字符")
+  .refine(isSshRepositoryUrl, "首版仅支持 SSH Git 地址，且地址中不能包含密码");
 
 export const createProjectInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  path: z.string().trim().min(1).max(2048),
-  defaultBaseRef: z.string().trim().min(1).max(200).default("HEAD"),
+  repositoryUrl: repositoryUrlSchema,
+  defaultBaseRef: z.string().trim().min(1).max(200).default("main"),
 });
 
 export const targetBranchSchema = z
@@ -56,17 +75,24 @@ export const rejectRunInputSchema = taskCommandInputSchema.extend({
   feedback: z.string().trim().min(1).max(4000),
 });
 
-export const createPairingSessionInputSchema = z.object({
-  externalBaseUrl: z.string().url().optional(),
+export const skillContentSchema = z
+  .string()
+  .min(1, "Skill 内容不能为空")
+  .max(100_000, "Skill 内容不能超过 100000 个字符");
+
+export const validateSkillInputSchema = z.object({
+  content: skillContentSchema,
 });
 
-export const pairDeviceInputSchema = z.object({
-  code: z.string().regex(/^\d{6}$/),
-  name: z.string().trim().min(1).max(80),
+export const createSkillInputSchema = validateSkillInputSchema;
+
+export const createSkillVersionInputSchema = validateSkillInputSchema.extend({
+  expectedVersion: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
 });
 
-export const updateDeviceInputSchema = z.object({
-  role: deviceRoleSchema,
+export const updateSkillInputSchema = z.object({
+  enabled: z.boolean(),
   expectedVersion: z.number().int().nonnegative(),
   idempotencyKey: z.string().uuid(),
 });
@@ -82,5 +108,7 @@ export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;
 export type RejectRunInput = z.infer<typeof rejectRunInputSchema>;
-export type PairDeviceInput = z.infer<typeof pairDeviceInputSchema>;
-export type UpdateDeviceInput = z.infer<typeof updateDeviceInputSchema>;
+export type ValidateSkillInput = z.infer<typeof validateSkillInputSchema>;
+export type CreateSkillInput = z.infer<typeof createSkillInputSchema>;
+export type CreateSkillVersionInput = z.infer<typeof createSkillVersionInputSchema>;
+export type UpdateSkillInput = z.infer<typeof updateSkillInputSchema>;
