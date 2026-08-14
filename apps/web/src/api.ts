@@ -9,7 +9,9 @@ import type {
   DomainEvent,
   Project,
   RejectRunInput,
+  RunChangedFile,
   RunEvent,
+  RunFilePatch,
   Skill,
   SkillDetails,
   SkillValidationResult,
@@ -76,6 +78,8 @@ export const queryKeys = {
   tasks: ["tasks"] as const,
   runs: ["runs"] as const,
   run: (runId: string) => ["runs", runId] as const,
+  runChangedFiles: (runId: string) => ["runs", runId, "changed-files"] as const,
+  runFilePatch: (runId: string, path: string) => ["runs", runId, "patch", path] as const,
 };
 
 export const getDashboardRefetchInterval = (dashboard: DashboardSnapshot | undefined): number =>
@@ -141,6 +145,10 @@ export const api = {
     }),
   runs: () => request<{ runs: TaskRun[] }>("/api/runs"),
   run: (runId: string) => request<RunDetails>(`/api/runs/${runId}`),
+  runChangedFiles: (runId: string) =>
+    request<{ files: RunChangedFile[] }>(`/api/runs/${runId}/changed-files`),
+  runFilePatch: (runId: string, path: string) =>
+    request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
   approveRun: (runId: string, input: TaskCommandInput) =>
     request<{ task: Task; publication: RunPublishResult; replayed: boolean }>(
       `/api/runs/${runId}/approve`,

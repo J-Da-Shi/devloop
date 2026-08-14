@@ -22,6 +22,7 @@ import { ConfirmDialog } from "./confirm-dialog.js";
 import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
 import { IconButton } from "./icon-button.js";
 import { useNotice } from "./notice-provider.js";
+import { RunDiffPanel } from "./run-diff-panel.js";
 import { StatusBadge } from "./status-badge.js";
 
 const taskFormSchema = z.object({
@@ -433,6 +434,12 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         </ol>
                       </div>
                     ) : null}
+                  </section>
+                ) : null}
+                {task?.latestRunId ? (
+                  <section>
+                    <h3>代码变更</h3>
+                    <RunDiffPanel runId={task.latestRunId} />
                   </section>
                 ) : null}
                 {task?.status === "REVIEW" && canEdit ? (

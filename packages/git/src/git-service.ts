@@ -2,7 +2,13 @@ import { access, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
-import type { RunApplicationResult, RunPublishResult } from "@devloop/shared";
+import type {
+  RunApplicationResult,
+  RunChangedFile,
+  RunChangedFileStatus,
+  RunFilePatch,
+  RunPublishResult,
+} from "@devloop/shared";
 
 export interface GitRepositoryInfo {
   path: string;
@@ -62,6 +68,21 @@ export interface ApplyCommitInput {
   resultCommit: string;
 }
 
+export interface ListRunChangedFilesInput {
+  repositoryPath: string;
+  baseCommit: string;
+  resultCommit: string;
+}
+
+export interface GetRunFilePatchInput {
+  repositoryPath: string;
+  baseCommit: string;
+  resultCommit: string;
+  path: string;
+}
+
+export type { RunChangedFile, RunChangedFileStatus, RunFilePatch } from "@devloop/shared";
+
 export interface ResolveTargetBaseInput {
   repositoryPath: string;
   targetBranch: string;
@@ -110,6 +131,108 @@ const pathExists = async (path: string): Promise<boolean> => {
     }
     throw error;
   }
+};
+
+interface NumstatEntry {
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+}
+
+const parseNumstatZ = (stdout: string): Map<string, NumstatEntry> => {
+  const result = new Map<string, NumstatEntry>();
+  const tokens = stdout.split("\0");
+  let i = 0;
+  while (i < tokens.length) {
+    const line = tokens[i];
+    if (!line) {
+      i += 1;
+      continue;
+    }
+    const [addStr, delStr, maybePath] = line.split("\t");
+    if (addStr === undefined || delStr === undefined) {
+      i += 1;
+      continue;
+    }
+    const isBinary = addStr === "-" && delStr === "-";
+    const additions = isBinary ? 0 : Number.parseInt(addStr, 10) || 0;
+    const deletions = isBinary ? 0 : Number.parseInt(delStr, 10) || 0;
+    let path: string;
+    if (maybePath && maybePath.length > 0) {
+      path = maybePath;
+      i += 1;
+    } else {
+      // Rename/copy: current form is empty, followed by two NUL-separated tokens (oldPath, newPath).
+      const oldPath = tokens[i + 1];
+      const newPath = tokens[i + 2];
+      path = newPath ?? oldPath ?? "";
+      i += 3;
+    }
+    if (path) {
+      result.set(path, { additions, deletions, isBinary });
+    }
+  }
+  return result;
+};
+
+const mapNameStatusCode = (code: string): RunChangedFileStatus => {
+  const first = code[0];
+  switch (first) {
+    case "A":
+      return "added";
+    case "D":
+      return "deleted";
+    case "M":
+      return "modified";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    case "T":
+      return "typechange";
+    default:
+      return "modified";
+  }
+};
+
+interface NameStatusEntry {
+  path: string;
+  status: RunChangedFileStatus;
+  oldPath?: string;
+}
+
+const parseNameStatusZ = (stdout: string): NameStatusEntry[] => {
+  const tokens = stdout.split("\0").filter((_, idx, arr) => idx < arr.length - 1 || arr[idx] !== "");
+  const entries: NameStatusEntry[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const code = tokens[i];
+    if (!code) {
+      i += 1;
+      continue;
+    }
+    const status = mapNameStatusCode(code);
+    const first = code[0];
+    if (first === "R" || first === "C") {
+      const oldPath = tokens[i + 1];
+      const newPath = tokens[i + 2];
+      if (newPath) {
+        const entry: NameStatusEntry = { path: newPath, status };
+        if (oldPath) {
+          entry.oldPath = oldPath;
+        }
+        entries.push(entry);
+      }
+      i += 3;
+    } else {
+      const path = tokens[i + 1];
+      if (path) {
+        entries.push({ path, status });
+      }
+      i += 2;
+    }
+  }
+  return entries;
 };
 
 export class GitService {
@@ -472,6 +595,85 @@ export class GitService {
       "HEAD",
     ]);
     return resultCommit.trim();
+  }
+
+  async listRunChangedFiles(input: ListRunChangedFilesInput): Promise<RunChangedFile[]> {
+    if (input.baseCommit === input.resultCommit) {
+      return [];
+    }
+    const repositoryPath = await realpath(input.repositoryPath);
+    const range = `${input.baseCommit}..${input.resultCommit}`;
+
+    const { stdout: numstatOut } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "diff",
+      "--numstat",
+      "-z",
+      range,
+    ]);
+    const numstat = parseNumstatZ(numstatOut);
+
+    const { stdout: nameStatusOut } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "diff",
+      "--name-status",
+      "-z",
+      range,
+    ]);
+    const nameStatus = parseNameStatusZ(nameStatusOut);
+
+    const files: RunChangedFile[] = [];
+    for (const entry of nameStatus) {
+      const stat = numstat.get(entry.path);
+      const file: RunChangedFile = {
+        path: entry.path,
+        status: entry.status,
+        additions: stat?.additions ?? 0,
+        deletions: stat?.deletions ?? 0,
+        isBinary: stat?.isBinary ?? false,
+      };
+      if (entry.oldPath) {
+        file.oldPath = entry.oldPath;
+      }
+      files.push(file);
+    }
+    return files;
+  }
+
+  async getRunFilePatch(input: GetRunFilePatchInput): Promise<RunFilePatch> {
+    if (input.baseCommit === input.resultCommit) {
+      return { patch: "", isBinary: false };
+    }
+    const repositoryPath = await realpath(input.repositoryPath);
+    const range = `${input.baseCommit}..${input.resultCommit}`;
+
+    const { stdout: numstatOut } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "diff",
+      "--numstat",
+      "-z",
+      range,
+      "--",
+      input.path,
+    ]);
+    const numstat = parseNumstatZ(numstatOut);
+    const isBinary = numstat.get(input.path)?.isBinary ?? false;
+    if (isBinary) {
+      return { patch: "", isBinary: true };
+    }
+
+    const { stdout: patch } = await execa(this.executable, [
+      "-C",
+      repositoryPath,
+      "diff",
+      range,
+      "--",
+      input.path,
+    ]);
+    return { patch, isBinary: false };
   }
 
   async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {

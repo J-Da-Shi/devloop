@@ -37,44 +37,44 @@ DevLoop Server 负责：
 7. 保存运行事件、Commit 和结构化验收结果。
 8. 审核通过后把结果 Commit 安全推送到远程目标分支。
 
-## 3. 两种部署模式
+## 3. 使用与分发形态
 
-同一套核心代码支持两种部署模式，区别只在 Server 运行位置和数据目录。
+DevLoop 面向普通用户是一个安装在自己电脑上的 Electron 客户端；面向开发者是一个可以 clone 并运行的 pnpm monorepo；对于确实需要多台设备连接同一实例的少数场景，另外提供可选的服务器容器化部署。三条路径运行的是同一份代码。
 
-### 3.1 本地安装模式
+### 3.1 本机安装（主线）
 
 ```text
-Electron / 本机浏览器
-          |
-       127.0.0.1
-          |
-          v
-本机 DevLoop Server
+Electron 客户端 / 本机浏览器
+              |
+           127.0.0.1
+              |
+本机 DevLoop Server 进程
 ├── Codex CLI
 ├── SQLite（任务与运行事件）
 ├── Git 仓库 / Worktree
 └── Skill
 ```
 
-- Electron 是桌面外壳，并负责启动或连接本机 DevLoop Server。
-- 数据保存在当前用户的应用数据目录。
+- Electron 客户端启动本机 DevLoop Server 进程，Web 界面通过 `127.0.0.1:4317` 连接。
+- 数据保存在当前用户的应用数据目录（开发环境使用项目内 `.devloop-data`）。
 - Codex CLI 使用当前用户已有的配置、Skill 和 MCP。
-- 服务默认只监听 `127.0.0.1`，其他设备不能直接访问。
-- 需要手机访问时，推荐通过 Tailscale 把该实例暴露到用户自己的可信网络。
+- 服务只监听 `127.0.0.1`，其他设备不能直接访问。
 
-### 3.2 个人服务器模式
+### 3.2 源码开发
+
+面向贡献者与从源码尝试的开发者。要求 Node.js 24 与 pnpm 10，`pnpm install && pnpm dev` 即可完整启动 Electron、Web 与本地 Server；`pnpm dev:web` 用于纯浏览器调试。数据同样保存在项目内 `.devloop-data`。
+
+### 3.3 可选：多人共享部署
 
 ```text
 Electron / 桌面浏览器 / 手机 PWA
                  |
               HTTPS
                  |
-                 v
        Tailscale 或宝塔 Nginx
                  |
           127.0.0.1:4317
                  |
-                 v
         DevLoop Server 容器
         ├── Codex CLI
         ├── Scheduler / Worker
@@ -86,17 +86,16 @@ Electron / 桌面浏览器 / 手机 PWA
             └── skills
 ```
 
-- 数据保存在用户自己的服务器 `/data` 持久化卷中。
+- 用户把 DevLoop 部署在自己的服务器上，多台设备共享同一 SQLite 与执行队列。
 - Electron 只作为服务器 Web 应用的桌面入口，不在本机重复执行任务。
-- 手机、浏览器和 Electron 看到同一实例、同一数据库和同一执行状态。
 - 客户端关闭不影响服务器 Worker 继续执行。
 
-### 3.3 数据归属
+### 3.4 数据归属
 
-- Electron 本地安装时，SQLite 属于用户当前电脑。
-- Docker 或宝塔安装时，SQLite 属于用户自己的服务器。
+- 本机安装时，SQLite 属于用户当前电脑。
+- 多人共享部署时，SQLite 属于用户自己的服务器。
 - 浏览器不能让远程服务器直接使用访问者手机或电脑上的 SQLite。
-- 更换电脑时，只要连接原服务器即可继续使用原数据；迁移本地实例时需要同时迁移数据目录和 Codex/Git 配置。
+- 更换电脑时，若使用共享部署只要连接原服务器即可继续使用原数据；迁移本机实例时需要同时迁移数据目录和 Codex/Git 配置。
 - 每套实例彼此隔离，不共享 DevLoop 中心账户或中心数据库。
 
 ## 4. 单用户身份与安全边界
@@ -260,15 +259,110 @@ Codex 修改 Worktree
 
 ### 6.4 取消与清理
 
-- 取消执行会终止 Codex CLI 进程组。
+- 取消执行会向 Codex CLI 主进程发送 SIGTERM，5 秒后 SIGKILL 兜底。进程组级取消（保证 Codex 拉起的子进程与工具调用一并退出）尚未接入。
 - 执行令牌立即轮换，迟到结果不能覆盖任务状态。
-- Worktree、运行事件和未提交修改暂时保留供诊断。
+- Worktree、运行事件和未提交修改保留供诊断，人工确认后由显式动作触发清理，不做定时 GC。
 - 非执行中任务只做软删除。
-- 后续清理器按保留期删除已结束 Run 的 Worktree，不删除结果 Commit 和审计记录。
 
-## 7. 数据模型
+## 7. 任务执行流程（当前实现）
 
-### 7.1 项目公开字段
+本节描述"任务进入系统 → 被 Worker 领取 → 调用 Codex CLI → 生成结果 Commit → 人工审核 → 推送到远程"这条主链路当前的代码实现。所有位置均以 `file:line` 标注入口，便于按图索骥阅读源码。
+
+### 7.1 入口
+
+任务通过以下方式进入或重回执行队列：
+
+- `POST /api/tasks`（`apps/server/src/app.ts:293`）：插入 DRAFT 行，随后 `autoQueueTask`（`app.ts:94`，实现见 `packages/db/src/repositories.ts:664`）在满足条件时静默将草稿转 READY。
+- `POST /api/tasks/:taskId/confirm`（`app.ts:335`）：显式 DRAFT → READY，带 `baseStrategy`。
+- `POST /api/runs/:runId/reject`（`app.ts:429`）：REVIEW 打回 READY，允许下一次执行。
+- 启动恢复（`apps/server/src/agent-worker.ts:68-84`）：服务进程重启后把残留 `worker_state.activeRunId` 对应的 Run 标记为 FAILED，任务回到可重试状态。
+
+暂无 CLI 投递、cron 或 Webhook 入口。
+
+### 7.2 领取
+
+单例 `AgentWorker`（`agent-worker.ts:42`）在 `apps/server/src/index.ts:54` 启动，通过 `setInterval(1_000ms)`（`agent-worker.ts:90`）轮询领取，同时任何变更任务队列的 HTTP 端点会额外调用 `worker.wake()`（如 `app.ts:98,341,370,441`）作为事件驱动补充。
+
+- 并发上限：1。由 `this.pulling` 和 `this.execution`（`agent-worker.ts:137-178`）互斥。
+- 领取 SQL：`claimNextTask`（`packages/db/src/repositories.ts:748`）在 SQLite 事务内，选 `status=READY`、`repositoryUrl` 非空的项目，按 `priority DESC, createdAt` 排序，并要求 `updatedAt <= now - DEVLOOP_AGENT_CLAIM_DELAY_MS`（默认 5000ms，见 `runtime-config.ts`），避免刚编辑就被抢走。
+- 幂等：领取时生成 `executionToken`（uuid），后续每次落库都校验令牌一致，令牌不匹配的写入视为迟到结果被丢弃（见 `isInvalidExecutionError`，`agent-worker.ts:383-393`）。
+
+### 7.3 准备工作区
+
+`AgentWorker.prepareWorkspace`（`agent-worker.ts:294`）：
+
+1. `GitService.fetchRepository`（`packages/git/src/git-service.ts`）：`git fetch --prune origin`。
+2. `resolveRemoteTargetBase(targetBranch, fallback=defaultBaseRef)`：解析 `origin/<targetBranch>`，不存在则回退到项目默认分支的 Commit 作为基线。
+3. `createWorktree`：在 `data/worktrees/<runId>` 创建 Worktree，分支名 `devloop/run/<runId>`。
+4. `taskRuns.baseCommit` 与 `worktreePath` 落库。
+
+### 7.4 调用 Codex CLI
+
+`CodexRunner.runAttempt`（`packages/runners/src/codex-runner.ts:534`）通过 `execa` 启动 Codex CLI：
+
+```text
+codex exec --json --output-last-message <runId>.json
+  --sandbox workspace-write --ephemeral --ignore-rules
+  --config approval_policy="never"
+  --config shell_environment_policy.inherit="core"
+  --color never --cd <worktreePath>
+  --disable <features…> -
+```
+
+Prompt 通过 stdin 送入。
+
+- `cwd`：Run 对应的 Worktree。
+- `env`：显式白名单（`codex-runner.ts:43-64`），只放行 `HOME / PATH / CODEX_HOME / OPENAI_API_KEY / CODEX_API_KEY / CODEX_ACCESS_TOKEN / *_PROXY / SSL_*`。
+- 超时：`DEVLOOP_CODEX_TIMEOUT_MS`（默认 30 分钟，`runtime-config.ts:71`）。
+- 取消：`AbortController` → `cancelSignal`；当前只 SIGTERM 到 Codex 主进程，`taskRuns.processGroupId` 列存在但写入 `null`（`repositories.ts:815`），进程组级取消尚未接入。
+
+Codex 的 stdout 逐行解析为 JSON 事件，映射为 `RunnerEvent` 后经 `emit`（`agent-worker.ts:271-292`）驱动 `setRunPhase`，把 Run 依次推进到 PREPARING → AGENT_RUNNING → VERIFYING → PREPARING_REVIEW。
+
+若最终 JSON 解析失败，`CodexRunner` 再跑一次 `sandbox=read-only`、`disableTools=true` 的修复回合（`codex-runner.ts:492-517`）要求 Codex 重新输出格式化 JSON。若仍失败，Run 判定为 FAILED。
+
+### 7.5 状态迁移写者
+
+| 迁移 | 位置 | 触发 |
+| --- | --- | --- |
+| DRAFT → READY | `repositories.ts:589` `confirmTask` | HTTP confirm 或 `autoQueueTask` |
+| READY → RUNNING + 新 Run CLAIMED | `repositories.ts:748` `claimNextTask` | Worker 领取，SQLite 事务 |
+| CLAIMED → …PREPARING_REVIEW | `agent-worker.ts:271` `handleRunnerEvent` + `setRunPhase` | Codex 事件流 |
+| RUNNING → REVIEW / BLOCKED / FAILED | `repositories.ts:1001/1088/1165` `completeRun / failRun / blockRun` | Runner 结果 outcome |
+| REVIEW → COMPLETED | `repositories.ts:1377` `approvePublishedRun` | HTTP approve，且 `gitService.pushResult` 成功后 |
+| REVIEW → READY | `repositories.ts:1530` `rejectRun` | HTTP reject |
+| RUNNING → CANCELLED | `repositories.ts:1242` `cancelRunningTask` | HTTP cancel → `agent-worker.ts:121` `cancelTask` |
+
+所有迁移返回 `EventfulResult`，由 `apps/server/src/event-bus.ts` 的 `DomainEventBus` 广播给 SSE 订阅者，并写入 `domain_events` 表（`packages/db/src/schema.ts:133`）。
+
+### 7.6 审核推送
+
+`POST /api/runs/:runId/approve`（`app.ts:408`）→ `GitService.pushResult`（`git-service.ts:314`）：
+
+1. 再次 `fetch origin`。
+2. 校验远程 `<targetBranch>` 仍位于本次执行的 `baseCommit`（快进检查），或该分支在远程不存在。
+3. 推送 `<resultCommit>:refs/heads/<targetBranch>`。
+4. 远端已前进时拒绝推送，不做强推。
+5. 推送成功后 `approvePublishedRun` 将 Run 记录的 `pushedAt` 与 `pushedCommit` 落库，并把任务置 COMPLETED。
+
+### 7.7 客户端实时同步
+
+- Fastify 监听 `DEVLOOP_HOST:DEVLOOP_PORT`（默认 `127.0.0.1:4317`）。`apps/web/dist` 存在时静态挂载在 `/`（`app.ts:485-488`）。
+- `GET /api/events?after=<id>`（`app.ts:455-483`）：先从 `domain_events` 表回放 `> afterId` 的事件，再订阅实时 `DomainEventBus`，15 秒心跳。
+- Web 客户端 `apps/web/src/components/realtime-sync.tsx:19` 使用 `EventSource`，`last-event-id` 存储于 `sessionStorage`，事件到达时按 key 让 react-query 缓存失效。
+- Desktop 只是外壳，`apps/desktop/src/main/index.ts` 仅暴露 `desktop:get-service-url` 与 `desktop:is-full-screen` 两个 IPC。
+
+### 7.8 边界与已知遗留
+
+以下项在代码中可见并已确认为"当前不做"或"待接入"，记录在此以避免误读文档：
+
+- **Worktree 清理**：`agent-worker.prepareWorkspace` 只创建 `data/worktrees/<runId>`。当前代码中没有任何路径调用 `git worktree remove` 或 `prune`。等"人工 dismiss"路径接入后由该动作触发清理。
+- **`taskRuns.processGroupId`**：Schema 列存在但始终写入 `null`。进程组级取消尚未实现。
+- **`packages/workflow`**：XState 状态机作为规格文档存在，不被 `apps/server` 引用；运行时状态机在 `packages/shared/src/transitions.ts` 与 Repository 中。
+- **`autoQueueTask` 触发条件**：以 `priority === 100`（`repositories.ts:666`）作为自动确认信号，属于当前的隐式约定。
+
+## 8. 数据模型
+
+### 8.1 项目公开字段
 
 ```text
 id
@@ -285,7 +379,7 @@ updatedAt
 
 数据库内部继续保存 `path` 作为托管仓库绝对路径，但 API 不返回该字段。
 
-### 7.2 Run 推送字段
+### 8.2 Run 推送字段
 
 ```text
 pushedAt
@@ -294,7 +388,7 @@ pushedCommit
 
 它们用于区分“本地结果已生成”“审核已通过”和“远程分支已更新”。
 
-### 7.3 不新增的表
+### 8.3 不新增的表
 
 当前不新增以下表：
 
@@ -307,7 +401,7 @@ organizations
 
 每套安装只使用自己的 SQLite 文件。
 
-## 8. API 边界
+## 9. API 边界
 
 项目相关接口：
 
@@ -332,9 +426,9 @@ POST /api/projects/:projectId/sync
 - 审核接口负责安全推送远程目标分支。
 - 旧的本机工作区覆盖接口不在远程仓库模式中暴露。
 
-## 9. 持久化目录
+## 10. 持久化目录
 
-### 9.1 本地安装
+### 10.1 本地安装
 
 生产版 Electron 使用操作系统应用数据目录，例如 macOS：
 
@@ -348,7 +442,7 @@ POST /api/projects/:projectId/sync
 
 开发环境继续使用项目内 `.devloop-data`，避免污染正式数据。
 
-### 9.2 Docker 与宝塔
+### 10.2 Docker 与宝塔
 
 容器统一使用 `/data`：
 
@@ -361,7 +455,7 @@ POST /api/projects/:projectId/sync
 
 必须把 `/data` 映射到服务器持久目录。容器重建不得丢失该目录。Git SSH 凭证和 Codex 配置分别以只读或受控方式挂载，敏感内容不写入镜像。
 
-## 10. 网络与宝塔配置
+## 11. 网络与宝塔配置
 
 Compose 默认只向宿主机回环地址发布端口：
 
@@ -387,7 +481,7 @@ proxy_read_timeout 3600s;
 - SQLite 备份使用一致性快照或停机复制。
 - 单个 SQLite 数据库只能由一个 DevLoop Server 实例使用。
 
-## 11. 容器运行约束
+## 12. 容器运行约束
 
 镜像内需要 Node.js、Git、OpenSSH 客户端、Codex CLI、生产依赖、构建后的 Web 静态资源和 DevLoop Server。
 
@@ -395,7 +489,7 @@ proxy_read_timeout 3600s;
 
 SQLite 不支持多个服务实例并行调度，因此禁止 PM2 集群、Compose 多副本或多个容器共享同一个数据库。
 
-## 12. 失败处理
+## 13. 失败处理
 
 - `git clone` 失败：项目注册失败，不保留半成品。
 - `git fetch` 失败：任务进入阻塞或失败状态并保留错误摘要。
@@ -406,7 +500,7 @@ SQLite 不支持多个服务实例并行调度，因此禁止 PM2 集群、Compo
 - 服务重启：未结束 Run 标记为中断，由用户决定是否重新排队。
 - SQLite 不可写：健康检查失败并停止领取任务。
 
-## 13. 开发顺序
+## 14. 开发顺序
 
 ### 阶段一：单用户实例边界
 
@@ -439,7 +533,7 @@ SQLite 不支持多个服务实例并行调度，因此禁止 PM2 集群、Compo
 4. 使用临时远程裸仓库验证分支创建、快进推送和冲突拒绝。
 5. 确认 Markdown、代码注释和界面文案均为中文。
 
-## 14. 首版不做
+## 15. 首版不做
 
 - DevLoop 注册、登录、管理员账户和多租户。
 - 多节点 Worker。
@@ -451,7 +545,7 @@ SQLite 不支持多个服务实例并行调度，因此禁止 PM2 集群、Compo
 - 手机直接启动任意 Shell 命令。
 - 多个客户端各自维护一份数据库并自动合并。
 
-## 15. 验收标准
+## 16. 验收标准
 
 1. 本地 Electron 安装后无需注册即可使用。
 2. 新服务器可以通过 Docker Compose 启动，无需初始化管理员。

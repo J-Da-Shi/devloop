@@ -112,6 +112,28 @@ export interface RunEvent {
   createdAt: string;
 }
 
+export type RunChangedFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typechange";
+
+export interface RunChangedFile {
+  path: string;
+  status: RunChangedFileStatus;
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+  oldPath?: string;
+}
+
+export interface RunFilePatch {
+  patch: string;
+  isBinary: boolean;
+}
+
 export interface RunApplicationResult {
   status: "applied" | "already_applied";
   branch: string;

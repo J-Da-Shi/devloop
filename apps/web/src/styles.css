@@ -3246,3 +3246,147 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+.diff-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.diff-file-header:hover {
+  background: var(--surface-hover);
+}
+
+.diff-status {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.diff-status-added {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.diff-status-deleted {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.diff-status-renamed,
+.diff-status-copied {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.diff-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-old-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.diff-stat {
+  display: inline-flex;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.diff-additions {
+  color: var(--success);
+}
+
+.diff-deletions {
+  color: var(--danger);
+}
+
+.diff-binary {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.diff-file-body {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.diff-binary-message {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.diff-patch {
+  margin: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.diff-line {
+  display: block;
+  padding: 0 12px;
+}
+
+.diff-line-add {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.diff-line-del {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.diff-line-hunk {
+  background: var(--primary-soft);
+  color: var(--muted);
+}
+
+.diff-line-meta {
+  color: var(--muted);
+}
+
+.diff-line-context {
+  color: var(--text-soft);
+}

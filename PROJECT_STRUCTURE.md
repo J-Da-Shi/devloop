@@ -115,7 +115,7 @@ Agent Runner 抽象：
 
 ### 3.5 `packages/workflow`
 
-任务状态机和允许的状态转换。它与 Repository 的事务检查共同防止客户端绕过流程。
+以 XState 表达的任务状态机规格文档。当前不被 `apps/server` 引用，运行时的状态转换由 `packages/db` 的 Repository 与 `packages/shared/src/transitions.ts` 联合执行。
 
 ## 4. 其他目录
 

@@ -405,6 +405,58 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     };
   });
 
+  const resolveRunRepositoryPath = (
+    runId: string,
+  ): { run: NonNullable<ReturnType<typeof repository.getRun>>; repositoryPath: string } => {
+    const run = repository.getRun(runId);
+    if (!run) {
+      throw new HttpError(404, "执行记录不存在", "NOT_FOUND");
+    }
+    const task = repository.getTaskIncludingDeleted(run.taskId);
+    if (!task) {
+      throw new HttpError(404, "任务不存在", "NOT_FOUND");
+    }
+    const context = repository.getProjectExecutionContext(task.projectId);
+    if (!context) {
+      throw new HttpError(404, "项目不存在", "NOT_FOUND");
+    }
+    return { run, repositoryPath: context.repositoryPath };
+  };
+
+  app.get("/api/runs/:runId/changed-files", async (request) => {
+    requireRequestRole(request, "viewer");
+    const { runId } = runParamSchema.parse(request.params);
+    const { run, repositoryPath } = resolveRunRepositoryPath(runId);
+    if (!run.baseCommit || !run.resultCommit) {
+      return { files: [] };
+    }
+    const files = await gitService.listRunChangedFiles({
+      repositoryPath,
+      baseCommit: run.baseCommit,
+      resultCommit: run.resultCommit,
+    });
+    return { files };
+  });
+
+  const patchQuerySchema = z.object({ path: z.string().min(1).max(1024) });
+
+  app.get("/api/runs/:runId/patch", async (request) => {
+    requireRequestRole(request, "viewer");
+    const { runId } = runParamSchema.parse(request.params);
+    const { path } = patchQuerySchema.parse(request.query);
+    const { run, repositoryPath } = resolveRunRepositoryPath(runId);
+    if (!run.baseCommit || !run.resultCommit) {
+      return { patch: "", isBinary: false };
+    }
+    const result = await gitService.getRunFilePatch({
+      repositoryPath,
+      baseCommit: run.baseCommit,
+      resultCommit: run.resultCommit,
+      path,
+    });
+    return result;
+  });
+
   app.post("/api/runs/:runId/approve", async (request) => {
     const identity = requireRequestRole(request, "operator");
     const { runId } = runParamSchema.parse(request.params);

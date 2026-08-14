@@ -1,50 +1,73 @@
 # DevLoop
 
-DevLoop 是一个单用户、自托管的开发任务执行系统。它在用户自己的电脑或服务器上运行 Codex CLI，管理任务队列、Git Worktree、结构化验收结果和审核推送；Electron、桌面浏览器和手机浏览器只是同一实例的不同入口。
+DevLoop 是一个单用户、本机运行的开发任务执行系统。用户在自己的电脑上安装 Electron 客户端，客户端会启动一个只监听 `127.0.0.1` 的本地服务进程，负责管理任务队列、Git Worktree、结构化验收结果和审核推送。所有数据都保存在用户当前设备。
 
-## 部署模式
+## 获取与使用
 
-### 本地模式
+### 普通用户：下载 Electron 安装包
+
+即将提供。发布后可从 Releases 下载对应平台的 `.dmg` / `.exe` 安装包，安装后直接使用。
+
+在此之前请使用下面的源码方式运行。
+
+### 开发者：使用源码运行
+
+要求 Node.js 24 和 pnpm 10。
+
+```bash
+git clone <本仓库地址>
+cd devloop
+pnpm install
+pnpm dev
+
+
+```
+
+`pnpm dev` 会同时启动本地服务、Web 页面和 Electron 客户端；`pnpm dev:web` 只启动本地服务和 Web 页面，在浏览器中打开 `http://127.0.0.1:5173`。
+
+默认调用当前用户已经可用的 Codex CLI。只想验证界面和任务状态时使用模拟执行器：
+
+```bash
+DEVLOOP_RUNNER=fake pnpm dev:web
+```
+
+常用环境变量：
 
 ```text
-Electron / 本机浏览器
-          |
-       127.0.0.1
-          |
-本机 DevLoop Server
+DEVLOOP_RUNNER=codex
+DEVLOOP_CODEX_EXECUTABLE=/absolute/path/to/codex
+DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
+DEVLOOP_CODEX_TIMEOUT_MS=1800000
+DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+DEVLOOP_DATA_DIR=.devloop-data
+```
+
+### 可选：多人共享部署
+
+如果需要多台设备连接同一实例，可以把 DevLoop 部署到用户自己的服务器上。此路径不是主流程，详见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
+## 运行拓扑
+
+```text
+Electron 客户端 / 本机浏览器
+              |
+           127.0.0.1
+              |
+本机 DevLoop Server 进程
 ├── Codex CLI
 ├── SQLite（任务与运行事件）
 ├── Git 仓库与 Worktree
 └── Skill
 ```
 
-开发环境的数据默认保存在项目内 `.devloop-data`。正式 Electron 安装将使用操作系统应用数据目录。
-
-### 个人服务器模式
-
-```text
-Electron / 桌面浏览器 / 手机
-                 |
-       Tailscale 或 HTTPS
-                 |
-        用户自己的 DevLoop Server
-        ├── Codex CLI
-        ├── SQLite（任务与运行事件）
-        ├── Git 仓库与 Worktree
-        └── Skill
-```
-
-Docker 部署的数据保存在服务器的 `/data` 持久化卷。更换电脑时只需连接原服务器，不需要复制浏览器数据。
+开发环境的数据保存在项目内 `.devloop-data`，正式 Electron 安装将使用操作系统应用数据目录。
 
 ## 访问边界
 
-DevLoop 不提供注册、登录、管理员账户或多租户。所有请求使用内置的“实例所有者”身份。
+DevLoop 不提供注册、登录、管理员账户或多租户。所有请求使用内置的"实例所有者"身份。这意味着服务入口必须由部署环境保护：
 
-这意味着服务入口必须由部署环境保护：
-
-- 本地模式只监听 `127.0.0.1`。
-- 手机访问优先使用 Tailscale。
-- 宝塔公网入口必须启用 HTTPS，并增加 Basic Auth、IP 白名单或其他外层保护。
+- 本机模式只监听 `127.0.0.1`。
+- 若走可选的多人共享部署，公网入口必须启用 HTTPS，并增加 Basic Auth、IP 白名单或其他外层保护。
 - 不要把 `4317` 端口直接开放到公网。
 
 ## 当前能力
@@ -57,7 +80,8 @@ DevLoop 不提供注册、登录、管理员账户或多租户。所有请求使
 - 在隔离 Git Worktree 中调用真实 Codex CLI。
 - 自定义 Provider 不使用 `--output-schema`，由本地解析 JSON 并进行一次格式修复重试。
 - 通过 SSE 实时刷新桌面和手机页面。
-- 执行中的任务可取消，并阻止迟到结果覆盖状态。
+- 执行中的任务可请求取消，Codex 主进程会收到 SIGTERM;进程组级取消（一并终止 Codex 拉起的子进程与工具调用）尚未接入。
+- 执行令牌轮换保证迟到结果不能覆盖任务状态。
 - 非执行中任务可软删除，历史记录继续保留。
 - 审核通过后安全推送远程目标分支，不进行强制推送。
 - 管理版本化的 DevLoop Skill 内容。
@@ -67,71 +91,12 @@ DevLoop Skill 注册表当前负责内容校验、版本和启停管理；任务
 
 当前 Worker 会校验 Codex 最终 JSON 并创建结果 Commit，但还没有独立验证命令配置。独立测试命令及退出码审计属于下一阶段。
 
-## 本地开发
-
-要求 Node.js 24 和 pnpm 10。
-
-安装依赖：
-
-```bash
-pnpm install
-```
-
-启动 Electron、Server 和 Web：
-
-```bash
-pnpm dev
-```
-
-只启动 Server 和 Web：
-
-```bash
-pnpm dev:web
-```
-
-默认调用当前用户已经可用的 Codex CLI。只测试页面和任务状态时使用模拟执行器：
-
-```bash
-DEVLOOP_RUNNER=fake pnpm dev:web
-```
-
-常用配置：
-
-```text
-DEVLOOP_RUNNER=codex
-DEVLOOP_CODEX_EXECUTABLE=/absolute/path/to/codex
-DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
-DEVLOOP_CODEX_TIMEOUT_MS=1800000
-DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
-DEVLOOP_DATA_DIR=.devloop-data
-```
-
-## 服务器部署
-
-项目已经提供：
-
-- [Dockerfile](./Dockerfile)
-- [Docker Compose](./compose.yaml)
-- [环境变量示例](./.env.example)
-- [宝塔 Nginx 模板](./deploy/baota-nginx.conf)
-- [完整部署说明](./DEPLOYMENT.md)
-
-基本启动命令：
-
-```bash
-mkdir -p data config/codex config/ssh
-cp .env.example .env
-docker compose up -d --build
-```
-
-部署前必须先配置 Codex 凭据和 Git SSH Deploy Key。
-
 ## 项目文档
 
 - [开发方案](./DEVELOPMENT_PLAN.md)
 - [技术选型](./TECH_SELECTION.md)
 - [项目目录说明](./PROJECT_STRUCTURE.md)
-- [服务器部署说明](./DEPLOYMENT.md)
+- [可选：多人共享部署说明](./DEPLOYMENT.md)
 
 ## 验证命令
 
