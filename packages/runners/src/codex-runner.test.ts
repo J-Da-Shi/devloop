@@ -68,6 +68,7 @@ for await (const chunk of process.stdin) prompt += chunk;
 const isRepair = prompt.includes("你只负责修复已有最终结果的 JSON 格式");
 if (args.includes("--output-schema")) process.exit(3);
 if (isRepair && (!args.includes("shell_tool") || !args.includes("unified_exec"))) process.exit(4);
+if (!isRepair && prompt.includes("处理审核反馈") && !prompt.includes("必须补充回归测试")) process.exit(5);
 if ((!isRepair && !prompt.includes("实现真实执行")) || outputIndex < 0) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-test" }) + "\\n");
 if (prompt.includes("上游失败")) {
@@ -77,6 +78,12 @@ if (prompt.includes("上游失败")) {
 if (prompt.includes("等待取消")) {
   setInterval(() => undefined, 1000);
   await new Promise(() => undefined);
+}
+if (prompt.includes("持续进展")) {
+  for (let index = 0; index < 4; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "reasoning", index } }) + "\\n");
+  }
 }
 process.stdout.write(JSON.stringify({ type: "turn.started" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "item.started", item: { type: "command_execution", command: "pnpm test" } }) + "\\n");
@@ -100,7 +107,11 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     await chmod(executablePath, 0o755);
     await mkdir(worktreePath);
 
-    const runner = new CodexRunner({ executable: executablePath, enabled: true, timeoutMs: 5_000 });
+    const runner = new CodexRunner({
+      executable: executablePath,
+      enabled: true,
+      stallTimeoutMs: 5_000,
+    });
     await expect(runner.detectCapabilities()).resolves.toMatchObject({
       available: true,
       version: "codex-cli test",
@@ -113,8 +124,9 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         runId: "run",
         taskId: "task",
         title: "真实执行",
-        goal: "实现真实执行",
+        goal: "实现真实执行并处理审核反馈",
         acceptanceCriteria: ["完成开发"],
+        reviewFeedback: "必须补充回归测试",
         worktreePath,
         outputSchemaPath,
         signal: controller.signal,
@@ -193,14 +205,34 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     cancelHandle.cancel();
     await expect(cancelHandle.result).rejects.toMatchObject({ name: "AbortError" });
 
-    const timeoutRunner = new CodexRunner({
+    const progressRunner = new CodexRunner({
       executable: executablePath,
       enabled: true,
-      timeoutMs: 50,
+      stallTimeoutMs: 500,
     });
-    const timeoutHandle = timeoutRunner.start(
+    const progressHandle = progressRunner.start(
       {
-        runId: "timeout-run",
+        runId: "progress-run",
+        taskId: "task",
+        title: "真实执行",
+        goal: "实现真实执行并持续进展",
+        acceptanceCriteria: ["完成开发"],
+        worktreePath,
+        outputSchemaPath,
+        signal: new AbortController().signal,
+      },
+      () => undefined,
+    );
+    await expect(progressHandle.result).resolves.toMatchObject({ outcome: "succeeded" });
+
+    const stallRunner = new CodexRunner({
+      executable: executablePath,
+      enabled: true,
+      stallTimeoutMs: 100,
+    });
+    const stallHandle = stallRunner.start(
+      {
+        runId: "stall-run",
         taskId: "task",
         title: "真实执行",
         goal: "实现真实执行并等待取消",
@@ -211,9 +243,9 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
       },
       () => undefined,
     );
-    await expect(timeoutHandle.result).resolves.toMatchObject({
+    await expect(stallHandle.result).resolves.toMatchObject({
       outcome: "failed",
-      summary: expect.stringContaining("已自动终止"),
+      summary: expect.stringContaining("疑似卡死"),
     });
 
     const blockedHandle = runner.start(

@@ -14,6 +14,7 @@ import type { Task } from "@devloop/shared";
 import { api, getDashboardRefetchInterval, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
 import { useNotice } from "../components/notice-provider.js";
+import { RunEventList } from "../components/run-event-list.js";
 import { StatusBadge } from "../components/status-badge.js";
 import { TaskDialog } from "../components/task-dialog.js";
 import {
@@ -203,20 +204,11 @@ export function StatusPage() {
                   <code>{currentRun.baseCommit?.slice(0, 10) ?? "暂无"}</code>
                 </span>
               </div>
-              <ol className="event-list" aria-live="polite">
-                {runDetails.data.events.map((event, index) => (
-                  <li
-                    key={event.id}
-                    className={index === runDetails.data.events.length - 1 ? "active" : ""}
-                  >
-                    <span className="event-marker" aria-hidden="true" />
-                    <div>
-                      <strong>{event.message}</strong>
-                      <time>{formatDateTime(event.createdAt)}</time>
-                    </div>
-                  </li>
-                ))}
-              </ol>
+              <RunEventList
+                events={runDetails.data.events}
+                streamKey={runDetails.data.run.id}
+                label="当前执行日志"
+              />
             </div>
           )}
         </section>

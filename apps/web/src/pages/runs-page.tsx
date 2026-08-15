@@ -3,6 +3,7 @@ import { Clock3, GitBranch, GitCommitHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
+import { RunEventList } from "../components/run-event-list.js";
 import { StatusBadge } from "../components/status-badge.js";
 import { formatDateTime, formatDuration, runStatusText } from "../utils.js";
 
@@ -19,6 +20,8 @@ export function RunsPage() {
     queryFn: () => api.run(selectedId ?? ""),
     enabled: Boolean(selectedId),
   });
+  const appliedLocally =
+    details.data?.events.some((event) => event.type === "run.applied") ?? false;
 
   if (runs.isPending) return <LoadingPanel label="正在加载执行记录" />;
   if (runs.isError) return <ErrorPanel error={runs.error} />;
@@ -103,30 +106,23 @@ export function RunsPage() {
                 </code>
               </span>
               <span>
-                <small>远程推送</small>
+                <small>{appliedLocally ? "本地写入" : "远程推送"}</small>
                 <code>
                   <GitCommitHorizontal size={14} />
-                  {details.data.run.pushedCommit?.slice(0, 10) ?? "尚未推送"}
+                  {appliedLocally
+                    ? "已写入项目"
+                    : (details.data.run.pushedCommit?.slice(0, 10) ?? "尚未推送")}
                 </code>
               </span>
             </div>
             {details.data.run.summary ? (
               <p className="run-summary">{details.data.run.summary}</p>
             ) : null}
-            <ol className="event-list">
-              {details.data.events.map((event, index) => (
-                <li
-                  key={event.id}
-                  className={index === details.data.events.length - 1 ? "active" : ""}
-                >
-                  <span className="event-marker" />
-                  <div>
-                    <strong>{event.message}</strong>
-                    <time>{formatDateTime(event.createdAt)}</time>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <RunEventList
+              events={details.data.events}
+              streamKey={details.data.run.id}
+              label="运行详情日志"
+            />
           </>
         ) : null}
       </section>

@@ -12,3 +12,4 @@ test-results/
 .DS_Store
 apps/web/.vite/
 packages/db/drizzle/meta/_journal.json.bak
+缺失的地方.md

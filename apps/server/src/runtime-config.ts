@@ -16,7 +16,7 @@ export interface RuntimeConfig {
   runner: "codex" | "fake";
   codexExecutable: string;
   codexIgnoreUserConfig: boolean;
-  codexTimeoutMs: number;
+  codexStallTimeoutMs: number;
   agentClaimDelayMs: number;
   fakeRunnerDelayMs: number;
 }
@@ -68,10 +68,10 @@ export function loadRuntimeConfig(): RuntimeConfig {
     runner: parseRunner(process.env.DEVLOOP_RUNNER),
     codexExecutable: process.env.DEVLOOP_CODEX_EXECUTABLE ?? "codex",
     codexIgnoreUserConfig: parseBoolean(process.env.DEVLOOP_CODEX_IGNORE_USER_CONFIG, false),
-    codexTimeoutMs: parseInteger(
-      process.env.DEVLOOP_CODEX_TIMEOUT_MS,
+    codexStallTimeoutMs: parseInteger(
+      process.env.DEVLOOP_CODEX_STALL_TIMEOUT_MS ?? process.env.DEVLOOP_CODEX_TIMEOUT_MS,
       30 * 60 * 1_000,
-      "DEVLOOP_CODEX_TIMEOUT_MS",
+      "DEVLOOP_CODEX_STALL_TIMEOUT_MS",
     ),
     agentClaimDelayMs: parseInteger(
       process.env.DEVLOOP_AGENT_CLAIM_DELAY_MS,

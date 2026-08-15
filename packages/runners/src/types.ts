@@ -6,6 +6,7 @@ export interface RunnerInput {
   title: string;
   goal: string;
   acceptanceCriteria: string[];
+  reviewFeedback?: string | null;
   worktreePath: string | null;
   outputSchemaPath: string | null;
   signal: AbortSignal;

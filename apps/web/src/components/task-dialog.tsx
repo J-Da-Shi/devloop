@@ -6,6 +6,7 @@ import {
   Check,
   CornerDownLeft,
   GitBranch,
+  Pencil,
   Play,
   RotateCcw,
   Save,
@@ -15,7 +16,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Project, RunPublishResult, Task } from "@devloop/shared";
+import type { Project, RunApplicationResult, RunPublishResult, Task } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { formatDateTime, runStatusText, taskStatusText } from "../utils.js";
 import { ConfirmDialog } from "./confirm-dialog.js";
@@ -23,6 +24,7 @@ import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
 import { IconButton } from "./icon-button.js";
 import { useNotice } from "./notice-provider.js";
 import { RunDiffPanel } from "./run-diff-panel.js";
+import { RunEventList } from "./run-event-list.js";
 import { StatusBadge } from "./status-badge.js";
 
 const taskFormSchema = z.object({
@@ -36,7 +38,7 @@ const taskFormSchema = z.object({
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
 type ConfirmAction =
-  "confirm" | "unconfirm" | "cancel" | "delete" | "approve" | "reject" | null;
+  "confirm" | "unconfirm" | "retry" | "revise" | "cancel" | "delete" | "approve" | "reject" | null;
 
 interface TaskDialogProps {
   open: boolean;
@@ -143,7 +145,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         throw new Error("任务尚未创建");
       }
       const idempotencyKey = crypto.randomUUID();
-      if (action === "confirm") {
+      if (action === "confirm" || action === "retry") {
         const project = projects.find((item) => item.id === task.projectId);
         return api.confirmTask(task.id, {
           expectedVersion: task.version,
@@ -152,7 +154,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
           baseRef: task.targetBranch ?? project?.defaultBaseRef ?? "HEAD",
         });
       }
-      if (action === "unconfirm") {
+      if (action === "unconfirm" || action === "revise") {
         return api.unconfirmTask(task.id, { expectedVersion: task.version, idempotencyKey });
       }
       if (action === "cancel") {
@@ -183,17 +185,27 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       await invalidate();
       const publication =
         action === "approve" && "publication" in data
-          ? (data.publication as RunPublishResult)
+          ? (data.publication as RunPublishResult | undefined)
+          : null;
+      const application =
+        action === "approve" && "application" in data
+          ? (data.application as RunApplicationResult | undefined)
           : null;
       const messages: Record<Exclude<ConfirmAction, null>, string> = {
         confirm: "任务已确认并加入队列",
         unconfirm: "任务已撤回为草稿",
+        retry: "任务已创建新 Revision 并重新加入队列",
+        revise: "任务已退回草稿，可修改后重新排队",
         cancel: "执行已取消，Worktree 和日志已保留",
         delete: "任务已删除，执行历史仍会保留",
         approve:
-          publication?.status === "already_pushed"
-            ? `远程分支 ${publication.branch} 已包含该结果`
-            : `结果已推送到远程分支 ${publication?.branch ?? targetBranch}`,
+          application?.status === "already_applied"
+            ? `本地分支 ${application.branch} 已包含该结果`
+            : application
+              ? `结果已写入本地分支 ${application.branch}`
+              : publication?.status === "already_pushed"
+                ? `远程分支 ${publication.branch} 已包含该结果`
+                : `结果已推送到远程分支 ${publication?.branch ?? targetBranch}`,
         reject: "审核意见已提交，任务将重新排队",
       };
       notify(messages[action]);
@@ -208,9 +220,14 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const canEdit = session.data ? roleAllowsEdit(session.data.identity.role) : false;
   const canOperate = session.data ? session.data.identity.role !== "viewer" : false;
   const editable = !task || task.status === "DRAFT";
+  const canRecover = Boolean(
+    task && (task.status === "BLOCKED" || task.status === "FAILED") && canEdit,
+  );
   const canCancel = Boolean(task?.status === "RUNNING" && canOperate);
   const canDelete = Boolean(task && task.status !== "RUNNING" && canEdit);
   const pending = saveMutation.isPending || commandMutation.isPending;
+  const taskProject = projects.find((project) => project.id === task?.projectId);
+  const localProject = taskProject?.repositoryUrl === null;
   const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
   const confirmCopy = {
     confirm: {
@@ -223,6 +240,18 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       title: "撤回为草稿？",
       description: "任务会离开待执行队列，修改后需要重新确认。",
       label: "撤回任务",
+      danger: false,
+    },
+    retry: {
+      title: "按当前任务内容重新执行？",
+      description: "系统会创建新的不可变 Revision，并把任务重新加入执行队列。",
+      label: "直接重试",
+      danger: false,
+    },
+    revise: {
+      title: "退回草稿并修改？",
+      description: "任务会转为可编辑草稿，已有 Run 和失败记录继续保留。",
+      label: "退回草稿",
       danger: false,
     },
     cancel: {
@@ -239,9 +268,11 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       danger: true,
     },
     approve: {
-      title: "通过并推送本次结果？",
-      description: `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
-      label: "通过并推送",
+      title: localProject ? "通过并写入本地项目？" : "通过并推送本次结果？",
+      description: localProject
+        ? `DevLoop 会把结果安全写入本地分支 ${targetBranch}。目标文件存在未提交修改或分支已变化时会停止，不会覆盖现有工作。`
+        : `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
+      label: localProject ? "通过并写入" : "通过并推送",
       danger: false,
     },
     reject: {
@@ -286,9 +317,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
             ) : null}
 
             {!canEdit && editable ? (
-              <InlineNotice tone="warning">
-                当前实例处于只读模式，无法修改任务。
-              </InlineNotice>
+              <InlineNotice tone="warning">当前实例处于只读模式，无法修改任务。</InlineNotice>
             ) : null}
 
             {editable ? (
@@ -314,6 +343,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
                         {project.name}
+                        {project.repositoryUrl === null ? "（本地）" : ""}
                       </option>
                     ))}
                   </select>
@@ -424,14 +454,12 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                           {runStatusText[runDetails.data.run.status]}
                         </StatusBadge>
                         <p>{runDetails.data.run.summary ?? "执行尚未生成摘要"}</p>
-                        <ol className="event-list compact">
-                          {runDetails.data.events.map((event) => (
-                            <li key={event.id}>
-                              <span>{event.message}</span>
-                              <time>{formatDateTime(event.createdAt)}</time>
-                            </li>
-                          ))}
-                        </ol>
+                        <RunEventList
+                          events={runDetails.data.events}
+                          streamKey={runDetails.data.run.id}
+                          compact
+                          label="最近执行日志"
+                        />
                       </div>
                     ) : null}
                   </section>
@@ -470,7 +498,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         disabled={pending}
                       >
                         <Check size={17} />
-                        通过并推送
+                        {localProject ? "通过并写入" : "通过并推送"}
                       </button>
                     </div>
                   </section>
@@ -488,15 +516,39 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     </button>
                   </div>
                 ) : null}
+                {canRecover ? (
+                  <div className="dialog-actions">
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setConfirmAction("revise")}
+                      disabled={pending}
+                    >
+                      <Pencil size={17} />
+                      修改后重试
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => setConfirmAction("retry")}
+                      disabled={pending}
+                    >
+                      <RotateCcw size={17} />
+                      直接重试
+                    </button>
+                  </div>
+                ) : null}
                 {task?.status === "COMPLETED" && runDetails.data ? (
                   <section className="apply-actions">
-                    <h3>远程目标分支</h3>
+                    <h3>{localProject ? "本地目标分支" : "远程目标分支"}</h3>
                     <InlineNotice tone="success">
-                      本次 Run 结果已推送到 {runDetails.data.run.targetBranch}
-                      {runDetails.data.run.pushedCommit
-                        ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
-                        : ""}
-                      。
+                      {localProject
+                        ? `本次 Run 结果已写入本地分支 ${runDetails.data.run.targetBranch}。`
+                        : `本次 Run 结果已推送到 ${runDetails.data.run.targetBranch}${
+                            runDetails.data.run.pushedCommit
+                              ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
+                              : ""
+                          }。`}
                     </InlineNotice>
                   </section>
                 ) : null}

@@ -82,6 +82,11 @@ class ControlledRunner implements AgentRunner {
 
 class ControlledGitService {
   readonly fetched: string[] = [];
+  readonly resolvedLocal: Array<{
+    repositoryPath: string;
+    targetBranch: string;
+    fallbackRef: string;
+  }> = [];
   readonly created: Array<{
     repositoryPath: string;
     worktreePath: string;
@@ -103,6 +108,19 @@ class ControlledGitService {
       targetBranch: input.targetBranch,
       baseCommit: input.targetBranch === "main" ? "base-commit" : "fallback-commit",
       branchExists: input.targetBranch === "main",
+    };
+  }
+
+  async resolveTargetBase(input: {
+    repositoryPath: string;
+    targetBranch: string;
+    fallbackRef: string;
+  }): Promise<{ targetBranch: string; baseCommit: string; branchExists: boolean }> {
+    this.resolvedLocal.push(input);
+    return {
+      targetBranch: input.targetBranch,
+      baseCommit: "local-base-commit",
+      branchExists: true,
     };
   }
 
@@ -350,6 +368,50 @@ describe("AgentWorker", () => {
     expect(repository.getTask(first.id)?.status).toBe("CANCELLED");
   });
 
+  it("审核驳回后把 Revision 反馈传给下一次执行器", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "审核反馈 Worker 测试项目",
+      repositoryUrl: "git@example.com:team/worker-review-feedback.git",
+      repositoryPath: "/tmp/devloop-worker-review-feedback-test",
+      defaultBaseRef: "main",
+      headCommit: "test-base-commit",
+    }).value;
+    const ready = createReadyTask(repository, project.id, "处理审核反馈", 80);
+    const firstClaim = repository.claimNextTask("controlled", "9999-12-31T23:59:59.999Z");
+    expect(firstClaim).not.toBeNull();
+    const completed = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "第一轮执行完成",
+    ).value;
+    const feedback = "需要补充异常路径测试";
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      feedback,
+    ).value;
+    const runner = new ControlledRunner();
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      now: () => Date.parse(rejected.updatedAt) + 1,
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    expect(runner.inputs[0]).toMatchObject({
+      title: "处理审核反馈",
+      goal: "完成 处理审核反馈",
+      acceptanceCriteria: ["任务被 AgentWorker 正确领取"],
+      reviewFeedback: feedback,
+    });
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, ready.id, "REVIEW");
+  });
+
   it("Codex 执行前创建 Worktree，成功后保存结果 Commit", async () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -400,5 +462,47 @@ describe("AgentWorker", () => {
     expect(repository.getRunEvents(runId ?? "").map((event) => event.type)).toEqual(
       expect.arrayContaining(["run.workspace_ready", "runner.verifying", "runner.review"]),
     );
+  });
+
+  it("本地项目使用本地分支准备 Worktree，不执行远程 fetch", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "本地 Codex 项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-local-codex-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "执行本地项目", 100);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      runnerVersion: "codex-cli test",
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(task.id)?.latestRunId;
+
+    expect(gitService.fetched).toEqual([]);
+    expect(gitService.resolvedLocal).toEqual([
+      {
+        repositoryPath: "/tmp/devloop-local-codex-project",
+        targetBranch: "main",
+        fallbackRef: "main",
+      },
+    ]);
+    expect(gitService.created[0]).toMatchObject({
+      repositoryPath: "/tmp/devloop-local-codex-project",
+      branchName: `devloop/run/${runId}`,
+      baseCommit: "local-base-commit",
+    });
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
   });
 });

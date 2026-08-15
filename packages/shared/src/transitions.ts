@@ -5,8 +5,8 @@ const allowedTaskTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   READY: new Set(["DRAFT", "RUNNING", "CANCELLED"]),
   RUNNING: new Set(["REVIEW", "BLOCKED", "FAILED", "CANCELLED"]),
   REVIEW: new Set(["COMPLETED", "READY", "CANCELLED"]),
-  BLOCKED: new Set(["READY"]),
-  FAILED: new Set(["READY"]),
+  BLOCKED: new Set(["DRAFT", "READY"]),
+  FAILED: new Set(["DRAFT", "READY"]),
   COMPLETED: new Set(),
   CANCELLED: new Set(),
 };

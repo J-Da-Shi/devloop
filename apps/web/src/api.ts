@@ -1,5 +1,6 @@
 import type {
   ConfirmTaskInput,
+  CreateLocalProjectInput,
   CreateProjectInput,
   CreateSkillInput,
   CreateSkillVersionInput,
@@ -10,6 +11,7 @@ import type {
   Project,
   RejectRunInput,
   RunChangedFile,
+  RunApplicationResult,
   RunEvent,
   RunFilePatch,
   Skill,
@@ -34,6 +36,13 @@ export interface RunDetails {
   run: TaskRun;
   task: Task | null;
   events: RunEvent[];
+}
+
+export interface RunApprovalResponse {
+  task: Task;
+  publication?: RunPublishResult;
+  application?: RunApplicationResult;
+  replayed: boolean;
 }
 
 export class ApiError extends Error {
@@ -94,6 +103,11 @@ export const api = {
   projects: () => request<{ projects: Project[] }>("/api/projects"),
   createProject: (input: CreateProjectInput) =>
     request<{ project: Project }>("/api/projects", { method: "POST", body: json(input) }),
+  createLocalProject: (input: CreateLocalProjectInput) =>
+    request<{ project: Project }>("/api/projects/local", {
+      method: "POST",
+      body: json(input),
+    }),
   syncProject: (projectId: string) =>
     request<{ project: Project }>(`/api/projects/${projectId}/sync`, { method: "POST" }),
   skills: () => request<{ skills: Skill[] }>("/api/skills"),
@@ -150,13 +164,10 @@ export const api = {
   runFilePatch: (runId: string, path: string) =>
     request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
   approveRun: (runId: string, input: TaskCommandInput) =>
-    request<{ task: Task; publication: RunPublishResult; replayed: boolean }>(
-      `/api/runs/${runId}/approve`,
-      {
-        method: "POST",
-        body: json(input),
-      },
-    ),
+    request<RunApprovalResponse>(`/api/runs/${runId}/approve`, {
+      method: "POST",
+      body: json(input),
+    }),
   rejectRun: (runId: string, input: RejectRunInput) =>
     request<{ task: Task; replayed: boolean }>(`/api/runs/${runId}/reject`, {
       method: "POST",
@@ -182,6 +193,8 @@ export const eventNames: DomainEvent["type"][] = [
   "run.started",
   "run.step_changed",
   "run.finished",
+  "run.applied",
   "run.pushed",
+  "run.rejected",
   "worker.status_changed",
 ];

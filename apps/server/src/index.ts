@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     executable: config.codexExecutable,
     enabled: true,
     ignoreUserConfig: config.codexIgnoreUserConfig,
-    timeoutMs: config.codexTimeoutMs,
+    stallTimeoutMs: config.codexStallTimeoutMs,
   });
   const runner = config.runner === "codex" ? codexRunner : fakeRunner;
   const runnerCapabilities = await runner.detectCapabilities();

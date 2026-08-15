@@ -3,9 +3,7 @@ import { baseStrategySchema, taskStatusSchema } from "./domain.js";
 
 const isSshRepositoryUrl = (value: string): boolean => {
   if (value.startsWith("ssh://")) {
-    return /^ssh:\/\/(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+(?::\d+)?\/[^\s/][^\s]*$/.test(
-      value,
-    );
+    return /^ssh:\/\/(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+(?::\d+)?\/[^\s/][^\s]*$/.test(value);
   }
   if (value.includes("://")) {
     return false;
@@ -24,6 +22,11 @@ export const createProjectInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   repositoryUrl: repositoryUrlSchema,
   defaultBaseRef: z.string().trim().min(1).max(200).default("main"),
+});
+
+export const createLocalProjectInputSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  path: z.string().trim().min(1, "项目目录不能为空").max(2048),
 });
 
 export const targetBranchSchema = z
@@ -103,6 +106,7 @@ export const taskQuerySchema = z.object({
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type CreateLocalProjectInput = z.infer<typeof createLocalProjectInputSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;

@@ -9,7 +9,7 @@ export interface CodexRunnerOptions {
   executableArguments?: string[];
   enabled?: boolean;
   ignoreUserConfig?: boolean;
-  timeoutMs?: number;
+  stallTimeoutMs?: number;
 }
 
 const requiredFlags = [
@@ -205,6 +205,7 @@ const parseAgentResult = (value: string): RunnerResult => {
 
 const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
   const criteria = input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`);
+  const reviewFeedback = input.reviewFeedback?.trim();
   return [
     "你正在 DevLoop 的独立 Git Worktree 中执行一个已经确认的开发任务。",
     "",
@@ -215,6 +216,7 @@ const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
     "",
     "验收标准：",
     ...criteria,
+    ...(reviewFeedback ? ["", "上次审核反馈（本轮必须逐项处理）：", reviewFeedback] : []),
     "",
     "执行要求：",
     "- 先阅读当前仓库结构和已有约定，再实施必要修改。",
@@ -300,7 +302,6 @@ interface CodexAttemptOptions {
   sandbox: "workspace-write" | "read-only";
   disableTools?: boolean;
   startMessage: string;
-  timeoutMs: number;
 }
 
 type CodexAttemptResult =
@@ -312,14 +313,14 @@ export class CodexRunner implements AgentRunner {
   private readonly executableArguments: string[];
   private readonly enabled: boolean;
   private readonly ignoreUserConfig: boolean;
-  private readonly timeoutMs: number;
+  private readonly stallTimeoutMs: number;
 
   public constructor(options: CodexRunnerOptions = {}) {
     this.executable = options.executable ?? "codex";
     this.executableArguments = options.executableArguments ?? [];
     this.enabled = options.enabled ?? false;
     this.ignoreUserConfig = options.ignoreUserConfig ?? false;
-    this.timeoutMs = options.timeoutMs ?? 30 * 60 * 1_000;
+    this.stallTimeoutMs = options.stallTimeoutMs ?? 30 * 60 * 1_000;
   }
 
   async detectCapabilities(): Promise<RunnerCapabilities> {
@@ -465,15 +466,12 @@ export class CodexRunner implements AgentRunner {
     const repairOutputPath = join(dirname(outputPath), `${input.runId}.repair.json`);
     const outputSchema = await readFile(input.outputSchemaPath, "utf8");
     await mkdir(dirname(outputPath), { recursive: true });
-    const deadline = Date.now() + this.timeoutMs;
-
     try {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
         prompt: buildPrompt(input, outputSchema),
         sandbox: "workspace-write",
         startMessage: "正在启动 Codex CLI",
-        timeoutMs: this.remainingTimeout(deadline),
       });
       if (initialAttempt.kind === "result") {
         return initialAttempt.result;
@@ -495,7 +493,6 @@ export class CodexRunner implements AgentRunner {
           sandbox: "read-only",
           disableTools: true,
           startMessage: "正在启动 Codex JSON 格式修复",
-          timeoutMs: this.remainingTimeout(deadline),
         });
         if (repairAttempt.kind === "result") {
           return repairAttempt.result;
@@ -548,15 +545,27 @@ export class CodexRunner implements AgentRunner {
         extendEnv: false,
         reject: false,
         cancelSignal: signal,
-        timeout: options.timeoutMs,
         forceKillAfterDelay: 5_000,
         maxBuffer: 10 * 1024 * 1024,
       },
     );
 
     let pending = "";
+    let stalled = false;
+    let stallTimer: NodeJS.Timeout | null = null;
+    const resetStallWatchdog = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+      }
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        subprocess.kill("SIGTERM", new Error("Codex CLI stopped producing output"));
+      }, this.stallTimeoutMs);
+      stallTimer.unref();
+    };
     subprocess.stdout?.setEncoding("utf8");
     subprocess.stdout?.on("data", (chunk: string) => {
+      resetStallWatchdog();
       pending += chunk;
       const lines = pending.split(/\r?\n/);
       pending = lines.pop() ?? "";
@@ -565,26 +574,36 @@ export class CodexRunner implements AgentRunner {
         lastCliError = parsedLine ?? lastCliError;
       }
     });
+    subprocess.stderr?.on("data", resetStallWatchdog);
 
     emit({ type: "runner.agent", message: options.startMessage });
-    const processResult = await subprocess;
+    resetStallWatchdog();
+    const processResult = await (async () => {
+      try {
+        return await subprocess;
+      } finally {
+        if (stallTimer) {
+          clearTimeout(stallTimer);
+        }
+      }
+    })();
     if (pending.trim()) {
       lastCliError = this.handleJsonLine(pending, emit) ?? lastCliError;
     }
-    if (processResult.isCanceled && !processResult.timedOut) {
-      throw new DOMException("Codex execution cancelled", "AbortError");
-    }
-    if (processResult.timedOut) {
+    if (stalled) {
       const stderr = typeof processResult.stderr === "string" ? processResult.stderr.trim() : "";
       const lastMessage = lastCliError ?? stderr;
       return {
         kind: "result",
         result: {
           outcome: "failed",
-          summary: `Codex 执行超过 ${this.formatTimeout()}，已自动终止。${lastMessage ? ` 最后信息：${truncate(redact(lastMessage), 500)}` : ""}`,
+          summary: `Codex 连续 ${this.formatStallTimeout()} 没有产生任何输出，疑似卡死，已自动终止。${lastMessage ? ` 最后信息：${truncate(redact(lastMessage), 500)}` : ""}`,
           risks: ["Worktree 已保留，可在运行详情中继续诊断。"],
         },
       };
+    }
+    if (processResult.isCanceled) {
+      throw new DOMException("Codex execution cancelled", "AbortError");
     }
     if (processResult.failed || processResult.exitCode !== 0) {
       const stderr = typeof processResult.stderr === "string" ? processResult.stderr : "";
@@ -616,15 +635,11 @@ export class CodexRunner implements AgentRunner {
     }
   }
 
-  private remainingTimeout(deadline: number): number {
-    return Math.max(1, deadline - Date.now());
-  }
-
-  private formatTimeout(): string {
-    if (this.timeoutMs < 60_000) {
-      return `${Math.max(1, Math.ceil(this.timeoutMs / 1_000))} 秒`;
+  private formatStallTimeout(): string {
+    if (this.stallTimeoutMs < 60_000) {
+      return `${Math.max(1, Math.ceil(this.stallTimeoutMs / 1_000))} 秒`;
     }
-    return `${Math.round(this.timeoutMs / 60_000)} 分钟`;
+    return `${Math.round(this.stallTimeoutMs / 60_000)} 分钟`;
   }
 
   private handleJsonLine(line: string, emit: (event: RunnerEvent) => void): string | null {

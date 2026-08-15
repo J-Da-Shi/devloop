@@ -24,6 +24,9 @@ const roleRank: Record<DeviceRole, number> = {
   editor: 2,
 };
 
+const isLoopback = (address: string | undefined): boolean =>
+  address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+
 export function resolveIdentity(): RequestIdentity {
   return {
     id: "instance-owner",
@@ -33,13 +36,24 @@ export function resolveIdentity(): RequestIdentity {
   };
 }
 
-export function requireRole(
-  _request: FastifyRequest,
-  minimumRole: DeviceRole,
-): RequestIdentity {
+export function requireRole(_request: FastifyRequest, minimumRole: DeviceRole): RequestIdentity {
   const identity = resolveIdentity();
   if (roleRank[identity.role] < roleRank[minimumRole]) {
     throw new HttpError(403, "当前实例没有执行此操作的权限", "ROLE_REQUIRED");
+  }
+  return identity;
+}
+
+export function requireLocalRole(
+  request: FastifyRequest,
+  minimumRole: DeviceRole,
+): RequestIdentity {
+  const identity = requireRole(request, minimumRole);
+  if (
+    !isLoopback(request.raw.socket.remoteAddress) ||
+    request.headers["x-forwarded-for"] !== undefined
+  ) {
+    throw new HttpError(403, "此操作只能在本机桌面客户端完成", "LOCAL_ONLY");
   }
   return identity;
 }

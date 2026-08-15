@@ -19,7 +19,11 @@ export interface AgentWorkerOptions {
   runnerVersion?: string | null;
   gitService?: Pick<
     GitService,
-    "fetchRepository" | "resolveRemoteTargetBase" | "createWorktree" | "commitWorktree"
+    | "fetchRepository"
+    | "resolveRemoteTargetBase"
+    | "resolveTargetBase"
+    | "createWorktree"
+    | "commitWorktree"
   >;
   worktreesPath?: string;
 }
@@ -207,9 +211,10 @@ export class AgentWorker {
         {
           runId: claimed.run.id,
           taskId: claimed.task.id,
-          title: claimed.task.title,
+          title: claimed.title,
           goal: claimed.goal,
           acceptanceCriteria: claimed.acceptanceCriteria,
+          reviewFeedback: claimed.reviewFeedback,
           worktreePath: workspace.path,
           outputSchemaPath: this.outputSchemaPath,
           signal: controller.signal,
@@ -309,12 +314,20 @@ export class AgentWorker {
         `正在从目标分支 ${claimed.run.targetBranch} 准备独立 Git Worktree`,
       ),
     );
-    await this.options.gitService.fetchRepository(claimed.projectPath);
-    const targetBase = await this.options.gitService.resolveRemoteTargetBase({
-      repositoryPath: claimed.projectPath,
-      targetBranch: claimed.run.targetBranch,
-      fallbackRef: claimed.projectDefaultBaseRef,
-    });
+    const targetBase = claimed.projectRepositoryUrl
+      ? await (async () => {
+          await this.options.gitService!.fetchRepository(claimed.projectPath);
+          return this.options.gitService!.resolveRemoteTargetBase({
+            repositoryPath: claimed.projectPath,
+            targetBranch: claimed.run.targetBranch,
+            fallbackRef: claimed.projectDefaultBaseRef,
+          });
+        })()
+      : await this.options.gitService.resolveTargetBase({
+          repositoryPath: claimed.projectPath,
+          targetBranch: claimed.run.targetBranch,
+          fallbackRef: claimed.projectDefaultBaseRef,
+        });
     this.publish(
       this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
         targetBranch: targetBase.targetBranch,

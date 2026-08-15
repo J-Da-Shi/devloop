@@ -18,7 +18,7 @@ import {
   type TaskStatus,
   type WorkerState,
 } from "@devloop/shared";
-import { and, desc, eq, gt, isNotNull, isNull, lte, max } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, max } from "drizzle-orm";
 import type { DatabaseHandle } from "./client.js";
 import {
   domainEvents,
@@ -53,6 +53,38 @@ const parseStringArray = (value: string): string[] => {
     throw new Error("数据库中的字符串数组格式无效");
   }
   return parsed;
+};
+
+interface TaskRevisionSpecSnapshot {
+  title: string;
+  goal: string;
+  acceptanceCriteria: string[];
+  reviewFeedback: string | null;
+}
+
+const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("任务 Revision 内容格式无效");
+  }
+  const record = parsed as Record<string, unknown>;
+  const acceptanceCriteria = record.acceptanceCriteria;
+  const reviewFeedback = record.reviewFeedback;
+  if (
+    typeof record.title !== "string" ||
+    typeof record.goal !== "string" ||
+    !Array.isArray(acceptanceCriteria) ||
+    !acceptanceCriteria.every((item) => typeof item === "string") ||
+    (reviewFeedback !== undefined && typeof reviewFeedback !== "string")
+  ) {
+    throw new Error("任务 Revision 内容格式无效");
+  }
+  return {
+    title: record.title,
+    goal: record.goal,
+    acceptanceCriteria,
+    reviewFeedback: reviewFeedback ?? null,
+  };
 };
 
 const mapProject = (row: ProjectRow): Project => ({
@@ -181,8 +213,11 @@ export interface ClaimedTask {
   run: TaskRun;
   projectPath: string;
   projectDefaultBaseRef: string;
+  projectRepositoryUrl: string | null;
+  title: string;
   goal: string;
   acceptanceCriteria: string[];
+  reviewFeedback: string | null;
 }
 
 export interface RunApplicationContext {
@@ -203,6 +238,17 @@ export interface PublishedRunApproval {
   task: Task;
   publication: RunPublishResult;
 }
+
+export interface AppliedRunApproval {
+  task: Task;
+  application: RunApplicationResult;
+}
+
+export type RunApprovalResult = PublishedRunApproval | AppliedRunApproval;
+
+export type RunApprovalContext =
+  | { type: "remote"; context: RunPublishContext }
+  | { type: "local"; context: RunApplicationContext };
 
 export interface StoredSkillVersionInput {
   name: string;
@@ -237,7 +283,7 @@ export class DevLoopRepository {
           name: input.name,
           path: input.repositoryPath,
           repositoryUrl: input.repositoryUrl,
-          lastFetchedAt: input.lastFetchedAt ?? timestamp,
+          lastFetchedAt: input.lastFetchedAt === undefined ? timestamp : input.lastFetchedAt,
           defaultBaseRef: input.defaultBaseRef,
           integrationRef,
           integrationCommit: input.headCommit,
@@ -262,6 +308,11 @@ export class DevLoopRepository {
       .from(projects)
       .where(eq(projects.repositoryUrl, repositoryUrl))
       .get();
+    return row ? mapProject(row) : null;
+  }
+
+  findProjectByPath(path: string): Project | null {
+    const row = this.handle.db.select().from(projects).where(eq(projects.path, path)).get();
     return row ? mapProject(row) : null;
   }
 
@@ -754,10 +805,7 @@ export class DevLoopRepository {
       const selected = this.handle.db
         .select({ task: tasks })
         .from(tasks)
-        .innerJoin(
-          projects,
-          and(eq(projects.id, tasks.projectId), isNotNull(projects.repositoryUrl)),
-        )
+        .innerJoin(projects, eq(projects.id, tasks.projectId))
         .where(
           and(
             eq(tasks.status, "READY"),
@@ -780,6 +828,7 @@ export class DevLoopRepository {
       if (!revision) {
         throw new Error("任务的当前 Revision 不存在");
       }
+      const revisionSpec = parseTaskRevisionSpec(revision.specJson);
       const project = this.requireProjectRow(current.projectId);
       assertTaskTransition(current.status, "RUNNING");
       const baseCommit =
@@ -860,8 +909,11 @@ export class DevLoopRepository {
           run: mapRun(runRow),
           projectPath: project.path,
           projectDefaultBaseRef: project.defaultBaseRef,
-          goal: current.goal,
-          acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
+          projectRepositoryUrl: project.repositoryUrl,
+          title: revisionSpec.title,
+          goal: revisionSpec.goal,
+          acceptanceCriteria: revisionSpec.acceptanceCriteria,
+          reviewFeedback: revisionSpec.reviewFeedback,
         },
         events: [taskEvent, runEvent],
         replayed: false,
@@ -1331,35 +1383,51 @@ export class DevLoopRepository {
     });
   }
 
-  getRunPublishContext(runId: string, expectedVersion: number): RunPublishContext {
+  getRunApprovalContext(runId: string, expectedVersion: number): RunApprovalContext {
     const currentRun = this.requireRunRow(runId);
     const currentTask = this.requireTaskRow(currentRun.taskId);
     if (currentRun.status !== "SUCCEEDED" || currentTask.status !== "REVIEW") {
-      throw new Error("只有审核中的成功执行可以推送");
+      throw new Error("只有审核中的成功执行可以通过");
     }
     if (currentTask.latestRunId !== runId) {
-      throw new Error("只有任务最近一次成功执行可以推送");
+      throw new Error("只有任务最近一次成功执行可以通过");
     }
     this.assertVersion(currentTask.version, expectedVersion);
     if (!currentRun.baseCommit || !currentRun.resultCommit) {
       throw new Error("执行记录缺少完整的 Git 结果范围");
     }
     const project = this.requireProjectRow(currentTask.projectId);
-    if (!project.repositoryUrl) {
-      throw new Error("旧本地项目需要重新注册远程 Git 仓库后才能推送");
+    if (project.repositoryUrl) {
+      return {
+        type: "remote",
+        context: {
+          repositoryPath: project.path,
+          targetBranch: currentRun.targetBranch,
+          baseCommit: currentRun.baseCommit,
+          resultCommit: currentRun.resultCommit,
+        },
+      };
     }
     return {
-      repositoryPath: project.path,
-      targetBranch: currentRun.targetBranch,
-      baseCommit: currentRun.baseCommit,
-      resultCommit: currentRun.resultCommit,
+      type: "local",
+      context: {
+        projectPath: project.path,
+        targetBranch: currentRun.targetBranch,
+        baseCommit: currentRun.baseCommit,
+        resultCommit: currentRun.resultCommit,
+      },
     };
   }
 
-  getRunApprovalReplay(
-    deviceId: string,
-    idempotencyKey: string,
-  ): PublishedRunApproval | null {
+  getRunPublishContext(runId: string, expectedVersion: number): RunPublishContext {
+    const approval = this.getRunApprovalContext(runId, expectedVersion);
+    if (approval.type !== "remote") {
+      throw new Error("本地项目的执行结果不能推送到远程仓库");
+    }
+    return approval.context;
+  }
+
+  getRunApprovalReplay(deviceId: string, idempotencyKey: string): RunApprovalResult | null {
     const command = this.handle.db
       .select()
       .from(remoteCommands)
@@ -1371,7 +1439,7 @@ export class DevLoopRepository {
         ),
       )
       .get();
-    return command ? (JSON.parse(command.resultJson) as PublishedRunApproval) : null;
+    return command ? (JSON.parse(command.resultJson) as RunApprovalResult) : null;
   }
 
   approvePublishedRun(
@@ -1467,6 +1535,94 @@ export class DevLoopRepository {
     });
   }
 
+  approveAppliedRun(
+    runId: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+    application: RunApplicationResult,
+  ): EventfulResult<AppliedRunApproval> {
+    return this.executeIdempotent(deviceId, idempotencyKey, "run.approve", expectedVersion, () => {
+      const currentRun = this.requireRunRow(runId);
+      const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (currentRun.status !== "SUCCEEDED" || currentTask.latestRunId !== runId) {
+        throw new Error("只有任务最近一次成功执行可以通过审核");
+      }
+      assertTaskTransition(currentTask.status, "COMPLETED");
+      this.assertVersion(currentTask.version, expectedVersion);
+      const project = this.requireProjectRow(currentTask.projectId);
+      if (project.repositoryUrl) {
+        throw new Error("远程项目必须推送结果后才能通过审核");
+      }
+      if (
+        (currentRun.targetBranch !== "HEAD" && application.branch !== currentRun.targetBranch) ||
+        !application.currentCommit
+      ) {
+        throw new Error("本地写回结果与当前 Run 不一致");
+      }
+      const timestamp = now();
+      const taskRow = this.handle.db
+        .update(tasks)
+        .set({ status: "COMPLETED", version: currentTask.version + 1, updatedAt: timestamp })
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, expectedVersion),
+            eq(tasks.status, "REVIEW"),
+          ),
+        )
+        .returning()
+        .get();
+      if (!taskRow) {
+        throw new Error("Version conflict: 任务审核状态已发生变化");
+      }
+      const projectRow = this.handle.db
+        .update(projects)
+        .set({
+          integrationCommit: application.currentCommit,
+          version: project.version + 1,
+          updatedAt: timestamp,
+        })
+        .where(and(eq(projects.id, project.id), eq(projects.version, project.version)))
+        .returning()
+        .get();
+      if (!projectRow) {
+        throw new Error("Version conflict: 项目同步状态已发生变化");
+      }
+      this.handle.db
+        .insert(reviewDecisions)
+        .values({
+          id: randomUUID(),
+          runId,
+          decision: "APPROVED",
+          feedback: null,
+          deviceId,
+          createdAt: timestamp,
+        })
+        .run();
+      const message =
+        application.status === "already_applied"
+          ? `本地分支 ${application.branch} 已包含本次结果`
+          : application.workingTreeUpdated
+            ? `本次结果已写入本地分支 ${application.branch} 和当前工作目录`
+            : `本次结果已写入本地分支 ${application.branch}`;
+      this.insertRunEvent(runId, "run.applied", message, { ...application });
+      const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
+        taskId: currentTask.id,
+        from: "REVIEW",
+        to: "COMPLETED",
+      });
+      const runEvent = this.insertDomainEvent("run", runId, "run.applied", {
+        runId,
+        ...application,
+      });
+      return {
+        value: { task: mapTask(taskRow, project.name), application },
+        events: [taskEvent, runEvent],
+      };
+    });
+  }
+
   getRunApplicationContext(runId: string, expectedVersion: number): RunApplicationContext {
     const currentRun = this.requireRunRow(runId);
     const currentTask = this.requireTaskRow(currentRun.taskId);
@@ -1537,6 +1693,13 @@ export class DevLoopRepository {
     return this.executeIdempotent(deviceId, idempotencyKey, "run.reject", expectedVersion, () => {
       const currentRun = this.requireRunRow(runId);
       const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (
+        currentRun.status !== "SUCCEEDED" ||
+        currentTask.status !== "REVIEW" ||
+        currentTask.latestRunId !== runId
+      ) {
+        throw new Error("只有任务最近一次成功执行可以驳回");
+      }
       assertTaskTransition(currentTask.status, "READY");
       this.assertVersion(currentTask.version, expectedVersion);
       const currentRevision = this.handle.db
@@ -1597,12 +1760,21 @@ export class DevLoopRepository {
           createdAt: timestamp,
         })
         .run();
+      this.insertRunEvent(runId, "run.rejected", `审核已驳回：${feedback}`, {
+        feedback,
+        nextRevisionId: revisionId,
+      });
       const event = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
         from: "REVIEW",
         to: "READY",
       });
-      return { value: mapTask(taskRow, project.name), events: [event] };
+      const runEvent = this.insertDomainEvent("run", runId, "run.rejected", {
+        runId,
+        feedback,
+        nextRevisionId: revisionId,
+      });
+      return { value: mapTask(taskRow, project.name), events: [event, runEvent] };
     });
   }
 

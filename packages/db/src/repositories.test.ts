@@ -37,6 +37,42 @@ describe("DevLoopRepository 自动入队", () => {
     );
   });
 
+  it("本地项目可以进入执行队列并保留本地来源", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "本地项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-local-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "本地任务",
+      goal: "验证本地项目可以执行",
+      acceptanceCriteria: ["任务被 Worker 领取"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+
+    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+
+    expect(repository.findProjectByPath("/tmp/devloop-local-project")?.id).toBe(project.id);
+    expect(project.lastFetchedAt).toBeNull();
+    expect(claimed?.value).toMatchObject({
+      projectPath: "/tmp/devloop-local-project",
+      projectRepositoryUrl: null,
+      projectDefaultBaseRef: "main",
+    });
+  });
+
   it("草稿分数从 99 变为 100 后自动进入待执行", () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -141,6 +177,71 @@ describe("DevLoopRepository 自动入队", () => {
     );
     expect(replayed.replayed).toBe(true);
     expect(replayed.value.publication).toEqual(publication);
+  });
+
+  it("本地结果写回后完成审核并推进本地集成基线", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "本地审核项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-local-approval-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "写回本地结果",
+      goal: "把审核通过的结果写入本地分支",
+      acceptanceCriteria: ["记录 run.applied 事件"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const completed = repository.completeRun(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "本地执行完成",
+      "result-commit",
+    ).value;
+
+    expect(repository.getRunApprovalContext(claimed!.value.run.id, completed.task.version)).toEqual(
+      {
+        type: "local",
+        context: {
+          projectPath: "/tmp/devloop-local-approval-test",
+          targetBranch: "main",
+          baseCommit: "base-commit",
+          resultCommit: "result-commit",
+        },
+      },
+    );
+
+    const approved = repository.approveAppliedRun(
+      claimed!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      {
+        status: "applied",
+        branch: "main",
+        previousCommit: "base-commit",
+        currentCommit: "applied-commit",
+        branchCreated: false,
+        workingTreeUpdated: true,
+      },
+    );
+
+    expect(approved.value.task.status).toBe("COMPLETED");
+    expect(repository.listProjects()[0]?.integrationCommit).toBe("applied-commit");
+    expect(approved.events.map((event) => event.type)).toContain("run.applied");
+    expect(repository.getRunEvents(claimed!.value.run.id).at(-1)?.type).toBe("run.applied");
   });
 
   it("远端已经包含结果并继续前进时仍可完成审核", () => {
@@ -294,5 +395,156 @@ describe("DevLoopRepository 自动入队", () => {
     );
     expect(replayed.replayed).toBe(true);
     expect(replayed.value.task.status).toBe("CANCELLED");
+  });
+
+  it("驳回最新成功执行后把审核反馈传入下一 Revision，并拒绝驳回旧 Run", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "审核反馈测试项目",
+      repositoryUrl: "git@example.com:team/review-feedback.git",
+      repositoryPath: "/tmp/devloop-review-feedback-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "feature/review-feedback",
+      title: "处理审核反馈",
+      goal: "按审核意见完善实现",
+      acceptanceCriteria: ["补充回归测试", "保留现有行为"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(firstClaim).not.toBeNull();
+    const firstCompleted = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "第一轮执行完成",
+      "first-result-commit",
+    ).value;
+    const feedback = "缺少边界条件回归测试，请补充后重新提交。";
+
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      firstCompleted.task.version,
+      randomUUID(),
+      feedback,
+    );
+
+    expect(rejected.value.status).toBe("READY");
+    expect(rejected.events.map((event) => event.type)).toContain("run.rejected");
+    expect(repository.getRunEvents(firstClaim!.value.run.id).at(-1)).toMatchObject({
+      type: "run.rejected",
+      message: `审核已驳回：${feedback}`,
+    });
+
+    const retryClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(retryClaim?.value).toMatchObject({
+      title: "处理审核反馈",
+      goal: "按审核意见完善实现",
+      acceptanceCriteria: ["补充回归测试", "保留现有行为"],
+      reviewFeedback: feedback,
+    });
+    const retryCompleted = repository.completeRun(
+      retryClaim!.value.run.id,
+      retryClaim!.value.run.executionToken,
+      "第二轮执行完成",
+      "second-result-commit",
+    ).value;
+
+    expect(() =>
+      repository.rejectRun(
+        firstClaim!.value.run.id,
+        "instance-owner",
+        retryCompleted.task.version,
+        randomUUID(),
+        "错误地驳回旧 Run",
+      ),
+    ).toThrow("只有任务最近一次成功执行可以驳回");
+  });
+
+  it("阻塞任务可直接重试，失败任务可退回草稿修改后重试", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "任务恢复测试项目",
+      repositoryUrl: "git@example.com:team/task-recovery.git",
+      repositoryPath: "/tmp/devloop-task-recovery-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "feature/recovery",
+      title: "恢复失败任务",
+      goal: "验证直接重试和修改后重试",
+      acceptanceCriteria: ["保留运行历史"],
+      priority: 80,
+    }).value;
+    const ready = repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const firstRevisionId = ready.activeRevisionId;
+    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(firstClaim).not.toBeNull();
+    const blocked = repository.blockRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "外部依赖不可用",
+    ).value.task;
+
+    const directRetry = repository.confirmTask(blocked.id, "instance-owner", {
+      expectedVersion: blocked.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    expect(directRetry.status).toBe("READY");
+    expect(directRetry.activeRevisionId).not.toBe(firstRevisionId);
+
+    const secondClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(secondClaim?.value.run.taskRevisionId).toBe(directRetry.activeRevisionId);
+    const failed = repository.failRun(
+      secondClaim!.value.run.id,
+      secondClaim!.value.run.executionToken,
+      "测试命令失败",
+    ).value.task;
+
+    const reopened = repository.unconfirmTask(
+      failed.id,
+      "instance-owner",
+      failed.version,
+      randomUUID(),
+    ).value;
+    expect(reopened.status).toBe("DRAFT");
+    const edited = repository.updateDraftTask(reopened.id, "instance-owner", {
+      goal: "补充异常路径处理后再次执行",
+      acceptanceCriteria: ["保留运行历史", "异常路径测试通过"],
+      expectedVersion: reopened.version,
+      idempotencyKey: randomUUID(),
+    }).value;
+    const revisedRetry = repository.confirmTask(edited.id, "instance-owner", {
+      expectedVersion: edited.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const thirdClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+
+    expect(revisedRetry.status).toBe("READY");
+    expect(thirdClaim?.value).toMatchObject({
+      goal: "补充异常路径处理后再次执行",
+      acceptanceCriteria: ["保留运行历史", "异常路径测试通过"],
+      reviewFeedback: null,
+    });
   });
 });

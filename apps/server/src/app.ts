@@ -6,9 +6,10 @@ import { GitApplyError, type GitService } from "@devloop/git";
 import type { AgentRunner } from "@devloop/runners";
 import {
   confirmTaskInputSchema,
+  createLocalProjectInputSchema,
+  createProjectInputSchema,
   createSkillInputSchema,
   createSkillVersionInputSchema,
-  createProjectInputSchema,
   createTaskInputSchema,
   rejectRunInputSchema,
   taskCommandInputSchema,
@@ -24,7 +25,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { DomainEventBus } from "./event-bus.js";
 import type { AgentWorker } from "./agent-worker.js";
-import { HttpError, requireRole } from "./http.js";
+import { HttpError, requireLocalRole, requireRole } from "./http.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillValidationError, type SkillService } from "./skill-service.js";
 
@@ -63,11 +64,13 @@ const mapRepositoryError = (error: Error): HttpError | null => {
     error.message.startsWith("Version conflict") ||
     error.message.startsWith("Invalid task transition") ||
     error.message.startsWith("Only ") ||
+    error.message.startsWith("只有") ||
     error.message.includes("changed; reload") ||
     error.message.includes("当前执行已经变化") ||
     error.message.includes("执行中的任务不能删除") ||
     error.message.includes("只有执行中的任务可以取消") ||
     error.message.includes("只有草稿任务可以编辑") ||
+    error.message.includes("只有任务最近一次成功执行可以驳回") ||
     error.message === "Skill 内容没有变化" ||
     error.message === "Skill 名称发布后不能修改"
   ) {
@@ -210,12 +213,39 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     }
   });
 
+  app.post("/api/projects/local", async (request, reply) => {
+    requireLocalRole(request, "editor");
+    const input = createLocalProjectInputSchema.parse(request.body);
+    const git = await gitService.inspectRepository(input.path);
+    const existing = repository.findProjectByPath(git.path);
+    if (existing) {
+      throw new HttpError(409, "该本地项目已经注册", "ALREADY_EXISTS");
+    }
+    const result = repository.createProject({
+      name: input.name,
+      repositoryUrl: null,
+      repositoryPath: git.path,
+      defaultBaseRef: git.branch,
+      headCommit: git.headCommit,
+      lastFetchedAt: null,
+    });
+    publish(eventBus, result);
+    return reply.code(201).send({ project: result.value });
+  });
+
   app.post("/api/projects/:projectId/sync", async (request) => {
     requireRequestRole(request, "editor");
     const { projectId } = projectParamSchema.parse(request.params);
     const context = repository.getProjectExecutionContext(projectId);
-    if (!context || !context.project.repositoryUrl) {
-      throw new HttpError(404, "远程项目不存在", "NOT_FOUND");
+    if (!context) {
+      throw new HttpError(404, "项目不存在", "NOT_FOUND");
+    }
+    if (!context.project.repositoryUrl) {
+      requireLocalRole(request, "editor");
+      const git = await gitService.inspectRepository(context.repositoryPath);
+      const result = repository.recordProjectFetch(projectId, git.headCommit);
+      publish(eventBus, result);
+      return { project: result.value };
     }
     await gitService.fetchRepository(context.repositoryPath);
     const base = await gitService.resolveRemoteTargetBase({
@@ -297,9 +327,6 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (!context) {
       throw new HttpError(404, "项目不存在", "NOT_FOUND");
     }
-    if (!context.project.repositoryUrl) {
-      throw new HttpError(409, "旧本地项目需要重新注册远程 Git 仓库", "PROJECT_MIGRATION_REQUIRED");
-    }
     const targetBranch = await gitService.validateBranchName(input.targetBranch);
     const result = repository.createTask({ ...input, targetBranch });
     publish(eventBus, result);
@@ -316,13 +343,6 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       const context = task ? repository.getProjectExecutionContext(task.projectId) : null;
       if (!task || !context) {
         throw new HttpError(404, "任务或项目不存在", "NOT_FOUND");
-      }
-      if (!context.project.repositoryUrl) {
-        throw new HttpError(
-          409,
-          "旧本地项目需要重新注册远程 Git 仓库",
-          "PROJECT_MIGRATION_REQUIRED",
-        );
       }
       input.targetBranch = await gitService.validateBranchName(input.targetBranch);
     }
@@ -465,14 +485,32 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (replay) {
       return { ...replay, replayed: true };
     }
-    const context = repository.getRunPublishContext(runId, input.expectedVersion);
-    const publication = await gitService.pushResult(context);
-    const result = repository.approvePublishedRun(
+    const approval = repository.getRunApprovalContext(runId, input.expectedVersion);
+    if (approval.type === "remote") {
+      const publication = await gitService.pushResult(approval.context);
+      const result = repository.approvePublishedRun(
+        runId,
+        identity.id,
+        input.expectedVersion,
+        input.idempotencyKey,
+        publication,
+      );
+      publish(eventBus, result);
+      return { ...result.value, replayed: result.replayed };
+    }
+    const localIdentity = requireLocalRole(request, "operator");
+    const application = await gitService.applyCommitToWorkingTree({
+      repositoryPath: approval.context.projectPath,
+      targetBranch: approval.context.targetBranch,
+      baseCommit: approval.context.baseCommit,
+      resultCommit: approval.context.resultCommit,
+    });
+    const result = repository.approveAppliedRun(
       runId,
-      identity.id,
+      localIdentity.id,
       input.expectedVersion,
       input.idempotencyKey,
-      publication,
+      application,
     );
     publish(eventBus, result);
     return { ...result.value, replayed: result.replayed };

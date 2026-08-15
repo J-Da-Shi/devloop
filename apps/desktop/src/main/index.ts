@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { fileURLToPath } from "node:url";
 
 const serviceUrl = process.env.DEVLOOP_SERVICE_URL ?? "http://127.0.0.1:4317";
@@ -23,6 +23,19 @@ function assertTrustedSender(value: string): void {
 }
 
 function registerDesktopBridge(): void {
+  ipcMain.handle("desktop:select-directory", async (event) => {
+    assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: "选择本地 Git 项目",
+      properties: ["openDirectory"],
+    };
+    const result = parentWindow
+      ? await dialog.showOpenDialog(parentWindow, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
   ipcMain.handle("desktop:get-service-url", (event) => {
     assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
     return serviceUrl;

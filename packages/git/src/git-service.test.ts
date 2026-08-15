@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -52,6 +52,32 @@ afterEach(async () => {
 });
 
 describe("GitService Worktree", () => {
+  it("只接受处于分支上的 Git 仓库根目录", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-inspect-"));
+    temporaryDirectories.push(root);
+    const repositoryPath = join(root, "repository");
+    const nestedPath = join(repositoryPath, "nested");
+    await execa("git", ["init", "--initial-branch=main", repositoryPath]);
+    await mkdir(nestedPath);
+    await writeFile(join(repositoryPath, "README.md"), "本地项目\n");
+    const headCommit = await commitAll(repositoryPath, "初始化本地项目");
+    const service = new GitService();
+
+    await expect(service.inspectRepository(repositoryPath)).resolves.toEqual({
+      path: await realpath(repositoryPath),
+      branch: "main",
+      headCommit,
+    });
+    await expect(service.inspectRepository(nestedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_NOT_ROOT",
+    });
+
+    await execa("git", ["-C", repositoryPath, "checkout", "--detach", headCommit]);
+    await expect(service.inspectRepository(repositoryPath)).rejects.toMatchObject({
+      code: "DETACHED_HEAD",
+    });
+  });
+
   it("解析目标分支时兼容 HEAD 并拒绝完整引用名", async () => {
     const root = await mkdtemp(join(tmpdir(), "devloop-git-resolve-target-"));
     temporaryDirectories.push(root);

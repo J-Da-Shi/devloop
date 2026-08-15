@@ -98,6 +98,8 @@ export interface ResolvedTargetBase {
 export type GitApplyErrorCode =
   | "WORKTREE_DIRTY"
   | "DETACHED_HEAD"
+  | "INVALID_REPOSITORY"
+  | "REPOSITORY_NOT_ROOT"
   | "INVALID_BRANCH"
   | "BRANCH_CHECKED_OUT"
   | "TARGET_BRANCH_CHANGED"
@@ -202,7 +204,9 @@ interface NameStatusEntry {
 }
 
 const parseNameStatusZ = (stdout: string): NameStatusEntry[] => {
-  const tokens = stdout.split("\0").filter((_, idx, arr) => idx < arr.length - 1 || arr[idx] !== "");
+  const tokens = stdout
+    .split("\0")
+    .filter((_, idx, arr) => idx < arr.length - 1 || arr[idx] !== "");
   const entries: NameStatusEntry[] = [];
   let i = 0;
   while (i < tokens.length) {
@@ -262,21 +266,42 @@ export class GitService {
   }
 
   async inspectRepository(inputPath: string): Promise<GitRepositoryInfo> {
-    const repositoryPath = await realpath(inputPath);
-    const [{ stdout: topLevel }, { stdout: branch }, { stdout: headCommit }] = await Promise.all([
-      execa(this.executable, ["-C", repositoryPath, "rev-parse", "--show-toplevel"]),
-      execa(this.executable, ["-C", repositoryPath, "branch", "--show-current"]),
-      execa(this.executable, ["-C", repositoryPath, "rev-parse", "HEAD"]),
+    let repositoryPath: string;
+    try {
+      repositoryPath = await realpath(inputPath);
+    } catch {
+      throw new GitApplyError("INVALID_REPOSITORY", "所选目录不存在或无法访问。");
+    }
+    const [topLevel, branch, headCommit] = await Promise.all([
+      execa(this.executable, ["-C", repositoryPath, "rev-parse", "--show-toplevel"], {
+        reject: false,
+      }),
+      execa(this.executable, ["-C", repositoryPath, "branch", "--show-current"], {
+        reject: false,
+      }),
+      execa(this.executable, ["-C", repositoryPath, "rev-parse", "HEAD"], { reject: false }),
     ]);
+    if (topLevel.exitCode !== 0 || headCommit.exitCode !== 0) {
+      throw new GitApplyError("INVALID_REPOSITORY", "所选目录不是可用的 Git 仓库。");
+    }
 
-    if ((await realpath(topLevel.trim())) !== repositoryPath) {
-      throw new Error("Only repository roots can be registered");
+    let repositoryRoot: string;
+    try {
+      repositoryRoot = await realpath(topLevel.stdout.trim());
+    } catch {
+      throw new GitApplyError("INVALID_REPOSITORY", "无法读取 Git 仓库根目录。");
+    }
+    if (repositoryRoot !== repositoryPath) {
+      throw new GitApplyError("REPOSITORY_NOT_ROOT", "请选择 Git 仓库根目录，而不是其子目录。");
+    }
+    if (branch.exitCode !== 0 || !branch.stdout.trim()) {
+      throw new GitApplyError("DETACHED_HEAD", "本地项目处于 detached HEAD，请先切换到分支。");
     }
 
     return {
       path: repositoryPath,
-      branch: branch.trim() || "HEAD",
-      headCommit: headCommit.trim(),
+      branch: branch.stdout.trim(),
+      headCommit: headCommit.stdout.trim(),
     };
   }
 
@@ -401,11 +426,10 @@ export class GitService {
 
   async fetchRepository(repositoryPath: string): Promise<void> {
     const resolvedPath = await realpath(repositoryPath);
-    const fetch = await execa(
-      this.executable,
-      ["-C", resolvedPath, "fetch", "--prune", "origin"],
-      { env: this.nonInteractiveEnvironment(), reject: false },
-    );
+    const fetch = await execa(this.executable, ["-C", resolvedPath, "fetch", "--prune", "origin"], {
+      env: this.nonInteractiveEnvironment(),
+      reject: false,
+    });
     if (fetch.exitCode !== 0) {
       throw new GitApplyError(
         "REMOTE_ACCESS_FAILED",
@@ -414,9 +438,7 @@ export class GitService {
     }
   }
 
-  async resolveRemoteTargetBase(
-    input: ResolveRemoteTargetBaseInput,
-  ): Promise<ResolvedTargetBase> {
+  async resolveRemoteTargetBase(input: ResolveRemoteTargetBaseInput): Promise<ResolvedTargetBase> {
     const repositoryPath = await realpath(input.repositoryPath);
     const targetBranch = await this.validateBranchName(input.targetBranch);
     const fallbackRef = await this.validateBranchName(input.fallbackRef);
@@ -439,9 +461,13 @@ export class GitService {
     const targetBranch = await this.validateBranchName(input.targetBranch);
     await this.fetchRepository(repositoryPath);
     const [baseCommitCheck, resultCommitCheck] = await Promise.all([
-      execa(this.executable, ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`], {
-        reject: false,
-      }),
+      execa(
+        this.executable,
+        ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`],
+        {
+          reject: false,
+        },
+      ),
       execa(
         this.executable,
         ["-C", repositoryPath, "cat-file", "-e", `${input.resultCommit}^{commit}`],
@@ -484,7 +510,14 @@ export class GitService {
 
     const push = await execa(
       this.executable,
-      ["-C", repositoryPath, "push", "--porcelain", "origin", `${input.resultCommit}:refs/heads/${targetBranch}`],
+      [
+        "-C",
+        repositoryPath,
+        "push",
+        "--porcelain",
+        "origin",
+        `${input.resultCommit}:refs/heads/${targetBranch}`,
+      ],
       { env: this.nonInteractiveEnvironment(), reject: false },
     );
     if (push.exitCode !== 0) {
@@ -1093,7 +1126,10 @@ export class GitService {
     return result.exitCode === 0 ? result.stdout.trim() : null;
   }
 
-  private async resolveRemoteBranch(repositoryPath: string, branch: string): Promise<string | null> {
+  private async resolveRemoteBranch(
+    repositoryPath: string,
+    branch: string,
+  ): Promise<string | null> {
     const result = await execa(
       this.executable,
       ["-C", repositoryPath, "rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`],
