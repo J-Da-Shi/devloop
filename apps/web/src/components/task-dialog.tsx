@@ -467,7 +467,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 {task?.latestRunId ? (
                   <section>
                     <h3>代码变更</h3>
-                    <RunDiffPanel runId={task.latestRunId} />
+                    <RunDiffPanel runId={task.latestRunId} reviewing={task.status === "REVIEW"} />
                   </section>
                 ) : null}
                 {task?.status === "REVIEW" && canEdit ? (

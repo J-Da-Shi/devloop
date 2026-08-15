@@ -481,6 +481,19 @@ describe("GitService Worktree", () => {
       "更新标题",
     ]);
 
+    await expect(
+      service.previewCommitConflicts({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
+    ).resolves.toMatchObject({
+      status: "clean",
+      targetBranch: "main",
+      files: [],
+    });
+
     await service.applyCommitToWorkingTree({
       repositoryPath,
       targetBranch: "main",
@@ -545,6 +558,28 @@ describe("GitService Worktree", () => {
       "rev-parse",
       "HEAD",
     ]);
+
+    const preview = await service.previewCommitConflicts({
+      repositoryPath,
+      targetBranch: "main",
+      baseCommit: baseCommit.trim(),
+      resultCommit,
+    });
+    expect(preview).toMatchObject({
+      status: "conflicted",
+      targetBranch: "main",
+      targetCommit: previousCommit.trim(),
+      message: "本次结果与目标分支 main 存在 1 个冲突文件。",
+    });
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0]).toMatchObject({ path: "README.md", isBinary: false });
+    expect(preview.files[0]?.patch).toContain("<<<<<<<");
+    expect(preview.files[0]?.patch).toContain("=======");
+    expect(preview.files[0]?.patch).toContain(">>>>>>>");
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+    await expect(
+      execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
+    ).resolves.toMatchObject({ stdout: "" });
 
     await expect(
       service.applyCommitToWorkingTree({

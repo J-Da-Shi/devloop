@@ -12,6 +12,7 @@ import type {
   RejectRunInput,
   RunChangedFile,
   RunApplicationResult,
+  RunConflictPreview,
   RunEvent,
   RunFilePatch,
   Skill,
@@ -160,7 +161,9 @@ export const api = {
   runs: () => request<{ runs: TaskRun[] }>("/api/runs"),
   run: (runId: string) => request<RunDetails>(`/api/runs/${runId}`),
   runChangedFiles: (runId: string) =>
-    request<{ files: RunChangedFile[] }>(`/api/runs/${runId}/changed-files`),
+    request<{ files: RunChangedFile[]; conflictPreview: RunConflictPreview | null }>(
+      `/api/runs/${runId}/changed-files`,
+    ),
   runFilePatch: (runId: string, path: string) =>
     request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
   approveRun: (runId: string, input: TaskCommandInput) =>

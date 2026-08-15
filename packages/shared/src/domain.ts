@@ -113,12 +113,7 @@ export interface RunEvent {
 }
 
 export type RunChangedFileStatus =
-  | "added"
-  | "modified"
-  | "deleted"
-  | "renamed"
-  | "copied"
-  | "typechange";
+  "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange";
 
 export interface RunChangedFile {
   path: string;
@@ -132,6 +127,20 @@ export interface RunChangedFile {
 export interface RunFilePatch {
   patch: string;
   isBinary: boolean;
+}
+
+export interface RunConflictFile {
+  path: string;
+  patch: string;
+  isBinary: boolean;
+}
+
+export interface RunConflictPreview {
+  status: "clean" | "conflicted" | "unavailable";
+  targetBranch: string;
+  targetCommit: string | null;
+  files: RunConflictFile[];
+  message: string | null;
 }
 
 export interface RunApplicationResult {

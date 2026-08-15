@@ -3318,11 +3318,70 @@ code {
   gap: 8px;
 }
 
+.diff-panel {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.diff-conflict-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.diff-conflict-summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.diff-conflict-summary strong {
+  color: #78350f;
+  font-size: 13px;
+}
+
+.diff-conflict-summary span {
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-conflict-summary code {
+  color: inherit;
+  font-size: inherit;
+}
+
+.diff-conflict-summary-unavailable {
+  border-color: rgba(220, 38, 38, 0.22);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.diff-conflict-summary-unavailable strong,
+.diff-conflict-summary-unavailable span {
+  color: #991b1b;
+}
+
 .diff-file {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   overflow: hidden;
+}
+
+.diff-file-conflicted {
+  border-color: rgba(217, 119, 6, 0.36);
+}
+
+.diff-file-conflicted .diff-file-header {
+  background: rgba(217, 119, 6, 0.07);
 }
 
 .diff-file-header {
@@ -3403,9 +3462,52 @@ code {
   color: var(--muted);
 }
 
+.diff-conflict-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(217, 119, 6, 0.13);
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .diff-file-body {
   border-top: 1px solid var(--border);
   background: var(--surface);
+}
+
+.diff-conflict-preview {
+  border-bottom: 1px solid rgba(217, 119, 6, 0.25);
+  background: rgba(217, 119, 6, 0.035);
+}
+
+.diff-conflict-preview-heading {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.18);
+  color: #92400e;
+  font-size: 12px;
+}
+
+.diff-conflict-preview-heading span {
+  color: var(--muted);
+}
+
+.diff-section-label {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .diff-binary-message {
@@ -3447,6 +3549,12 @@ code {
 
 .diff-line-meta {
   color: var(--muted);
+}
+
+.diff-line-conflict {
+  background: rgba(217, 119, 6, 0.14);
+  color: #78350f;
+  font-weight: 650;
 }
 
 .diff-line-context {

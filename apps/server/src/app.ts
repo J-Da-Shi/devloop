@@ -425,9 +425,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     };
   });
 
-  const resolveRunRepositoryPath = (
-    runId: string,
-  ): { run: NonNullable<ReturnType<typeof repository.getRun>>; repositoryPath: string } => {
+  const resolveRunRepositoryPath = (runId: string) => {
     const run = repository.getRun(runId);
     if (!run) {
       throw new HttpError(404, "执行记录不存在", "NOT_FOUND");
@@ -440,22 +438,49 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (!context) {
       throw new HttpError(404, "项目不存在", "NOT_FOUND");
     }
-    return { run, repositoryPath: context.repositoryPath };
+    return { run, task, project: context.project, repositoryPath: context.repositoryPath };
   };
 
   app.get("/api/runs/:runId/changed-files", async (request) => {
     requireRequestRole(request, "viewer");
     const { runId } = runParamSchema.parse(request.params);
-    const { run, repositoryPath } = resolveRunRepositoryPath(runId);
+    const { run, task, project, repositoryPath } = resolveRunRepositoryPath(runId);
     if (!run.baseCommit || !run.resultCommit) {
-      return { files: [] };
+      return { files: [], conflictPreview: null };
     }
     const files = await gitService.listRunChangedFiles({
       repositoryPath,
       baseCommit: run.baseCommit,
       resultCommit: run.resultCommit,
     });
-    return { files };
+    let conflictPreview: Awaited<ReturnType<GitService["previewCommitConflicts"]>> | null = null;
+    if (
+      project.repositoryUrl === null &&
+      task.status === "REVIEW" &&
+      task.latestRunId === run.id &&
+      run.status === "SUCCEEDED"
+    ) {
+      try {
+        conflictPreview = await gitService.previewCommitConflicts({
+          repositoryPath,
+          targetBranch: run.targetBranch,
+          baseCommit: run.baseCommit,
+          resultCommit: run.resultCommit,
+        });
+      } catch (error) {
+        if (!(error instanceof GitApplyError)) {
+          throw error;
+        }
+        conflictPreview = {
+          status: "unavailable",
+          targetBranch: run.targetBranch,
+          targetCommit: null,
+          files: [],
+          message: error.message,
+        };
+      }
+    }
+    return { files, conflictPreview };
   });
 
   const patchQuerySchema = z.object({ path: z.string().min(1).max(1024) });

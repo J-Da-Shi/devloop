@@ -6,6 +6,8 @@ import type {
   RunApplicationResult,
   RunChangedFile,
   RunChangedFileStatus,
+  RunConflictFile,
+  RunConflictPreview,
   RunFilePatch,
   RunPublishResult,
 } from "@devloop/shared";
@@ -81,7 +83,13 @@ export interface GetRunFilePatchInput {
   path: string;
 }
 
-export type { RunChangedFile, RunChangedFileStatus, RunFilePatch } from "@devloop/shared";
+export type {
+  RunChangedFile,
+  RunChangedFileStatus,
+  RunConflictFile,
+  RunConflictPreview,
+  RunFilePatch,
+} from "@devloop/shared";
 
 export interface ResolveTargetBaseInput {
   repositoryPath: string;
@@ -709,41 +717,50 @@ export class GitService {
     return { patch, isBinary: false };
   }
 
-  async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {
-    const repositoryPath = await realpath(input.repositoryPath);
-    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
-    const [baseCommitCheck, resultCommitCheck] = await Promise.all([
-      execa(
-        this.executable,
-        ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`],
-        { reject: false },
-      ),
-      execa(
-        this.executable,
-        ["-C", repositoryPath, "cat-file", "-e", `${input.resultCommit}^{commit}`],
-        { reject: false },
-      ),
-    ]);
-    if (baseCommitCheck.exitCode !== 0) {
-      throw new GitApplyError(
-        "BASE_COMMIT_MISSING",
-        "本次运行的基础 Commit 在当前项目中不存在，无法计算需要写回的文件。",
-      );
+  async previewCommitConflicts(input: ApplyCommitInput): Promise<RunConflictPreview> {
+    const { repositoryPath, targetBranch, targetCommit, changedPaths } =
+      await this.prepareApplication(input);
+    const cleanPreview = (): RunConflictPreview => ({
+      status: "clean",
+      targetBranch,
+      targetCommit,
+      files: [],
+      message: null,
+    });
+
+    if (!targetCommit || changedPaths.length === 0) {
+      return cleanPreview();
     }
-    if (resultCommitCheck.exitCode !== 0) {
-      throw new GitApplyError(
-        "RESULT_COMMIT_MISSING",
-        "结果 Commit 在当前项目中不存在，无法应用到工作目录。",
-      );
-    }
-    if (!(await this.isAncestor(repositoryPath, input.baseCommit, input.resultCommit))) {
-      throw new GitApplyError(
-        "INVALID_RESULT_RANGE",
-        "结果 Commit 不是从本次运行的基础 Commit 产生，无法安全写回。",
-      );
+    if (
+      (await this.isAncestor(repositoryPath, targetCommit, input.resultCommit)) ||
+      (await this.isAncestor(repositoryPath, input.resultCommit, targetCommit)) ||
+      (await this.hasAppliedResultMarker(repositoryPath, targetCommit, input.resultCommit)) ||
+      (await this.pathsMatchCommit(repositoryPath, targetCommit, input.resultCommit, changedPaths))
+    ) {
+      return cleanPreview();
     }
 
-    const targetCommit = await this.resolveLocalBranch(repositoryPath, targetBranch);
+    const files = await this.previewPatchedCommitConflicts(
+      repositoryPath,
+      targetCommit,
+      input.baseCommit,
+      input.resultCommit,
+    );
+    if (files.length === 0) {
+      return cleanPreview();
+    }
+    return {
+      status: "conflicted",
+      targetBranch,
+      targetCommit,
+      files,
+      message: `本次结果与目标分支 ${targetBranch} 存在 ${files.length} 个冲突文件。`,
+    };
+  }
+
+  async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {
+    const { repositoryPath, targetBranch, targetCommit, changedPaths } =
+      await this.prepareApplication(input);
     const targetCheckoutPath = targetCommit
       ? await this.getBranchCheckoutPath(repositoryPath, targetBranch)
       : null;
@@ -758,11 +775,6 @@ export class GitService {
     }
 
     const previousCommit = targetCommit ?? input.baseCommit;
-    const changedPaths = await this.getChangedPaths(
-      repositoryPath,
-      input.baseCommit,
-      input.resultCommit,
-    );
     if (!targetCommit) {
       return this.updateTargetBranch({
         repositoryPath,
@@ -829,6 +841,150 @@ export class GitService {
       branchCreated: false,
       workingTreeUpdated,
     });
+  }
+
+  private async prepareApplication(input: ApplyCommitInput): Promise<{
+    repositoryPath: string;
+    targetBranch: string;
+    targetCommit: string | null;
+    changedPaths: string[];
+  }> {
+    const repositoryPath = await realpath(input.repositoryPath);
+    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
+    const [baseCommitCheck, resultCommitCheck] = await Promise.all([
+      execa(
+        this.executable,
+        ["-C", repositoryPath, "cat-file", "-e", `${input.baseCommit}^{commit}`],
+        { reject: false },
+      ),
+      execa(
+        this.executable,
+        ["-C", repositoryPath, "cat-file", "-e", `${input.resultCommit}^{commit}`],
+        { reject: false },
+      ),
+    ]);
+    if (baseCommitCheck.exitCode !== 0) {
+      throw new GitApplyError(
+        "BASE_COMMIT_MISSING",
+        "本次运行的基础 Commit 在当前项目中不存在，无法计算需要写回的文件。",
+      );
+    }
+    if (resultCommitCheck.exitCode !== 0) {
+      throw new GitApplyError(
+        "RESULT_COMMIT_MISSING",
+        "结果 Commit 在当前项目中不存在，无法应用到工作目录。",
+      );
+    }
+    if (!(await this.isAncestor(repositoryPath, input.baseCommit, input.resultCommit))) {
+      throw new GitApplyError(
+        "INVALID_RESULT_RANGE",
+        "结果 Commit 不是从本次运行的基础 Commit 产生，无法安全写回。",
+      );
+    }
+
+    const [targetCommit, changedPaths] = await Promise.all([
+      this.resolveLocalBranch(repositoryPath, targetBranch),
+      this.getChangedPaths(repositoryPath, input.baseCommit, input.resultCommit),
+    ]);
+    return { repositoryPath, targetBranch, targetCommit, changedPaths };
+  }
+
+  private async previewPatchedCommitConflicts(
+    repositoryPath: string,
+    targetCommit: string,
+    baseCommit: string,
+    resultCommit: string,
+  ): Promise<RunConflictFile[]> {
+    const { stdout: patch } = await execa(
+      this.executable,
+      [
+        "-C",
+        repositoryPath,
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-renames",
+        baseCommit,
+        resultCommit,
+      ],
+      { stripFinalNewline: false },
+    );
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "devloop-conflict-preview-"));
+    const temporaryWorktree = join(temporaryRoot, "worktree");
+    let worktreeCreated = false;
+    try {
+      const addWorktree = await execa(
+        this.executable,
+        ["-C", repositoryPath, "worktree", "add", "--detach", temporaryWorktree, targetCommit],
+        { reject: false },
+      );
+      if (addWorktree.exitCode !== 0) {
+        throw new GitApplyError(
+          "APPLY_FAILED",
+          `无法创建冲突预检目录：${addWorktree.stderr.trim() || addWorktree.stdout.trim()}`,
+        );
+      }
+      worktreeCreated = true;
+
+      const apply = await execa(
+        this.executable,
+        ["-C", temporaryWorktree, "apply", "--3way", "--index", "--whitespace=nowarn", "-"],
+        { input: patch, reject: false },
+      );
+      if (apply.exitCode === 0) {
+        return [];
+      }
+
+      const { stdout: conflictPathsOutput } = await execa(this.executable, [
+        "-C",
+        temporaryWorktree,
+        "diff",
+        "--name-only",
+        "--diff-filter=U",
+        "-z",
+      ]);
+      const conflictPaths = conflictPathsOutput.split("\0").filter(Boolean);
+      if (conflictPaths.length === 0) {
+        const message = apply.stderr.trim() || apply.stdout.trim() || "Git 三方应用失败";
+        throw new GitApplyError("APPLY_FAILED", `无法生成冲突预览：${message}`);
+      }
+
+      return Promise.all(
+        conflictPaths.map(async (path) => {
+          const [{ stdout: conflictPatch }, { stdout: numstatOutput }] = await Promise.all([
+            execa(
+              this.executable,
+              ["-C", temporaryWorktree, "diff", "--cc", "--no-color", "--no-ext-diff", "--", path],
+              { stripFinalNewline: false },
+            ),
+            execa(this.executable, [
+              "-C",
+              repositoryPath,
+              "diff",
+              "--numstat",
+              "-z",
+              targetCommit,
+              resultCommit,
+              "--",
+              path,
+            ]),
+          ]);
+          const isBinary =
+            Array.from(parseNumstatZ(numstatOutput).values()).some((entry) => entry.isBinary) ||
+            conflictPatch.includes("Binary files");
+          return { path, patch: conflictPatch, isBinary };
+        }),
+      );
+    } finally {
+      if (worktreeCreated) {
+        await execa(
+          this.executable,
+          ["-C", repositoryPath, "worktree", "remove", "--force", temporaryWorktree],
+          { reject: false },
+        );
+      }
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   }
 
   private async createPatchedCommit(
