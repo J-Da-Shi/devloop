@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Statistic } from "antd";
 import {
   Activity,
   CheckCircle2,
@@ -72,7 +73,7 @@ export function StatusPage() {
     return [
       {
         label: "待执行",
-        value: 100,
+        value: tasks.filter((task) => task.status === "READY").length,
         icon: Clock3,
         tone: "info",
       },
@@ -134,15 +135,14 @@ export function StatusPage() {
           <StatusBadge status={worker.status} pulse={workerRunning}>
             Worker {workerStatusText[worker.status]}
           </StatusBadge>
-          <button
-            type="button"
-            className={`button ${workerRunning ? "button-secondary" : "button-primary"}`}
-            disabled={workerMutation.isPending}
+          <Button
+            type={workerRunning ? "default" : "primary"}
+            icon={workerRunning ? <Pause size={17} /> : <Play size={17} />}
+            loading={workerMutation.isPending}
             onClick={() => workerMutation.mutate(workerRunning ? "PAUSED" : "RUNNING")}
           >
-            {workerRunning ? <Pause size={17} /> : <Play size={17} />}
             {workerRunning ? "暂停领取" : "继续运行"}
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -154,8 +154,10 @@ export function StatusPage() {
               <span className="metric-icon">
                 <Icon size={18} aria-hidden="true" />
               </span>
-              <span className="metric-label">{statistic.label}</span>
-              <strong>{statistic.value}</strong>
+              <Statistic
+                title={statistic.label}
+                value={statistic.value}
+              />
             </div>
           );
         })}
@@ -226,9 +228,9 @@ export function StatusPage() {
             ) : (
               <div className="compact-list">
                 {reviewTasks.map((task) => (
-                  <button
+                  <Button
                     key={task.id}
-                    type="button"
+                    type="text"
                     className="compact-row"
                     onClick={() => setSelectedTask(task)}
                   >
@@ -237,7 +239,7 @@ export function StatusPage() {
                       <small>{task.projectName}</small>
                     </span>
                     <StatusBadge status={task.status}>{taskStatusText[task.status]}</StatusBadge>
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -255,9 +257,9 @@ export function StatusPage() {
             ) : (
               <div className="compact-list">
                 {queuedTasks.map((task, index) => (
-                  <button
+                  <Button
                     key={task.id}
-                    type="button"
+                    type="text"
                     className="compact-row"
                     onClick={() => setSelectedTask(task)}
                   >
@@ -268,7 +270,7 @@ export function StatusPage() {
                         {task.projectName} · 分数 {task.priority}
                       </small>
                     </span>
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}

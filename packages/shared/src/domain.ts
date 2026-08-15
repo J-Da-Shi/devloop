@@ -133,6 +133,9 @@ export interface RunConflictFile {
   path: string;
   patch: string;
   isBinary: boolean;
+  content: string | null;
+  targetExists: boolean;
+  resultExists: boolean;
 }
 
 export interface RunConflictPreview {
@@ -142,6 +145,17 @@ export interface RunConflictPreview {
   files: RunConflictFile[];
   message: string | null;
 }
+
+export type RunConflictResolution =
+  | {
+      path: string;
+      strategy: "content";
+      content: string;
+    }
+  | {
+      path: string;
+      strategy: "target" | "result";
+    };
 
 export interface RunApplicationResult {
   status: "applied" | "already_applied";

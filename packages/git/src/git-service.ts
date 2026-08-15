@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
@@ -8,6 +8,7 @@ import type {
   RunChangedFileStatus,
   RunConflictFile,
   RunConflictPreview,
+  RunConflictResolution,
   RunFilePatch,
   RunPublishResult,
 } from "@devloop/shared";
@@ -68,6 +69,8 @@ export interface ApplyCommitInput {
   targetBranch: string;
   baseCommit: string;
   resultCommit: string;
+  expectedTargetCommit?: string | null;
+  conflictResolutions?: RunConflictResolution[];
 }
 
 export interface ListRunChangedFilesInput {
@@ -148,6 +151,17 @@ interface NumstatEntry {
   deletions: number;
   isBinary: boolean;
 }
+
+interface ConflictStageEntry {
+  mode: string;
+  objectId: string;
+  stage: 1 | 2 | 3;
+}
+
+const maxEditableConflictBytes = 750_000;
+
+const hasUnresolvedConflictMarkers = (content: string): boolean =>
+  content.split(/\r?\n/).some((line) => /^(?:<{7}|={7}|>{7})(?: .*)?$/.test(line));
 
 const parseNumstatZ = (stdout: string): Map<string, NumstatEntry> => {
   const result = new Map<string, NumstatEntry>();
@@ -829,6 +843,7 @@ export class GitService {
         previousCommit,
         input.baseCommit,
         input.resultCommit,
+        input.conflictResolutions ?? [],
       );
     }
 
@@ -886,6 +901,12 @@ export class GitService {
       this.resolveLocalBranch(repositoryPath, targetBranch),
       this.getChangedPaths(repositoryPath, input.baseCommit, input.resultCommit),
     ]);
+    if (input.expectedTargetCommit !== undefined && input.expectedTargetCommit !== targetCommit) {
+      throw new GitApplyError(
+        "TARGET_BRANCH_CHANGED",
+        `目标分支 ${targetBranch} 已发生变化，请刷新冲突内容后重新处理。`,
+      );
+    }
     return { repositoryPath, targetBranch, targetCommit, changedPaths };
   }
 
@@ -935,15 +956,7 @@ export class GitService {
         return [];
       }
 
-      const { stdout: conflictPathsOutput } = await execa(this.executable, [
-        "-C",
-        temporaryWorktree,
-        "diff",
-        "--name-only",
-        "--diff-filter=U",
-        "-z",
-      ]);
-      const conflictPaths = conflictPathsOutput.split("\0").filter(Boolean);
+      const conflictPaths = await this.getUnmergedPaths(temporaryWorktree);
       if (conflictPaths.length === 0) {
         const message = apply.stderr.trim() || apply.stdout.trim() || "Git 三方应用失败";
         throw new GitApplyError("APPLY_FAILED", `无法生成冲突预览：${message}`);
@@ -951,7 +964,7 @@ export class GitService {
 
       return Promise.all(
         conflictPaths.map(async (path) => {
-          const [{ stdout: conflictPatch }, { stdout: numstatOutput }] = await Promise.all([
+          const [{ stdout: conflictPatch }, { stdout: numstatOutput }, stages] = await Promise.all([
             execa(
               this.executable,
               ["-C", temporaryWorktree, "diff", "--cc", "--no-color", "--no-ext-diff", "--", path],
@@ -968,11 +981,28 @@ export class GitService {
               "--",
               path,
             ]),
+            this.getConflictStages(temporaryWorktree, path),
           ]);
           const isBinary =
             Array.from(parseNumstatZ(numstatOutput).values()).some((entry) => entry.isBinary) ||
             conflictPatch.includes("Binary files");
-          return { path, patch: conflictPatch, isBinary };
+          let content: string | null = null;
+          const editableStages = stages.filter((entry) => entry.stage === 2 || entry.stage === 3);
+          const hasOnlyRegularFiles = editableStages.every((entry) => entry.mode.startsWith("100"));
+          if (!isBinary && hasOnlyRegularFiles) {
+            const fileContent = await readFile(join(temporaryWorktree, path)).catch(() => null);
+            if (fileContent && fileContent.byteLength <= maxEditableConflictBytes) {
+              content = fileContent.toString("utf8");
+            }
+          }
+          return {
+            path,
+            patch: conflictPatch,
+            isBinary,
+            content,
+            targetExists: stages.some((entry) => entry.stage === 2),
+            resultExists: stages.some((entry) => entry.stage === 3),
+          };
         }),
       );
     } finally {
@@ -992,6 +1022,7 @@ export class GitService {
     previousCommit: string,
     baseCommit: string,
     resultCommit: string,
+    conflictResolutions: RunConflictResolution[],
   ): Promise<string> {
     const { stdout: patch } = await execa(
       this.executable,
@@ -1031,10 +1062,14 @@ export class GitService {
       );
       if (apply.exitCode !== 0) {
         const message = apply.stderr.trim() || apply.stdout.trim() || "Git 三方应用失败";
-        throw new GitApplyError(
-          "APPLY_CONFLICT",
-          `本次结果与目标分支文件存在冲突，未写入目标分支：${message}`,
-        );
+        const conflictPaths = await this.getUnmergedPaths(temporaryWorktree);
+        if (conflictPaths.length === 0) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            `本次结果与目标分支文件存在冲突，未写入目标分支：${message}`,
+          );
+        }
+        await this.applyConflictResolutions(temporaryWorktree, conflictPaths, conflictResolutions);
       }
 
       const { stdout: resultSubject } = await execa(this.executable, [
@@ -1059,6 +1094,7 @@ export class GitService {
           "-C",
           temporaryWorktree,
           "commit",
+          "--allow-empty",
           "-m",
           resultSubject.trim() || `DevLoop: 写回结果 ${resultCommit.slice(0, 12)}`,
           "-m",
@@ -1093,6 +1129,144 @@ export class GitService {
       }
       await rm(temporaryRoot, { recursive: true, force: true });
     }
+  }
+
+  private async applyConflictResolutions(
+    worktreePath: string,
+    conflictPaths: string[],
+    resolutions: RunConflictResolution[],
+  ): Promise<void> {
+    const resolutionByPath = new Map<string, RunConflictResolution>();
+    for (const resolution of resolutions) {
+      if (resolutionByPath.has(resolution.path)) {
+        throw new GitApplyError(
+          "APPLY_CONFLICT",
+          `冲突文件 ${resolution.path} 提交了重复的解决结果。`,
+        );
+      }
+      resolutionByPath.set(resolution.path, resolution);
+    }
+
+    const conflictPathSet = new Set(conflictPaths);
+    const unexpectedPaths = resolutions
+      .map((resolution) => resolution.path)
+      .filter((path) => !conflictPathSet.has(path));
+    if (unexpectedPaths.length > 0) {
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `冲突文件已经变化，请刷新后重新处理：${unexpectedPaths.join("、")}`,
+      );
+    }
+    const unresolvedPaths = conflictPaths.filter((path) => !resolutionByPath.has(path));
+    if (unresolvedPaths.length > 0) {
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `仍有 ${unresolvedPaths.length} 个冲突文件未解决：${unresolvedPaths.join("、")}`,
+      );
+    }
+
+    for (const path of conflictPaths) {
+      const resolution = resolutionByPath.get(path);
+      if (!resolution) continue;
+      const stages = await this.getConflictStages(worktreePath, path);
+      if (resolution.strategy === "content") {
+        if (hasUnresolvedConflictMarkers(resolution.content)) {
+          throw new GitApplyError("APPLY_CONFLICT", `冲突文件 ${path} 仍包含未解决的冲突标记。`);
+        }
+        const mode =
+          stages.find((entry) => entry.stage === 3)?.mode ??
+          stages.find((entry) => entry.stage === 2)?.mode ??
+          stages.find((entry) => entry.stage === 1)?.mode;
+        if (!mode) {
+          throw new GitApplyError("APPLY_CONFLICT", `无法确定冲突文件 ${path} 的文件类型。`);
+        }
+        const { stdout: objectId } = await execa(
+          this.executable,
+          ["-C", worktreePath, "hash-object", "-w", "--stdin"],
+          { input: resolution.content },
+        );
+        await execa(this.executable, [
+          "-C",
+          worktreePath,
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          mode,
+          objectId.trim(),
+          path,
+        ]);
+        continue;
+      }
+
+      const stageNumber = resolution.strategy === "target" ? 2 : 3;
+      const selectedStage = stages.find((entry) => entry.stage === stageNumber);
+      if (!selectedStage) {
+        await execa(this.executable, [
+          "-C",
+          worktreePath,
+          "update-index",
+          "--force-remove",
+          "--",
+          path,
+        ]);
+        continue;
+      }
+      await execa(this.executable, [
+        "-C",
+        worktreePath,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        selectedStage.mode,
+        selectedStage.objectId,
+        path,
+      ]);
+    }
+
+    const remainingPaths = await this.getUnmergedPaths(worktreePath);
+    if (remainingPaths.length > 0) {
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `仍有 ${remainingPaths.length} 个冲突文件未解决：${remainingPaths.join("、")}`,
+      );
+    }
+  }
+
+  private async getUnmergedPaths(worktreePath: string): Promise<string[]> {
+    const { stdout } = await execa(this.executable, [
+      "-C",
+      worktreePath,
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+      "-z",
+    ]);
+    return stdout.split("\0").filter(Boolean);
+  }
+
+  private async getConflictStages(
+    worktreePath: string,
+    path: string,
+  ): Promise<ConflictStageEntry[]> {
+    const { stdout } = await execa(this.executable, [
+      "-C",
+      worktreePath,
+      "ls-files",
+      "-u",
+      "-z",
+      "--",
+      path,
+    ]);
+    return stdout
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => {
+        const separatorIndex = entry.indexOf("\t");
+        const [mode = "", objectId = "", stageText = ""] = entry
+          .slice(0, separatorIndex)
+          .split(" ");
+        return { mode, objectId, stage: Number(stageText) as 1 | 2 | 3 };
+      });
   }
 
   private async updateTargetBranch(input: {

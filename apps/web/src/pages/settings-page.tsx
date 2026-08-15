@@ -1,5 +1,5 @@
-import * as Switch from "@radix-ui/react-switch";
 import { useQuery } from "@tanstack/react-query";
+import { Switch } from "antd";
 import {
   CheckCircle2,
   CircleX,
@@ -37,14 +37,11 @@ export function SettingsPage() {
             <strong>实时事件</strong>
             <small>SSE 状态同步</small>
           </span>
-          <Switch.Root
-            className="switch-root"
+          <Switch
             checked={realtimeEnabled}
-            onCheckedChange={setRealtimeEnabled}
+            onChange={setRealtimeEnabled}
             aria-label="实时事件"
-          >
-            <Switch.Thumb className="switch-thumb" />
-          </Switch.Root>
+          />
         </div>
         <div className="setting-row">
           <span>

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Button, Flex } from "antd";
 import { Clock3, GitBranch, GitCommitHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, queryKeys } from "../api.js";
@@ -29,11 +30,12 @@ export function RunsPage() {
 
   return (
     <div className="runs-layout">
-      <section className="run-list" aria-label="执行记录列表">
+      <Flex vertical className="run-list" aria-label="执行记录列表">
         {runs.data.runs.map((run) => (
-          <button
+          <Button
             key={run.id}
-            type="button"
+            type="text"
+            block
             className={`run-row${selectedId === run.id ? " active" : ""}`}
             onClick={() => setSelectedId(run.id)}
           >
@@ -42,9 +44,9 @@ export function RunsPage() {
               <small>{formatDateTime(run.startedAt)}</small>
             </span>
             <StatusBadge status={run.status}>{runStatusText[run.status]}</StatusBadge>
-          </button>
+          </Button>
         ))}
-      </section>
+      </Flex>
       <section className="tool-panel run-detail-panel">
         {details.isPending ? <LoadingPanel label="正在加载执行详情" /> : null}
         {details.isError ? <ErrorPanel error={details.error} /> : null}

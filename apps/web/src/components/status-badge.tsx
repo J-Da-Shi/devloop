@@ -1,3 +1,4 @@
+import { Tag } from "antd";
 import { statusTone } from "../utils.js";
 
 interface StatusBadgeProps {
@@ -8,9 +9,9 @@ interface StatusBadgeProps {
 
 export function StatusBadge({ status, children, pulse = false }: StatusBadgeProps) {
   return (
-    <span className={`status-badge status-${statusTone(status)}`}>
+    <Tag className={`status-badge status-${statusTone(status)}`}>
       <span className={`status-dot${pulse ? " status-dot-pulse" : ""}`} aria-hidden="true" />
       {children}
-    </span>
+    </Tag>
   );
 }

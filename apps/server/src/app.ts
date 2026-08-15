@@ -5,6 +5,7 @@ import type { DevLoopRepository, EventfulResult } from "@devloop/db";
 import { GitApplyError, type GitService } from "@devloop/git";
 import type { AgentRunner } from "@devloop/runners";
 import {
+  approveRunInputSchema,
   confirmTaskInputSchema,
   createLocalProjectInputSchema,
   createProjectInputSchema,
@@ -502,10 +503,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return result;
   });
 
-  app.post("/api/runs/:runId/approve", async (request) => {
+  app.post("/api/runs/:runId/approve", { bodyLimit: 5 * 1024 * 1024 }, async (request) => {
     const identity = requireRequestRole(request, "operator");
     const { runId } = runParamSchema.parse(request.params);
-    const input = taskCommandInputSchema.parse(request.body);
+    const input = approveRunInputSchema.parse(request.body);
     const replay = repository.getRunApprovalReplay(identity.id, input.idempotencyKey);
     if (replay) {
       return { ...replay, replayed: true };
@@ -529,6 +530,12 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       targetBranch: approval.context.targetBranch,
       baseCommit: approval.context.baseCommit,
       resultCommit: approval.context.resultCommit,
+      ...(input.expectedTargetCommit !== undefined
+        ? { expectedTargetCommit: input.expectedTargetCommit }
+        : {}),
+      ...(input.conflictResolutions !== undefined
+        ? { conflictResolutions: input.conflictResolutions }
+        : {}),
     });
     const result = repository.approveAppliedRun(
       runId,

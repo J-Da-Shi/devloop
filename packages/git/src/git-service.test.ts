@@ -572,11 +572,87 @@ describe("GitService Worktree", () => {
       message: "本次结果与目标分支 main 存在 1 个冲突文件。",
     });
     expect(preview.files).toHaveLength(1);
-    expect(preview.files[0]).toMatchObject({ path: "README.md", isBinary: false });
+    expect(preview.files[0]).toMatchObject({
+      path: "README.md",
+      isBinary: false,
+      targetExists: true,
+      resultExists: true,
+    });
     expect(preview.files[0]?.patch).toContain("<<<<<<<");
     expect(preview.files[0]?.patch).toContain("=======");
     expect(preview.files[0]?.patch).toContain(">>>>>>>");
+    expect(preview.files[0]?.content).toContain("<<<<<<<");
+    expect(preview.files[0]?.content).toContain("计数=200");
+    expect(preview.files[0]?.content).toContain("计数=100");
     expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+    await expect(
+      execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
+    ).resolves.toMatchObject({ stdout: "" });
+
+    await execa("git", [
+      "-C",
+      repositoryPath,
+      "branch",
+      "target-resolution",
+      previousCommit.trim(),
+    ]);
+    const targetResolution = await service.applyCommitToWorkingTree({
+      repositoryPath,
+      targetBranch: "target-resolution",
+      baseCommit: baseCommit.trim(),
+      resultCommit,
+      expectedTargetCommit: previousCommit.trim(),
+      conflictResolutions: [{ path: "README.md", strategy: "target" }],
+    });
+    expect(targetResolution).toMatchObject({
+      status: "applied",
+      branch: "target-resolution",
+      previousCommit: previousCommit.trim(),
+      workingTreeUpdated: false,
+    });
+    expect(targetResolution.currentCommit).not.toBe(previousCommit.trim());
+    await expect(
+      execa("git", ["-C", repositoryPath, "show", "target-resolution:README.md"]),
+    ).resolves.toMatchObject({ stdout: "计数=200" });
+
+    await expect(
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      }),
+    ).rejects.toMatchObject({ code: "APPLY_CONFLICT" });
+    await expect(
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+        expectedTargetCommit: previousCommit.trim(),
+        conflictResolutions: [
+          {
+            path: "README.md",
+            strategy: "content",
+            content: preview.files[0]?.content ?? "",
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "APPLY_CONFLICT" });
+    await expect(
+      service.applyCommitToWorkingTree({
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+        expectedTargetCommit: "0".repeat(40),
+        conflictResolutions: [{ path: "README.md", strategy: "content", content: "计数=300\n" }],
+      }),
+    ).rejects.toMatchObject({ code: "TARGET_BRANCH_CHANGED" });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+    await expect(execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"])).resolves.toMatchObject({
+      stdout: previousCommit.trim(),
+    });
     await expect(
       execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
     ).resolves.toMatchObject({ stdout: "" });
@@ -587,12 +663,11 @@ describe("GitService Worktree", () => {
         targetBranch: "main",
         baseCommit: baseCommit.trim(),
         resultCommit,
+        expectedTargetCommit: previousCommit.trim(),
+        conflictResolutions: [{ path: "README.md", strategy: "content", content: "计数=300\n" }],
       }),
-    ).rejects.toMatchObject({ code: "APPLY_CONFLICT" });
-    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
-    await expect(execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"])).resolves.toMatchObject({
-      stdout: previousCommit.trim(),
-    });
+    ).resolves.toMatchObject({ status: "applied", branch: "main", workingTreeUpdated: true });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=300\n");
     await expect(
       execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
     ).resolves.toMatchObject({ stdout: "" });

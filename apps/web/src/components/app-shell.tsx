@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { Avatar, Button, Tag, Tooltip } from "antd";
 import {
   Activity,
   Clock3,
@@ -11,7 +12,7 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, queryKeys } from "../api.js";
 import { useUiStore } from "../store.js";
 import { ErrorPanel, LoadingPanel } from "./feedback.js";
@@ -41,20 +42,20 @@ function SystemClock() {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <span className="system-clock">
-      <Clock3 size={14} aria-hidden="true" />
+    <Tag className="system-clock" icon={<Clock3 size={14} aria-hidden="true" />}>
       {new Intl.DateTimeFormat("zh-CN", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
         hour12: false,
       }).format(time)}
-    </span>
+    </Tag>
   );
 }
 
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pageContentRef = useRef<HTMLElement>(null);
   const realtimeStatus = useUiStore((state) => state.realtimeStatus);
   const session = useQuery({
     queryKey: queryKeys.session,
@@ -62,6 +63,12 @@ export function AppShell() {
     retry: false,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    if (pageContentRef.current) {
+      pageContentRef.current.scrollTop = 0;
+    }
+  }, [pathname]);
 
   if (session.isPending) {
     return <LoadingPanel label="正在连接 DevLoop 服务器" />;
@@ -104,7 +111,9 @@ export function AppShell() {
             <span>设置</span>
           </Link>
           <div className="identity-row">
-            <span className="identity-avatar">{session.data.identity.name.slice(0, 1)}</span>
+            <Avatar className="identity-avatar" shape="square" size={32}>
+              {session.data.identity.name.slice(0, 1)}
+            </Avatar>
             <span>
               <strong>{session.data.identity.name}</strong>
               <small>单用户实例 · {session.data.identity.role}</small>
@@ -124,21 +133,28 @@ export function AppShell() {
           </div>
           <div className="topbar-actions">
             <SystemClock />
-            <span
+            <Tag
+              variant="filled"
+              icon={connected ? <Wifi size={15} /> : <WifiOff size={15} />}
               className={`connection-state ${connected ? "online" : "offline"}`}
               aria-live="polite"
             >
-              {connected ? <Wifi size={15} /> : <WifiOff size={15} />}
-              <span>
-                {connected ? "实时" : realtimeStatus === "disabled" ? "已关闭实时" : "重连中"}
-              </span>
-            </span>
-            <Link to="/settings" className="icon-button" aria-label="设置">
-              <Settings size={18} />
+              {connected ? "实时" : realtimeStatus === "disabled" ? "已关闭实时" : "重连中"}
+            </Tag>
+            <Link to="/settings" aria-label="设置">
+              <Tooltip title="设置">
+                <Button
+                  type="text"
+                  shape="circle"
+                  className="icon-button"
+                  icon={<Settings size={18} />}
+                  aria-label="设置"
+                />
+              </Tooltip>
             </Link>
           </div>
         </header>
-        <main className="page-content">
+        <main ref={pageContentRef} className="page-content">
           <Outlet />
         </main>
       </div>

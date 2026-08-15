@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Flex, Form, Input, Segmented } from "antd";
 import { FolderOpen, GitBranch, HardDrive, Plus, RefreshCw, Server, X } from "lucide-react";
 import { useState } from "react";
 import type { Project } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, InlineNotice, LoadingPanel } from "../components/feedback.js";
+import { IconButton } from "../components/icon-button.js";
 import { useNotice } from "../components/notice-provider.js";
 import { formatDateTime, shortCommit } from "../utils.js";
 
@@ -98,24 +100,24 @@ export function ProjectsPage() {
     <div className="page-stack">
       <div className="page-actions page-actions-end">
         {canEdit ? (
-          <button
-            type="button"
-            className="button button-primary"
+          <Button
+            type="primary"
+            icon={showForm ? <X size={17} /> : <Plus size={17} />}
             onClick={() => setShowForm((value) => !value)}
           >
-            {showForm ? <X size={17} /> : <Plus size={17} />}
             {showForm ? "收起" : "注册项目"}
-          </button>
+          </Button>
         ) : null}
       </div>
 
       {!canEdit ? <InlineNotice tone="info">当前角色只能查看项目。</InlineNotice> : null}
 
       {showForm ? (
-        <form
+        <Form
+          layout="vertical"
+          requiredMark={false}
           className="tool-panel project-form"
-          onSubmit={(event) => {
-            event.preventDefault();
+          onFinish={() => {
             createProject.mutate(
               source === "local"
                 ? { source, input: { name, path: localPath } }
@@ -131,89 +133,83 @@ export function ProjectsPage() {
             {source === "local" ? <HardDrive size={19} /> : <Server size={19} />}
           </div>
           {desktopAvailable ? (
-            <div className="project-source-control" role="group" aria-label="项目来源">
-              <button
-                type="button"
-                className={source === "remote" ? "active" : undefined}
-                aria-pressed={source === "remote"}
-                onClick={() => setSource("remote")}
-              >
-                <Server size={16} />
-                远程仓库
-              </button>
-              <button
-                type="button"
-                className={source === "local" ? "active" : undefined}
-                aria-pressed={source === "local"}
-                onClick={() => setSource("local")}
-              >
-                <FolderOpen size={16} />
-                本地目录
-              </button>
-            </div>
+            <Segmented
+              className="project-source-control"
+              aria-label="项目来源"
+              value={source}
+              onChange={(value) => setSource(value as ProjectSource)}
+              options={[
+                {
+                  value: "remote",
+                  label: (
+                    <span>
+                      <Server size={16} />
+                      远程仓库
+                    </span>
+                  ),
+                },
+                {
+                  value: "local",
+                  label: (
+                    <span>
+                      <FolderOpen size={16} />
+                      本地目录
+                    </span>
+                  ),
+                },
+              ]}
+            />
           ) : null}
           <div className="form-grid">
-            <label className="field">
-              <span>项目名称</span>
-              <input value={name} onChange={(event) => setName(event.target.value)} required />
-            </label>
+            <Form.Item label="项目名称" required>
+              <Input value={name} onChange={(event) => setName(event.target.value)} />
+            </Form.Item>
             {source === "remote" ? (
               <>
-                <label className="field">
-                  <span>默认分支</span>
-                  <input
+                <Form.Item label="默认分支" required>
+                  <Input
                     value={baseRef}
                     onChange={(event) => setBaseRef(event.target.value)}
                     placeholder="main"
-                    required
                   />
-                </label>
-                <label className="field field-wide">
-                  <span>SSH 仓库地址</span>
-                  <input
+                </Form.Item>
+                <Form.Item label="SSH 仓库地址" required className="field-wide">
+                  <Input
                     value={repositoryUrl}
                     onChange={(event) => setRepositoryUrl(event.target.value)}
                     placeholder="git@github.com:team/project.git"
                     autoComplete="off"
-                    required
                   />
-                </label>
+                </Form.Item>
               </>
             ) : (
-              <label className="field field-wide">
-                <span>项目根目录</span>
+              <Form.Item label="项目根目录" required className="field-wide">
                 <span className="input-action-row">
-                  <input value={localPath} placeholder="选择 Git 仓库根目录" readOnly required />
-                  <button
-                    type="button"
-                    className="button button-secondary"
+                  <Input value={localPath} placeholder="选择 Git 仓库根目录" readOnly />
+                  <Button
+                    icon={<FolderOpen size={17} />}
                     onClick={() => void chooseDirectory()}
                   >
-                    <FolderOpen size={17} />
                     选择目录
-                  </button>
+                  </Button>
                 </span>
-              </label>
+              </Form.Item>
             )}
           </div>
           <div className="dialog-actions">
-            <button
-              type="submit"
-              className="button button-primary"
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={createProject.isPending}
               disabled={
-                createProject.isPending ||
                 !name.trim() ||
                 (source === "local" ? !localPath.trim() : !repositoryUrl.trim() || !baseRef.trim())
               }
             >
-              {createProject.isPending
-                ? source === "local"
-                  ? "正在检查"
-                  : "正在克隆"
-                : "注册项目"}
-            </button>
+              {createProject.isPending && source === "local" ? "正在检查" : "注册项目"}
+            </Button>
           </div>
-        </form>
+        </Form>
       ) : null}
 
       {projects.data.projects.length === 0 ? (
@@ -222,11 +218,11 @@ export function ProjectsPage() {
           detail={desktopAvailable ? "添加远程仓库或本地 Git 目录" : "添加远程 Git 仓库"}
         />
       ) : (
-        <section className="object-list">
+        <Flex vertical className="object-list">
           {projects.data.projects.map((project) => {
             const local = project.repositoryUrl === null;
             return (
-              <article key={project.id} className="object-row">
+              <div key={project.id} className="object-row">
                 <span className="object-icon">
                   {local ? <HardDrive size={19} /> : <GitBranch size={19} />}
                 </span>
@@ -251,21 +247,18 @@ export function ProjectsPage() {
                   </div>
                 </dl>
                 {canEdit ? (
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label={`${local ? "检查" : "同步"} ${project.name}`}
-                    title={local ? "重新检查本地仓库" : "同步远程仓库"}
+                  <IconButton
+                    label={`${local ? "检查" : "同步"} ${project.name}`}
                     disabled={syncProject.isPending}
                     onClick={() => syncProject.mutate(project)}
                   >
                     <RefreshCw size={17} className={syncProject.isPending ? "spin" : undefined} />
-                  </button>
+                  </IconButton>
                 ) : null}
-              </article>
+              </div>
             );
           })}
-        </section>
+        </Flex>
       )}
     </div>
   );

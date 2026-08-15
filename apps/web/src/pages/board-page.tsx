@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Button, Card, Select } from "antd";
 import { Filter, GitBranch, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Task, TaskStatus } from "@devloop/shared";
@@ -59,23 +60,25 @@ export function BoardPage() {
   return (
     <div className="page-stack board-page">
       <div className="page-actions">
-        <label className="compact-select">
+        <div className="compact-select">
           <Filter size={16} aria-hidden="true" />
-          <span className="sr-only">筛选项目</span>
-          <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
-            <option value="all">全部项目</option>
-            {dashboard.data.projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select
+            aria-label="筛选项目"
+            value={projectFilter}
+            onChange={setProjectFilter}
+            options={[
+              { label: "全部项目", value: "all" },
+              ...dashboard.data.projects.map((project) => ({
+                label: project.name,
+                value: project.id,
+              })),
+            ]}
+          />
+        </div>
         {canCreate ? (
-          <button type="button" className="button button-primary" onClick={() => setCreating(true)}>
-            <Plus size={17} />
+          <Button type="primary" icon={<Plus size={17} />} onClick={() => setCreating(true)}>
             创建任务
-          </button>
+          </Button>
         ) : null}
       </div>
 
@@ -96,11 +99,20 @@ export function BoardPage() {
                     <EmptyState title="暂无任务" />
                   ) : (
                     tasks.map((task) => (
-                      <button
+                      <Card
                         key={task.id}
-                        type="button"
+                        size="small"
+                        hoverable
                         className="task-card"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setSelectedTaskId(task.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedTaskId(task.id);
+                          }
+                        }}
                       >
                         <span className="task-card-project">{task.projectName}</span>
                         <strong>{task.title}</strong>
@@ -113,7 +125,7 @@ export function BoardPage() {
                           <span>分数 {task.priority}</span>
                           <time>{formatDateTime(task.updatedAt)}</time>
                         </span>
-                      </button>
+                      </Card>
                     ))
                   )}
                 </div>

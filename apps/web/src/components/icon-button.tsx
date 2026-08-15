@@ -1,24 +1,21 @@
-import * as Tooltip from "@radix-ui/react-tooltip";
+import { Button, Tooltip, type ButtonProps } from "antd";
 
-interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+interface IconButtonProps extends Omit<ButtonProps, "children" | "icon" | "shape" | "type"> {
   label: string;
   children: React.ReactNode;
 }
 
 export function IconButton({ label, children, className = "", ...props }: IconButtonProps) {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <button type="button" className={`icon-button ${className}`} aria-label={label} {...props}>
-          {children}
-        </button>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="tooltip-content" sideOffset={6}>
-          {label}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <Tooltip title={label} mouseEnterDelay={0.35}>
+      <Button
+        type="text"
+        shape="circle"
+        className={`icon-button ${className}`.trim()}
+        aria-label={label}
+        icon={children}
+        {...props}
+      />
+    </Tooltip>
   );
 }

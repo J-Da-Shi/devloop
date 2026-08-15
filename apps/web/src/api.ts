@@ -1,4 +1,5 @@
 import type {
+  ApproveRunInput,
   ConfirmTaskInput,
   CreateLocalProjectInput,
   CreateProjectInput,
@@ -166,7 +167,7 @@ export const api = {
     ),
   runFilePatch: (runId: string, path: string) =>
     request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
-  approveRun: (runId: string, input: TaskCommandInput) =>
+  approveRun: (runId: string, input: ApproveRunInput) =>
     request<RunApprovalResponse>(`/api/runs/${runId}/approve`, {
       method: "POST",
       body: json(input),

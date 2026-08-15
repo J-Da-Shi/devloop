@@ -1,5 +1,5 @@
-import * as Switch from "@radix-ui/react-switch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Badge, Button, Flex, Input, Switch, Tag } from "antd";
 import type { Skill, SkillValidationResult } from "@devloop/shared";
 import {
   AlertTriangle,
@@ -345,52 +345,56 @@ export function SkillsPage() {
             <span className="skill-section-kicker">REGISTRY</span>
             <h2>Skill</h2>
           </div>
-          <span className="skill-count">{skills.data.skills.length}</span>
+          <Tag variant="filled" className="skill-count">
+            {skills.data.skills.length}
+          </Tag>
         </div>
 
-        <label className="skill-search">
-          <span className="sr-only">搜索 Skill</span>
-          <Search size={16} aria-hidden="true" />
-          <input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索名称或描述"
-          />
-        </label>
+        <Input
+          className="skill-search"
+          aria-label="搜索 Skill"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="搜索名称或描述"
+          prefix={<Search size={16} aria-hidden="true" />}
+          allowClear
+        />
 
         <div className="skill-list">
           {filteredSkills.length === 0 ? (
             <div className="skill-list-empty">{search ? "没有匹配结果" : "暂无 Skill"}</div>
           ) : (
             filteredSkills.map((skill) => (
-              <button
+              <Button
                 key={skill.id}
-                type="button"
+                type="text"
+                block
                 className={`skill-list-item${selectedSkillId === skill.id ? " active" : ""}`}
                 aria-pressed={selectedSkillId === skill.id}
                 onClick={() => requestTarget(skill.id)}
               >
-                <span className={`skill-state-dot${skill.enabled ? " enabled" : ""}`} />
+                <Badge
+                  status={skill.enabled ? "success" : "default"}
+                  className="skill-state-dot"
+                />
                 <span className="skill-list-copy">
                   <strong>{skill.name}</strong>
                   <small>{skill.description}</small>
                 </span>
                 <code>v{skill.currentVersion}</code>
-              </button>
+              </Button>
             ))
           )}
         </div>
 
         {canEdit ? (
-          <button
-            type="button"
-            className="button button-secondary skill-create-button"
+          <Button
+            className="skill-create-button"
+            icon={<Plus size={17} aria-hidden="true" />}
             onClick={() => requestTarget("new")}
           >
-            <Plus size={17} aria-hidden="true" />
             新建 Skill
-          </button>
+          </Button>
         ) : (
           <div className="skill-readonly-note">当前实例为只读权限</div>
         )}
@@ -417,20 +421,18 @@ export function SkillsPage() {
               </div>
               <div className="skill-editor-actions">
                 {!isCreating && details.data ? (
-                  <label className="skill-enable-control">
+                  <span className="skill-enable-control">
                     <span>{details.data.skill.enabled ? "已启用" : "已停用"}</span>
-                    <Switch.Root
-                      className="switch-root"
+                    <Switch
                       checked={details.data.skill.enabled}
                       disabled={!canEdit || updateSkill.isPending}
                       aria-label={details.data.skill.enabled ? "停用 Skill" : "启用 Skill"}
-                      onCheckedChange={(enabled) =>
+                      loading={updateSkill.isPending}
+                      onChange={(enabled) =>
                         updateSkill.mutate({ skill: details.data.skill, enabled })
                       }
-                    >
-                      <Switch.Thumb className="switch-thumb" />
-                    </Switch.Root>
-                  </label>
+                    />
+                  </span>
                 ) : null}
                 <IconButton
                   label={isCreating ? "恢复模板" : "放弃未发布修改"}
@@ -444,22 +446,20 @@ export function SkillsPage() {
                 >
                   <RefreshCw size={17} />
                 </IconButton>
-                <button
-                  type="button"
-                  className="button button-secondary"
+                <Button
+                  icon={
+                    validationState === "checking" ? undefined : <CheckCircle2 size={16} />
+                  }
+                  loading={validationState === "checking"}
                   disabled={!canEdit || validationState === "checking" || !editor.content.trim()}
                   onClick={() => void runValidation(editor.content)}
                 >
-                  {validationState === "checking" ? (
-                    <LoaderCircle className="spin" size={16} />
-                  ) : (
-                    <CheckCircle2 size={16} />
-                  )}
                   校验
-                </button>
-                <button
-                  type="button"
-                  className="button button-primary"
+                </Button>
+                <Button
+                  type="primary"
+                  icon={pending ? undefined : <Upload size={16} />}
+                  loading={pending}
                   disabled={!canPublish}
                   onClick={() => {
                     if (isCreating) {
@@ -473,20 +473,23 @@ export function SkillsPage() {
                     }
                   }}
                 >
-                  {pending ? <LoaderCircle className="spin" size={16} /> : <Upload size={16} />}
                   {isCreating ? "创建" : "发布新版本"}
-                </button>
+                </Button>
               </div>
             </header>
 
             {remoteChanged ? (
-              <div className="skill-conflict-banner" role="alert">
-                <AlertTriangle size={17} aria-hidden="true" />
-                <span>该 Skill 已在其他位置更新，重新载入后才能继续发布。</span>
-                <button type="button" className="button button-secondary" onClick={reloadCurrent}>
-                  载入最新版本
-                </button>
-              </div>
+              <Alert
+                className="skill-conflict-banner"
+                type="warning"
+                showIcon
+                title="该 Skill 已在其他位置更新，重新载入后才能继续发布。"
+                action={
+                  <Button size="small" onClick={reloadCurrent}>
+                    载入最新版本
+                  </Button>
+                }
+              />
             ) : null}
 
             <div className="skill-editor-meta">
@@ -525,9 +528,9 @@ export function SkillsPage() {
               </span>
             </div>
 
-            <label className="skill-code-editor">
-              <span className="sr-only">SKILL.md 内容</span>
-              <textarea
+            <div className="skill-code-editor">
+              <Input.TextArea
+                aria-label="SKILL.md 内容"
                 value={editor.content}
                 readOnly={!canEdit}
                 spellCheck={false}
@@ -535,7 +538,7 @@ export function SkillsPage() {
                   setEditor((current) => ({ ...current, content: event.target.value }))
                 }
               />
-            </label>
+            </div>
 
             <div className="skill-inspector">
               <section className="skill-validation-panel">
@@ -565,9 +568,12 @@ export function SkillsPage() {
                     </span>
                   </div>
                 ) : (
-                  <ul className="skill-issue-list">
+                  <Flex vertical className="skill-issue-list">
                     {effectiveValidation.issues.map((issue) => (
-                      <li key={`${issue.code}-${issue.message}`} className={issue.severity}>
+                      <div
+                        key={`${issue.code}-${issue.message}`}
+                        className={issue.severity}
+                      >
                         {issue.severity === "error" ? (
                           <CircleAlert size={16} aria-hidden="true" />
                         ) : (
@@ -577,9 +583,9 @@ export function SkillsPage() {
                           <strong>{issue.code}</strong>
                           <small>{issue.message}</small>
                         </span>
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </Flex>
                 )}
               </section>
 
@@ -594,7 +600,7 @@ export function SkillsPage() {
                 {isCreating ? (
                   <div className="skill-inspector-empty">创建后生成 v1</div>
                 ) : (
-                  <div className="skill-version-list">
+                  <Flex vertical className="skill-version-list">
                     {details.data?.versions.map((version) => (
                       <div
                         key={version.id}
@@ -613,7 +619,7 @@ export function SkillsPage() {
                         {version.id === editor.currentVersionId ? <strong>当前</strong> : null}
                       </div>
                     ))}
-                  </div>
+                  </Flex>
                 )}
               </section>
             </div>

@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import * as Dialog from "@radix-ui/react-dialog";
+import { Button, Form, Input, InputNumber, Modal, Select } from "antd";
 import {
   Ban,
   Check,
@@ -11,19 +11,17 @@ import {
   RotateCcw,
   Save,
   Trash2,
-  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Project, RunApplicationResult, RunPublishResult, Task } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { formatDateTime, runStatusText, taskStatusText } from "../utils.js";
 import { ConfirmDialog } from "./confirm-dialog.js";
 import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
-import { IconButton } from "./icon-button.js";
 import { useNotice } from "./notice-provider.js";
-import { RunDiffPanel } from "./run-diff-panel.js";
+import { RunDiffPanel, type RunDiffApprovalState } from "./run-diff-panel.js";
 import { RunEventList } from "./run-event-list.js";
 import { StatusBadge } from "./status-badge.js";
 
@@ -60,6 +58,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const { notify } = useNotice();
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [rejectFeedback, setRejectFeedback] = useState("");
+  const [diffApprovalState, setDiffApprovalState] = useState<RunDiffApprovalState | null>(null);
   const session = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
@@ -91,6 +90,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     if (open) {
       form.reset(defaults);
       setRejectFeedback("");
+      setDiffApprovalState(null);
     }
   }, [defaults, form, open]);
 
@@ -170,6 +170,12 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         return api.approveRun(task.latestRunId, {
           expectedVersion: task.version,
           idempotencyKey,
+          ...(localProject && diffApprovalState
+            ? {
+                expectedTargetCommit: diffApprovalState.expectedTargetCommit,
+                conflictResolutions: diffApprovalState.conflictResolutions,
+              }
+            : {}),
         });
       }
       if (!rejectFeedback.trim()) {
@@ -214,7 +220,14 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         onOpenChange(false);
       }
     },
-    onError: (error) => notify(error instanceof Error ? error.message : "操作失败", "danger"),
+    onError: (error, action) => {
+      if (action === "approve" && task?.latestRunId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.runChangedFiles(task.latestRunId),
+        });
+      }
+      notify(error instanceof Error ? error.message : "操作失败", "danger");
+    },
   });
 
   const canEdit = session.data ? roleAllowsEdit(session.data.identity.role) : false;
@@ -229,6 +242,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const taskProject = projects.find((project) => project.id === task?.projectId);
   const localProject = taskProject?.repositoryUrl === null;
   const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
+  const unresolvedConflictCount = diffApprovalState?.unresolvedPaths.length ?? 0;
   const confirmCopy = {
     confirm: {
       title: "确认任务并加入队列？",
@@ -270,7 +284,9 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     approve: {
       title: localProject ? "通过并写入本地项目？" : "通过并推送本次结果？",
       description: localProject
-        ? `DevLoop 会把结果安全写入本地分支 ${targetBranch}。目标文件存在未提交修改或分支已变化时会停止，不会覆盖现有工作。`
+        ? unresolvedConflictCount > 0
+          ? `仍有 ${unresolvedConflictCount} 个冲突文件未解决，继续写入会被拒绝。`
+          : `DevLoop 会把结果安全写入本地分支 ${targetBranch}。目标文件存在未提交修改或分支已变化时会停止，不会覆盖现有工作。`
         : `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
       label: localProject ? "通过并写入" : "通过并推送",
       danger: false,
@@ -286,304 +302,334 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
 
   return (
     <>
-      <Dialog.Root open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="dialog-content task-dialog">
-            <div className="dialog-heading">
-              <div>
-                <Dialog.Title>{task ? task.title : "创建任务"}</Dialog.Title>
-                <Dialog.Description>
-                  {task
-                    ? `${task.projectName} · 更新于 ${formatDateTime(task.updatedAt)}`
-                    : "创建一个可确认的任务草稿"}
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
-                <IconButton label="关闭" disabled={pending}>
-                  <X size={18} />
-                </IconButton>
-              </Dialog.Close>
-            </div>
+      <Modal
+        open={open}
+        width={760}
+        footer={null}
+        closable={!pending}
+        keyboard={!pending}
+        mask={{ closable: !pending }}
+        onCancel={() => !pending && onOpenChange(false)}
+        className="task-dialog"
+        title={
+          <span className="task-dialog-title">
+            <strong>{task ? task.title : "创建任务"}</strong>
+            <small>
+              {task
+                ? `${task.projectName} · 更新于 ${formatDateTime(task.updatedAt)}`
+                : "创建一个可确认的任务草稿"}
+            </small>
+          </span>
+        }
+      >
 
-            {task ? (
-              <div className="task-dialog-status">
-                <StatusBadge status={task.status} pulse={task.status === "RUNNING"}>
-                  {taskStatusText[task.status]}
-                </StatusBadge>
-                <span>分数 {task.priority}</span>
-                <span>版本 {task.version}</span>
-              </div>
-            ) : null}
+        {task ? (
+          <div className="task-dialog-status">
+            <StatusBadge status={task.status} pulse={task.status === "RUNNING"}>
+              {taskStatusText[task.status]}
+            </StatusBadge>
+            <span>分数 {task.priority}</span>
+            <span>版本 {task.version}</span>
+          </div>
+        ) : null}
 
-            {!canEdit && editable ? (
-              <InlineNotice tone="warning">当前实例处于只读模式，无法修改任务。</InlineNotice>
-            ) : null}
+        {!canEdit && editable ? (
+          <InlineNotice tone="warning">当前实例处于只读模式，无法修改任务。</InlineNotice>
+        ) : null}
 
-            {editable ? (
-              <form
-                className="form-stack"
-                onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
-              >
-                <label className="field">
-                  <span>项目</span>
-                  <select
+        {editable ? (
+          <Form
+            className="form-stack"
+            layout="vertical"
+            requiredMark={false}
+            onFinish={() => {
+              void form.handleSubmit((values) => saveMutation.mutate(values))();
+            }}
+          >
+            <Form.Item
+              label="项目"
+              required
+              validateStatus={form.formState.errors.projectId ? "error" : ""}
+              help={form.formState.errors.projectId?.message}
+            >
+              <Controller
+                control={form.control}
+                name="projectId"
+                render={({ field }) => (
+                  <Select
+                    {...field}
                     disabled={Boolean(task) || !canEdit}
-                    {...form.register("projectId", {
-                      onChange: (event) => {
-                        const project = projects.find((item) => item.id === event.target.value);
-                        form.setValue("targetBranch", project?.defaultBaseRef ?? "HEAD", {
-                          shouldDirty: true,
-                          shouldValidate: true,
-                        });
-                      },
-                    })}
-                  >
-                    <option value="">选择项目</option>
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                        {project.repositoryUrl === null ? "（本地）" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {form.formState.errors.projectId ? (
-                    <small className="field-error">{form.formState.errors.projectId.message}</small>
-                  ) : null}
-                </label>
-                <label className="field">
-                  <span>目标分支</span>
-                  <input
-                    disabled={!canEdit}
-                    placeholder="例如 feature/mobile-editor"
-                    {...form.register("targetBranch")}
+                    placeholder="选择项目"
+                    options={projects.map((project) => ({
+                      label: `${project.name}${project.repositoryUrl === null ? "（本地）" : ""}`,
+                      value: project.id,
+                    }))}
+                    onChange={(value) => {
+                      field.onChange(value);
+                      const project = projects.find((item) => item.id === value);
+                      form.setValue("targetBranch", project?.defaultBaseRef ?? "HEAD", {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
                   />
-                  {form.formState.errors.targetBranch ? (
-                    <small className="field-error">
-                      {form.formState.errors.targetBranch.message}
-                    </small>
-                  ) : null}
-                </label>
-                <label className="field">
-                  <span>标题</span>
-                  <input disabled={!canEdit} autoFocus={!task} {...form.register("title")} />
-                  {form.formState.errors.title ? (
-                    <small className="field-error">{form.formState.errors.title.message}</small>
-                  ) : null}
-                </label>
-                <label className="field">
-                  <span>任务目标</span>
-                  <textarea disabled={!canEdit} rows={5} {...form.register("goal")} />
-                  {form.formState.errors.goal ? (
-                    <small className="field-error">{form.formState.errors.goal.message}</small>
-                  ) : null}
-                </label>
-                <label className="field">
-                  <span>验收标准</span>
-                  <textarea
+                )}
+              />
+            </Form.Item>
+            <Form.Item
+              label="目标分支"
+              required
+              validateStatus={form.formState.errors.targetBranch ? "error" : ""}
+              help={form.formState.errors.targetBranch?.message}
+            >
+              <Controller
+                control={form.control}
+                name="targetBranch"
+                render={({ field }) => (
+                  <Input {...field} disabled={!canEdit} placeholder="例如 feature/mobile-editor" />
+                )}
+              />
+            </Form.Item>
+            <Form.Item
+              label="标题"
+              required
+              validateStatus={form.formState.errors.title ? "error" : ""}
+              help={form.formState.errors.title?.message}
+            >
+              <Controller
+                control={form.control}
+                name="title"
+                render={({ field }) => <Input {...field} disabled={!canEdit} autoFocus={!task} />}
+              />
+            </Form.Item>
+            <Form.Item
+              label="任务目标"
+              required
+              validateStatus={form.formState.errors.goal ? "error" : ""}
+              help={form.formState.errors.goal?.message}
+            >
+              <Controller
+                control={form.control}
+                name="goal"
+                render={({ field }) => <Input.TextArea {...field} disabled={!canEdit} rows={5} />}
+              />
+            </Form.Item>
+            <Form.Item
+              label="验收标准"
+              required
+              validateStatus={form.formState.errors.criteriaText ? "error" : ""}
+              help={form.formState.errors.criteriaText?.message}
+            >
+              <Controller
+                control={form.control}
+                name="criteriaText"
+                render={({ field }) => (
+                  <Input.TextArea
+                    {...field}
                     disabled={!canEdit}
                     rows={5}
                     placeholder="每行一条"
-                    {...form.register("criteriaText")}
                   />
-                  {form.formState.errors.criteriaText ? (
-                    <small className="field-error">
-                      {form.formState.errors.criteriaText.message}
-                    </small>
-                  ) : null}
-                </label>
-                <label className="field field-compact">
-                  <span>分数</span>
-                  <input
+                )}
+              />
+            </Form.Item>
+            <Form.Item label="分数" className="field-compact">
+              <Controller
+                control={form.control}
+                name="priority"
+                render={({ field }) => (
+                  <InputNumber
+                    ref={field.ref}
+                    name={field.name}
+                    value={field.value}
                     disabled={!canEdit}
-                    type="number"
-                    min="0"
-                    max="100"
-                    {...form.register("priority", { valueAsNumber: true })}
+                    min={0}
+                    max={100}
+                    onBlur={field.onBlur}
+                    onChange={(value) => field.onChange(value ?? 0)}
                   />
-                </label>
+                )}
+              />
+            </Form.Item>
+            <div className="dialog-actions">
+              {task && canEdit ? (
+                <Button
+                  icon={<Play size={17} />}
+                  onClick={() => setConfirmAction("confirm")}
+                  disabled={pending || form.formState.isDirty}
+                >
+                  确认并排队
+                </Button>
+              ) : null}
+              {canEdit ? (
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  icon={<Save size={17} />}
+                  loading={saveMutation.isPending}
+                  disabled={commandMutation.isPending}
+                >
+                  {task ? "保存草稿" : "创建草稿"}
+                </Button>
+              ) : null}
+            </div>
+          </Form>
+        ) : (
+          <div className="task-readonly">
+            <section>
+              <h3>目标分支</h3>
+              <code>
+                <GitBranch size={15} />
+                {task?.targetBranch}
+              </code>
+            </section>
+            <section>
+              <h3>任务目标</h3>
+              <p>{task?.goal}</p>
+            </section>
+            <section>
+              <h3>验收标准</h3>
+              <ul>
+                {task?.acceptanceCriteria.map((criterion) => (
+                  <li key={criterion}>{criterion}</li>
+                ))}
+              </ul>
+            </section>
+            {task?.latestRunId ? (
+              <section>
+                <h3>最近执行</h3>
+                {runDetails.isPending ? <LoadingPanel label="正在加载执行记录" /> : null}
+                {runDetails.isError ? <ErrorPanel error={runDetails.error} /> : null}
+                {runDetails.data ? (
+                  <div className="run-summary-block">
+                    <StatusBadge status={runDetails.data.run.status}>
+                      {runStatusText[runDetails.data.run.status]}
+                    </StatusBadge>
+                    <p>{runDetails.data.run.summary ?? "执行尚未生成摘要"}</p>
+                    <RunEventList
+                      events={runDetails.data.events}
+                      streamKey={runDetails.data.run.id}
+                      compact
+                      label="最近执行日志"
+                    />
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+            {task?.latestRunId ? (
+              <section>
+                <h3>代码变更</h3>
+                <RunDiffPanel
+                  runId={task.latestRunId}
+                  reviewing={task.status === "REVIEW"}
+                  onApprovalStateChange={
+                    localProject && task.status === "REVIEW" ? setDiffApprovalState : undefined
+                  }
+                />
+              </section>
+            ) : null}
+            {task?.status === "REVIEW" && canEdit ? (
+              <section className="review-actions">
+                <Form.Item label="驳回意见" required>
+                  <Input.TextArea
+                    rows={3}
+                    value={rejectFeedback}
+                    onChange={(event) => setRejectFeedback(event.target.value)}
+                    placeholder="驳回时必填"
+                  />
+                </Form.Item>
                 <div className="dialog-actions">
-                  {task && canEdit ? (
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => setConfirmAction("confirm")}
-                      disabled={pending || form.formState.isDirty}
-                    >
-                      <Play size={17} />
-                      确认并排队
-                    </button>
-                  ) : null}
-                  {canEdit ? (
-                    <button type="submit" className="button button-primary" disabled={pending}>
-                      <Save size={17} />
-                      {saveMutation.isPending ? "正在保存" : task ? "保存草稿" : "创建草稿"}
-                    </button>
-                  ) : null}
+                  <Button
+                    danger
+                    icon={<CornerDownLeft size={17} />}
+                    onClick={() => setConfirmAction("reject")}
+                    disabled={pending || !rejectFeedback.trim()}
+                  >
+                    驳回
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<Check size={17} />}
+                    onClick={() => setConfirmAction("approve")}
+                    disabled={pending}
+                  >
+                    {localProject ? "通过并写入" : "通过并推送"}
+                  </Button>
                 </div>
-              </form>
-            ) : (
-              <div className="task-readonly">
-                <section>
-                  <h3>目标分支</h3>
-                  <code>
-                    <GitBranch size={15} />
-                    {task?.targetBranch}
-                  </code>
-                </section>
-                <section>
-                  <h3>任务目标</h3>
-                  <p>{task?.goal}</p>
-                </section>
-                <section>
-                  <h3>验收标准</h3>
-                  <ul>
-                    {task?.acceptanceCriteria.map((criterion) => (
-                      <li key={criterion}>{criterion}</li>
-                    ))}
-                  </ul>
-                </section>
-                {task?.latestRunId ? (
-                  <section>
-                    <h3>最近执行</h3>
-                    {runDetails.isPending ? <LoadingPanel label="正在加载执行记录" /> : null}
-                    {runDetails.isError ? <ErrorPanel error={runDetails.error} /> : null}
-                    {runDetails.data ? (
-                      <div className="run-summary-block">
-                        <StatusBadge status={runDetails.data.run.status}>
-                          {runStatusText[runDetails.data.run.status]}
-                        </StatusBadge>
-                        <p>{runDetails.data.run.summary ?? "执行尚未生成摘要"}</p>
-                        <RunEventList
-                          events={runDetails.data.events}
-                          streamKey={runDetails.data.run.id}
-                          compact
-                          label="最近执行日志"
-                        />
-                      </div>
-                    ) : null}
-                  </section>
-                ) : null}
-                {task?.latestRunId ? (
-                  <section>
-                    <h3>代码变更</h3>
-                    <RunDiffPanel runId={task.latestRunId} reviewing={task.status === "REVIEW"} />
-                  </section>
-                ) : null}
-                {task?.status === "REVIEW" && canEdit ? (
-                  <section className="review-actions">
-                    <label className="field">
-                      <span>驳回意见</span>
-                      <textarea
-                        rows={3}
-                        value={rejectFeedback}
-                        onChange={(event) => setRejectFeedback(event.target.value)}
-                        placeholder="驳回时必填"
-                      />
-                    </label>
-                    <div className="dialog-actions">
-                      <button
-                        type="button"
-                        className="button button-danger-quiet"
-                        onClick={() => setConfirmAction("reject")}
-                        disabled={pending || !rejectFeedback.trim()}
-                      >
-                        <CornerDownLeft size={17} />
-                        驳回
-                      </button>
-                      <button
-                        type="button"
-                        className="button button-primary"
-                        onClick={() => setConfirmAction("approve")}
-                        disabled={pending}
-                      >
-                        <Check size={17} />
-                        {localProject ? "通过并写入" : "通过并推送"}
-                      </button>
-                    </div>
-                  </section>
-                ) : null}
-                {task?.status === "READY" && canEdit ? (
-                  <div className="dialog-actions">
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => setConfirmAction("unconfirm")}
-                      disabled={pending}
-                    >
-                      <RotateCcw size={17} />
-                      撤回为草稿
-                    </button>
-                  </div>
-                ) : null}
-                {canRecover ? (
-                  <div className="dialog-actions">
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => setConfirmAction("revise")}
-                      disabled={pending}
-                    >
-                      <Pencil size={17} />
-                      修改后重试
-                    </button>
-                    <button
-                      type="button"
-                      className="button button-primary"
-                      onClick={() => setConfirmAction("retry")}
-                      disabled={pending}
-                    >
-                      <RotateCcw size={17} />
-                      直接重试
-                    </button>
-                  </div>
-                ) : null}
-                {task?.status === "COMPLETED" && runDetails.data ? (
-                  <section className="apply-actions">
-                    <h3>{localProject ? "本地目标分支" : "远程目标分支"}</h3>
-                    <InlineNotice tone="success">
-                      {localProject
-                        ? `本次 Run 结果已写入本地分支 ${runDetails.data.run.targetBranch}。`
-                        : `本次 Run 结果已推送到 ${runDetails.data.run.targetBranch}${
-                            runDetails.data.run.pushedCommit
-                              ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
-                              : ""
-                          }。`}
-                    </InlineNotice>
-                  </section>
-                ) : null}
-              </div>
-            )}
-
-            {task && (canCancel || canDelete) ? (
-              <div className="task-destructive-actions">
-                {canCancel ? (
-                  <button
-                    type="button"
-                    className="button button-danger-quiet"
-                    onClick={() => setConfirmAction("cancel")}
-                    disabled={pending}
-                  >
-                    <Ban size={17} />
-                    取消执行
-                  </button>
-                ) : null}
-                {canDelete ? (
-                  <button
-                    type="button"
-                    className="button button-danger-quiet"
-                    onClick={() => setConfirmAction("delete")}
-                    disabled={pending}
-                  >
-                    <Trash2 size={17} />
-                    删除任务
-                  </button>
-                ) : null}
+              </section>
+            ) : null}
+            {task?.status === "READY" && canEdit ? (
+              <div className="dialog-actions">
+                <Button
+                  icon={<RotateCcw size={17} />}
+                  onClick={() => setConfirmAction("unconfirm")}
+                  disabled={pending}
+                >
+                  撤回为草稿
+                </Button>
               </div>
             ) : null}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+            {canRecover ? (
+              <div className="dialog-actions">
+                <Button
+                  icon={<Pencil size={17} />}
+                  onClick={() => setConfirmAction("revise")}
+                  disabled={pending}
+                >
+                  修改后重试
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<RotateCcw size={17} />}
+                  onClick={() => setConfirmAction("retry")}
+                  disabled={pending}
+                >
+                  直接重试
+                </Button>
+              </div>
+            ) : null}
+            {task?.status === "COMPLETED" && runDetails.data ? (
+              <section className="apply-actions">
+                <h3>{localProject ? "本地目标分支" : "远程目标分支"}</h3>
+                <InlineNotice tone="success">
+                  {localProject
+                    ? `本次 Run 结果已写入本地分支 ${runDetails.data.run.targetBranch}。`
+                    : `本次 Run 结果已推送到 ${runDetails.data.run.targetBranch}${
+                        runDetails.data.run.pushedCommit
+                          ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
+                          : ""
+                      }。`}
+                </InlineNotice>
+              </section>
+            ) : null}
+          </div>
+        )}
+
+        {task && (canCancel || canDelete) ? (
+          <div className="task-destructive-actions">
+            {canCancel ? (
+              <Button
+                danger
+                icon={<Ban size={17} />}
+                onClick={() => setConfirmAction("cancel")}
+                disabled={pending}
+              >
+                取消执行
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button
+                danger
+                icon={<Trash2 size={17} />}
+                onClick={() => setConfirmAction("delete")}
+                disabled={pending}
+              >
+                删除任务
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
 
       {activeCopy ? (
         <ConfirmDialog

@@ -69,6 +69,51 @@ export const taskCommandInputSchema = z.object({
   idempotencyKey: z.string().uuid(),
 });
 
+const conflictPathSchema = z.string().min(1).max(1024);
+const runConflictResolutionSchema = z.discriminatedUnion("strategy", [
+  z.object({
+    path: conflictPathSchema,
+    strategy: z.literal("content"),
+    content: z.string().max(750_000),
+  }),
+  z.object({ path: conflictPathSchema, strategy: z.literal("target") }),
+  z.object({ path: conflictPathSchema, strategy: z.literal("result") }),
+]);
+
+export const approveRunInputSchema = taskCommandInputSchema
+  .extend({
+    expectedTargetCommit: z
+      .string()
+      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i, "目标 Commit 格式无效")
+      .nullable()
+      .optional(),
+    conflictResolutions: z.array(runConflictResolutionSchema).max(100).optional(),
+  })
+  .superRefine((value, context) => {
+    const paths = new Set<string>();
+    let contentLength = 0;
+    for (const [index, resolution] of (value.conflictResolutions ?? []).entries()) {
+      if (paths.has(resolution.path)) {
+        context.addIssue({
+          code: "custom",
+          path: ["conflictResolutions", index, "path"],
+          message: "同一个冲突文件只能提交一份解决结果",
+        });
+      }
+      paths.add(resolution.path);
+      if (resolution.strategy === "content") {
+        contentLength += resolution.content.length;
+      }
+    }
+    if (contentLength > 900_000) {
+      context.addIssue({
+        code: "custom",
+        path: ["conflictResolutions"],
+        message: "冲突解决内容总长度不能超过 900000 个字符",
+      });
+    }
+  });
+
 export const confirmTaskInputSchema = taskCommandInputSchema.extend({
   baseStrategy: baseStrategySchema.default("LATEST_ACCEPTED"),
   baseRef: z.string().trim().min(1).max(200).default("HEAD"),
@@ -110,6 +155,7 @@ export type CreateLocalProjectInput = z.infer<typeof createLocalProjectInputSche
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
+export type ApproveRunInput = z.infer<typeof approveRunInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;
 export type RejectRunInput = z.infer<typeof rejectRunInputSchema>;
 export type ValidateSkillInput = z.infer<typeof validateSkillInputSchema>;
