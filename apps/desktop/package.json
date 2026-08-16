@@ -9,8 +9,9 @@
     "dev": "pnpm build && wait-on http://127.0.0.1:4317/api/health http://127.0.0.1:5173 && electron .",
     "build": "tsc -p tsconfig.json",
     "start": "electron .",
-    "package": "pnpm build && electron-forge package",
-    "make": "pnpm build && electron-forge make",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "package": "pnpm --dir ../.. build && pnpm prepare:runtime && node scripts/run-forge.mjs package",
+    "make": "pnpm --dir ../.. build && pnpm prepare:runtime && node scripts/run-forge.mjs make",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

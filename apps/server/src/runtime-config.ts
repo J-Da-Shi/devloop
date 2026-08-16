@@ -45,7 +45,9 @@ const parseRunner = (value: string | undefined): RuntimeConfig["runner"] => {
 };
 
 export function loadRuntimeConfig(): RuntimeConfig {
-  const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const repositoryRoot = resolve(
+    process.env.DEVLOOP_REPOSITORY_ROOT ?? fileURLToPath(new URL("../../../", import.meta.url)),
+  );
   const host = process.env.DEVLOOP_HOST ?? "127.0.0.1";
   const allowLan = parseBoolean(process.env.DEVLOOP_ALLOW_LAN, false);
   if (!["127.0.0.1", "localhost", "::1"].includes(host) && !allowLan) {
