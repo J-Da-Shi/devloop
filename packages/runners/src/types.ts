@@ -12,6 +12,7 @@ export interface RunnerInput {
   worktreePath: string | null;
   outputSchemaPath: string | null;
   signal: AbortSignal;
+  onProcessGroupId?: (processGroupId: number | null) => void;
 }
 
 export interface RunnerEvent {

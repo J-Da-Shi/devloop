@@ -8,7 +8,13 @@ import {
   type ReconcileCommitResult,
 } from "@devloop/git";
 import type { DomainEvent, RunStatus, WorkerStatus } from "@devloop/shared";
-import type { AgentRunner, RunnerEvent, RunnerHandle, RunnerResult } from "@devloop/runners";
+import {
+  terminateProcessGroup as terminateRunnerProcessGroup,
+  type AgentRunner,
+  type RunnerEvent,
+  type RunnerHandle,
+  type RunnerResult,
+} from "@devloop/runners";
 import type { DomainEventBus } from "./event-bus.js";
 
 const phaseByEvent: Record<string, RunStatus> = {
@@ -34,6 +40,7 @@ export interface AgentWorkerOptions {
     | "moveWorktreeToCommit"
   >;
   worktreesPath?: string;
+  terminateProcessGroup?: (processGroupId: number) => void;
 }
 
 class AutoConflictResolutionError extends Error {
@@ -63,18 +70,21 @@ const formatRunnerResult = (result: RunnerResult): string => {
 
 type ConflictResolutionStage = "continuation" | "review";
 
+interface ActiveExecution {
+  taskId: string;
+  runId: string;
+  executionToken: string;
+  controller: AbortController;
+  handle: RunnerHandle | null;
+  processGroupId: number | null;
+  cancelled: boolean;
+}
+
 export class AgentWorker {
   private timer: NodeJS.Timeout | null = null;
   private pulling = false;
   private execution: Promise<void> | null = null;
-  private activeExecution: {
-    taskId: string;
-    runId: string;
-    executionToken: string;
-    controller: AbortController;
-    handle: RunnerHandle | null;
-    cancelled: boolean;
-  } | null = null;
+  private activeExecution: ActiveExecution | null = null;
 
   public constructor(
     private readonly repository: DevLoopRepository,
@@ -95,6 +105,10 @@ export class AgentWorker {
         const interruptedRun = this.repository.getRun(persisted.activeRunId);
         if (!interruptedRun) {
           throw new Error("找不到上次执行记录");
+        }
+        const processGroupId = this.repository.getRunProcessGroupId(persisted.activeRunId);
+        if (processGroupId !== null) {
+          this.terminateProcessGroup(processGroupId);
         }
         this.publish(
           this.repository.failRun(
@@ -122,8 +136,9 @@ export class AgentWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.activeExecution?.controller.abort();
-    this.activeExecution?.handle?.cancel();
+    if (this.activeExecution) {
+      this.abortExecution(this.activeExecution);
+    }
     await this.execution?.catch(() => undefined);
     if (this.repository.getWorkerState().status !== "STOPPED") {
       this.publish(this.repository.setWorkerStatus("STOPPED"));
@@ -152,8 +167,7 @@ export class AgentWorker {
     const active = this.activeExecution;
     if (active?.taskId === taskId && active.runId === result.value.run.id) {
       active.cancelled = true;
-      active.controller.abort();
-      active.handle?.cancel();
+      this.abortExecution(active);
     }
     return result;
   }
@@ -207,22 +221,25 @@ export class AgentWorker {
 
   private async execute(claimed: ClaimedTask): Promise<void> {
     const controller = new AbortController();
-    const active = {
+    const active: ActiveExecution = {
       taskId: claimed.task.id,
       runId: claimed.run.id,
       executionToken: claimed.run.executionToken,
       controller,
       handle: null as RunnerHandle | null,
+      processGroupId: null,
       cancelled: false,
     };
     this.activeExecution = active;
     const emit = (event: RunnerEvent) =>
       this.handleRunnerEvent(claimed.run.id, claimed.run.executionToken, event);
+    const onProcessGroupId = (processGroupId: number | null) =>
+      this.handleProcessGroupChange(active, processGroupId);
 
     try {
       const workspace =
         this.runner.id === "codex"
-          ? await this.prepareWorkspace(claimed, controller.signal)
+          ? await this.prepareWorkspace(claimed, controller.signal, onProcessGroupId)
           : { path: null, baseCommit: claimed.run.baseCommit };
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
@@ -238,6 +255,7 @@ export class AgentWorker {
           worktreePath: workspace.path,
           outputSchemaPath: this.outputSchemaPath,
           signal: controller.signal,
+          onProcessGroupId,
         },
         emit,
       );
@@ -252,6 +270,8 @@ export class AgentWorker {
           claimed,
           workspace.path,
           workspace.baseCommit,
+          controller.signal,
+          onProcessGroupId,
         );
         if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
           return;
@@ -263,6 +283,7 @@ export class AgentWorker {
           committedResult,
           summary,
           controller.signal,
+          onProcessGroupId,
         );
         if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
           return;
@@ -349,6 +370,7 @@ export class AgentWorker {
   private async prepareWorkspace(
     claimed: ClaimedTask,
     signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
   ): Promise<{ path: string; baseCommit: string }> {
     if (this.runner.id !== "codex") {
       throw new Error("只有 Codex 执行器需要准备 Git Worktree");
@@ -365,7 +387,7 @@ export class AgentWorker {
         `正在从目标分支 ${claimed.run.targetBranch} 准备独立 Git Worktree`,
       ),
     );
-    const targetBase = await this.resolveCurrentTarget(claimed);
+    const targetBase = await this.resolveCurrentTarget(claimed, signal, onProcessGroupId);
     this.publish(
       this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
         targetBranch: targetBase.targetBranch,
@@ -402,6 +424,7 @@ export class AgentWorker {
             resultCommit: claimed.continuationResultCommit,
           },
           signal,
+          onProcessGroupId,
           "continuation",
         );
         workspaceBaseCommit = reconciled.resultCommit;
@@ -447,6 +470,8 @@ export class AgentWorker {
       worktreePath,
       branchName,
       baseCommit: workspaceBaseCommit,
+      signal,
+      onProcessGroupId,
     });
     this.publish(
       this.repository.setRunWorkspace(claimed.run.id, claimed.run.executionToken, {
@@ -461,6 +486,8 @@ export class AgentWorker {
     claimed: ClaimedTask,
     worktreePath: string | null,
     baseCommit: string | null,
+    signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
   ): Promise<string | null> {
     if (!worktreePath || !this.options.gitService) {
       return baseCommit;
@@ -478,6 +505,8 @@ export class AgentWorker {
     const resultCommit = await this.options.gitService.commitWorktree({
       worktreePath,
       message: `DevLoop: ${title}`,
+      signal,
+      onProcessGroupId,
     });
     return resultCommit;
   }
@@ -489,6 +518,7 @@ export class AgentWorker {
     resultCommit: string | null,
     summary: string,
     signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
   ): Promise<{ resultCommit: string | null; summary: string }> {
     if (
       !claimed.autoResolveConflicts ||
@@ -510,7 +540,7 @@ export class AgentWorker {
         `正在检查结果与目标分支 ${claimed.run.targetBranch} 的写入冲突`,
       ),
     );
-    const target = await this.resolveCurrentTarget(claimed);
+    const target = await this.resolveCurrentTarget(claimed, signal, onProcessGroupId);
     if (!target.branchExists || target.baseCommit === baseCommit) {
       this.publish(
         this.repository.recordRunEvent(
@@ -533,15 +563,18 @@ export class AgentWorker {
         resultCommit,
       },
       signal,
+      onProcessGroupId,
       "review",
     );
 
     if (reconciled.resultCommit !== resultCommit) {
+      signal.throwIfAborted();
       await this.options.gitService.moveWorktreeToCommit({
         worktreePath,
         expectedCommit: resultCommit,
         targetCommit: reconciled.resultCommit,
       });
+      signal.throwIfAborted();
     }
     this.publish(
       this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
@@ -593,6 +626,7 @@ export class AgentWorker {
     claimed: ClaimedTask,
     input: ReconcileCommitInput,
     signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
     stage: ConflictResolutionStage,
   ): Promise<{ reconciled: ReconcileCommitResult; agentSummary: string | null }> {
     if (!this.options.gitService) {
@@ -600,6 +634,7 @@ export class AgentWorker {
     }
     let agentSummary: string | null = null;
     try {
+      signal.throwIfAborted();
       const reconciled = await this.options.gitService.reconcileCommitConflicts(
         input,
         async ({ worktreePath: conflictWorktree, files }) => {
@@ -638,6 +673,7 @@ export class AgentWorker {
               worktreePath: conflictWorktree,
               outputSchemaPath: this.outputSchemaPath,
               signal,
+              onProcessGroupId,
             },
             (event) => this.handleConflictRunnerEvent(claimed, input.targetCommit, event, stage),
           );
@@ -664,6 +700,7 @@ export class AgentWorker {
           }
         },
       );
+      signal.throwIfAborted();
       return { reconciled, agentSummary };
     } catch (error) {
       if (error instanceof GitApplyError && error.code === "APPLY_CONFLICT") {
@@ -678,7 +715,11 @@ export class AgentWorker {
     }
   }
 
-  private async resolveCurrentTarget(claimed: ClaimedTask): Promise<{
+  private async resolveCurrentTarget(
+    claimed: ClaimedTask,
+    signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
+  ): Promise<{
     targetBranch: string;
     baseCommit: string;
     branchExists: boolean;
@@ -687,17 +728,24 @@ export class AgentWorker {
       throw new Error("真实执行器缺少 Git 服务配置");
     }
     if (claimed.projectRepositoryUrl) {
-      await this.options.gitService.fetchRepository(claimed.projectPath);
+      await this.options.gitService.fetchRepository(claimed.projectPath, {
+        signal,
+        onProcessGroupId,
+      });
       return this.options.gitService.resolveRemoteTargetBase({
         repositoryPath: claimed.projectPath,
         targetBranch: claimed.run.targetBranch,
         fallbackRef: claimed.projectDefaultBaseRef,
+        signal,
+        onProcessGroupId,
       });
     }
     return this.options.gitService.resolveTargetBase({
       repositoryPath: claimed.projectPath,
       targetBranch: claimed.run.targetBranch,
       fallbackRef: claimed.projectDefaultBaseRef,
+      signal,
+      onProcessGroupId,
     });
   }
 
@@ -730,6 +778,48 @@ export class AgentWorker {
   private isExecutionActive(runId: string, executionToken: string): boolean {
     const active = this.activeExecution;
     return active?.runId === runId && active.executionToken === executionToken && !active.cancelled;
+  }
+
+  private handleProcessGroupChange(active: ActiveExecution, processGroupId: number | null): void {
+    if (this.activeExecution !== active) {
+      if (processGroupId !== null) {
+        this.terminateProcessGroup(processGroupId);
+      }
+      return;
+    }
+    active.processGroupId = processGroupId;
+    if (active.cancelled) {
+      if (processGroupId !== null) {
+        this.terminateProcessGroup(processGroupId);
+      }
+      return;
+    }
+    try {
+      this.repository.setRunProcessGroupId(active.runId, active.executionToken, processGroupId);
+    } catch (error) {
+      if (this.isInvalidExecutionError(error)) {
+        active.cancelled = true;
+        this.abortExecution(active);
+        return;
+      }
+      if (processGroupId !== null) {
+        this.terminateProcessGroup(processGroupId);
+      }
+      throw error;
+    }
+  }
+
+  private abortExecution(active: ActiveExecution): void {
+    const processGroupId = active.processGroupId;
+    active.controller.abort();
+    active.handle?.cancel();
+    if (processGroupId !== null) {
+      this.terminateProcessGroup(processGroupId);
+    }
+  }
+
+  private terminateProcessGroup(processGroupId: number): void {
+    (this.options.terminateProcessGroup ?? terminateRunnerProcessGroup)(processGroupId);
   }
 
   private isInvalidExecutionError(error: unknown): boolean {

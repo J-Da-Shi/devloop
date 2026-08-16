@@ -33,7 +33,11 @@ export class FakeRunner implements AgentRunner {
   start(input: RunnerInput, emit: (event: RunnerEvent) => void): RunnerHandle {
     const controller = new AbortController();
     const relayAbort = () => controller.abort();
-    input.signal.addEventListener("abort", relayAbort, { once: true });
+    if (input.signal.aborted) {
+      controller.abort();
+    } else {
+      input.signal.addEventListener("abort", relayAbort, { once: true });
+    }
 
     const result = this.run(input, controller.signal, emit).finally(() => {
       input.signal.removeEventListener("abort", relayAbort);

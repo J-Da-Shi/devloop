@@ -207,6 +207,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     const started = new Promise<void>((resolve) => {
       executionStarted = resolve;
     });
+    const processGroupIds: Array<number | null> = [];
     const cancelHandle = runner.start(
       {
         runId: "cancel-run",
@@ -217,14 +218,17 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
+        onProcessGroupId: (processGroupId) => processGroupIds.push(processGroupId),
       },
       (event) => {
         if (event.message === "Codex 会话已启动") executionStarted();
       },
     );
     await started;
+    expect(processGroupIds[0]).toEqual(expect.any(Number));
     cancelHandle.cancel();
     await expect(cancelHandle.result).rejects.toMatchObject({ name: "AbortError" });
+    expect(processGroupIds.at(-1)).toBeNull();
 
     const progressRunner = new CodexRunner({
       executable: executablePath,

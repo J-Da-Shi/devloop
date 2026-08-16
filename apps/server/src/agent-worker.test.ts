@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { DevLoopRepository, openDatabase, type DatabaseHandle } from "@devloop/db";
 import type {
   ConflictResolutionWorkspace,
+  GitExecutionOptions,
   MoveWorktreeToCommitInput,
   ReconcileCommitInput,
   ReconcileCommitResult,
@@ -114,17 +115,31 @@ class ControlledGitService {
   readonly remoteBaseCommits: string[] = [];
   readonly localBaseCommits: string[] = [];
   reconciliationResult: ReconcileCommitResult | null = null;
+  readonly signals: AbortSignal[] = [];
 
-  async fetchRepository(repositoryPath: string): Promise<void> {
+  protected recordExecution(execution: GitExecutionOptions): void {
+    if (execution.signal) {
+      this.signals.push(execution.signal);
+    }
+  }
+
+  async fetchRepository(
+    repositoryPath: string,
+    execution: GitExecutionOptions = {},
+  ): Promise<void> {
     this.fetched.push(repositoryPath);
+    this.recordExecution(execution);
   }
 
   async resolveRemoteTargetBase(input: {
     repositoryPath: string;
     targetBranch: string;
     fallbackRef: string;
+    signal?: AbortSignal;
+    onProcessGroupId?: (processGroupId: number | null) => void;
   }): Promise<{ targetBranch: string; baseCommit: string; branchExists: boolean }> {
     const configuredCommit = this.remoteBaseCommits.shift();
+    this.recordExecution(input);
     return {
       targetBranch: input.targetBranch,
       baseCommit:
@@ -137,8 +152,15 @@ class ControlledGitService {
     repositoryPath: string;
     targetBranch: string;
     fallbackRef: string;
+    signal?: AbortSignal;
+    onProcessGroupId?: (processGroupId: number | null) => void;
   }): Promise<{ targetBranch: string; baseCommit: string; branchExists: boolean }> {
-    this.resolvedLocal.push(input);
+    this.recordExecution(input);
+    this.resolvedLocal.push({
+      repositoryPath: input.repositoryPath,
+      targetBranch: input.targetBranch,
+      fallbackRef: input.fallbackRef,
+    });
     return {
       targetBranch: input.targetBranch,
       baseCommit: this.localBaseCommits.shift() ?? "local-base-commit",
@@ -146,12 +168,21 @@ class ControlledGitService {
     };
   }
 
-  async createWorktree(input: (typeof this.created)[number]): Promise<void> {
-    this.created.push(input);
+  async createWorktree(input: (typeof this.created)[number] & GitExecutionOptions): Promise<void> {
+    this.recordExecution(input);
+    this.created.push({
+      repositoryPath: input.repositoryPath,
+      worktreePath: input.worktreePath,
+      branchName: input.branchName,
+      baseCommit: input.baseCommit,
+    });
   }
 
-  async commitWorktree(input: (typeof this.committed)[number]): Promise<string> {
-    this.committed.push(input);
+  async commitWorktree(
+    input: (typeof this.committed)[number] & GitExecutionOptions,
+  ): Promise<string> {
+    this.recordExecution(input);
+    this.committed.push({ worktreePath: input.worktreePath, message: input.message });
     return "result-commit";
   }
 
@@ -189,6 +220,77 @@ class ControlledGitService {
 
   async moveWorktreeToCommit(input: MoveWorktreeToCommitInput): Promise<void> {
     this.moved.push(input);
+  }
+}
+
+type BlockingGitStage = "fetch" | "worktree" | "commit";
+
+class BlockingGitService extends ControlledGitService {
+  readonly processGroupId = 424_242;
+  readonly started: Promise<void>;
+  signal: AbortSignal | null = null;
+  private markStarted!: () => void;
+
+  constructor(private readonly stage: BlockingGitStage) {
+    super();
+    this.started = new Promise((resolve) => {
+      this.markStarted = resolve;
+    });
+  }
+
+  override async fetchRepository(
+    repositoryPath: string,
+    execution: GitExecutionOptions = {},
+  ): Promise<void> {
+    await super.fetchRepository(repositoryPath, execution);
+    if (this.stage === "fetch") {
+      await this.block(execution);
+    }
+  }
+
+  override async createWorktree(
+    input: (typeof this.created)[number] & GitExecutionOptions,
+  ): Promise<void> {
+    await super.createWorktree(input);
+    if (this.stage === "worktree") {
+      await this.block(input);
+    }
+  }
+
+  override async commitWorktree(
+    input: (typeof this.committed)[number] & GitExecutionOptions,
+  ): Promise<string> {
+    if (this.stage !== "commit") {
+      return super.commitWorktree(input);
+    }
+    this.recordExecution(input);
+    this.committed.push({ worktreePath: input.worktreePath, message: input.message });
+    await this.block(input);
+    return "result-commit";
+  }
+
+  private async block(execution: GitExecutionOptions): Promise<void> {
+    const signal = execution.signal;
+    if (!signal) {
+      throw new Error("测试 Git 阶段缺少 AbortSignal");
+    }
+    this.signal = signal;
+    execution.onProcessGroupId?.(this.processGroupId);
+    this.markStarted();
+    let abort!: () => void;
+    try {
+      await new Promise<void>((_resolve, reject) => {
+        abort = () => reject(new DOMException("Git 阶段已取消", "AbortError"));
+        if (signal.aborted) {
+          abort();
+        } else {
+          signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+    } finally {
+      signal.removeEventListener("abort", abort);
+      execution.onProcessGroupId?.(null);
+    }
   }
 }
 
@@ -426,6 +528,94 @@ describe("AgentWorker", () => {
     runner.succeedNext();
     await waitForTaskStatus(repository, second.id, "REVIEW");
     expect(repository.getTask(first.id)?.status).toBe("CANCELLED");
+  });
+
+  it.each<BlockingGitStage>(["fetch", "worktree", "commit"])(
+    "取消会中止 Codex 执行的 %s 阶段并终止当前进程组",
+    async (stage) => {
+      const repository = createRepository();
+      const project = repository.createProject({
+        name: `取消 ${stage} 测试项目`,
+        repositoryUrl: "git@example.com:team/cancellable-worker.git",
+        repositoryPath: `/tmp/devloop-agent-worker-cancel-${stage}`,
+        defaultBaseRef: "main",
+        headCommit: "base-commit",
+      }).value;
+      const task = createReadyTask(repository, project.id, `取消 ${stage}`, 100);
+      const runner = new ControlledRunner("codex");
+      const gitService = new BlockingGitService(stage);
+      const terminatedProcessGroups: number[] = [];
+      const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+        claimDelayMs: 0,
+        gitService,
+        worktreesPath: "/tmp/devloop-worker-worktrees",
+        terminateProcessGroup: (processGroupId) => terminatedProcessGroups.push(processGroupId),
+      });
+
+      expect(worker.pullNextTask()).toBe(true);
+      if (stage === "commit") {
+        await waitFor(() => runner.inputs.length === 1);
+        runner.succeedNext();
+      }
+      await gitService.started;
+
+      const running = repository.getTask(task.id);
+      const runId = running?.latestRunId;
+      expect(running?.status).toBe("RUNNING");
+      expect(runId).toBeTruthy();
+      expect(repository.getRunProcessGroupId(runId!)).toBe(gitService.processGroupId);
+      expect(gitService.signals.length).toBeGreaterThan(0);
+      expect(gitService.signals.every((signal) => signal === gitService.signal)).toBe(true);
+      if (stage === "commit") {
+        expect(runner.inputs[0]?.signal).toBe(gitService.signal);
+      }
+
+      worker.cancelTask(task.id, "local-desktop", running!.version, randomUUID());
+
+      await waitForTaskStatus(repository, task.id, "CANCELLED");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(gitService.signal?.aborted).toBe(true);
+      expect(terminatedProcessGroups).toContain(gitService.processGroupId);
+      expect(repository.getRunProcessGroupId(runId!)).toBeNull();
+    },
+  );
+
+  it("服务恢复时终止持久化的遗留进程组", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "进程组恢复测试项目",
+      repositoryUrl: "git@example.com:team/process-group-recovery.git",
+      repositoryPath: "/tmp/devloop-process-group-recovery",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const task = createReadyTask(repository, project.id, "恢复遗留执行", 100);
+    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(claimed).not.toBeNull();
+    const processGroupId = 515_151;
+    repository.setRunProcessGroupId(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      processGroupId,
+    );
+    const terminatedProcessGroups: number[] = [];
+    const worker = new AgentWorker(
+      repository,
+      new ControlledRunner("codex"),
+      new DomainEventBus(),
+      "/tmp/schema.json",
+      {
+        claimDelayMs: 0,
+        terminateProcessGroup: (id) => terminatedProcessGroups.push(id),
+      },
+    );
+
+    worker.start();
+    expect(terminatedProcessGroups).toEqual([processGroupId]);
+    expect(repository.getTask(task.id)?.status).toBe("FAILED");
+    expect(repository.getRunProcessGroupId(claimed!.value.run.id)).toBeNull();
+
+    await worker.stop();
   });
 
   it("审核驳回后把 Revision 反馈传给下一次执行器", async () => {

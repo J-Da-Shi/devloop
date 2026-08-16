@@ -2,6 +2,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { RunnerCapabilities } from "@devloop/shared";
 import { execa } from "execa";
+import { terminateProcessGroup } from "./process-group.js";
 import type { AgentRunner, RunnerEvent, RunnerHandle, RunnerInput, RunnerResult } from "./types.js";
 
 export interface CodexRunnerOptions {
@@ -495,10 +496,13 @@ export class CodexRunner implements AgentRunner {
     if (!input.outputSchemaPath) {
       throw new Error("CodexRunner 需要 AgentResult Schema");
     }
+    signal.throwIfAborted();
     const outputPath = this.getOutputPath(input);
     const repairOutputPath = join(dirname(outputPath), `${input.runId}.repair.json`);
     const outputSchema = await readFile(input.outputSchemaPath, "utf8");
+    signal.throwIfAborted();
     await mkdir(dirname(outputPath), { recursive: true });
+    signal.throwIfAborted();
     try {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
@@ -560,6 +564,7 @@ export class CodexRunner implements AgentRunner {
     if (!worktreePath) {
       throw new Error("CodexRunner 需要独立 Worktree");
     }
+    signal.throwIfAborted();
     let lastCliError: string | null = null;
     const subprocess = execa(
       this.executable,
@@ -577,11 +582,28 @@ export class CodexRunner implements AgentRunner {
         env: buildEnvironment(),
         extendEnv: false,
         reject: false,
+        detached: true,
         cancelSignal: signal,
         forceKillAfterDelay: 5_000,
         maxBuffer: 10 * 1024 * 1024,
       },
     );
+    const processGroupId = subprocess.pid ?? null;
+    const terminate = () => {
+      if (processGroupId !== null) {
+        terminateProcessGroup(processGroupId);
+      }
+    };
+    if (processGroupId !== null) {
+      try {
+        input.onProcessGroupId?.(processGroupId);
+      } catch (error) {
+        terminate();
+        void subprocess.catch(() => undefined);
+        throw error;
+      }
+      signal.addEventListener("abort", terminate, { once: true });
+    }
 
     let pending = "";
     let stalled = false;
@@ -592,6 +614,7 @@ export class CodexRunner implements AgentRunner {
       }
       stallTimer = setTimeout(() => {
         stalled = true;
+        terminate();
         subprocess.kill("SIGTERM", new Error("Codex CLI stopped producing output"));
       }, this.stallTimeoutMs);
       stallTimer.unref();
@@ -617,6 +640,10 @@ export class CodexRunner implements AgentRunner {
       } finally {
         if (stallTimer) {
           clearTimeout(stallTimer);
+        }
+        signal.removeEventListener("abort", terminate);
+        if (processGroupId !== null) {
+          input.onProcessGroupId?.(null);
         }
       }
     })();

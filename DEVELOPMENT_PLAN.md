@@ -279,7 +279,7 @@ Codex 修改 Worktree
 
 ### 6.5 取消与清理
 
-- 取消执行会向 Codex CLI 主进程发送 SIGTERM，5 秒后 SIGKILL 兜底。进程组级取消（保证 Codex 拉起的子进程与工具调用一并退出）尚未接入。
+- 取消执行会中止当前阶段的统一 `AbortSignal`，向 Git/Codex 独立进程组发送 SIGTERM，并在 5 秒后以 SIGKILL 兜底，保证其子进程和工具调用一并退出。
 - 执行令牌立即轮换，迟到结果不能覆盖任务状态。
 - Worktree、运行事件和未提交修改保留供诊断，人工确认后由显式动作触发清理，不做定时 GC。
 - 非执行中任务只做软删除。
@@ -334,7 +334,7 @@ Prompt 通过 stdin 送入。
 - `cwd`：Run 对应的 Worktree。
 - `env`：显式白名单（`codex-runner.ts:43-64`），只放行 `HOME / PATH / CODEX_HOME / OPENAI_API_KEY / CODEX_API_KEY / CODEX_ACCESS_TOKEN / *_PROXY / SSL_*`。
 - 超时：`DEVLOOP_CODEX_TIMEOUT_MS`（默认 30 分钟，`runtime-config.ts:71`）。
-- 取消：`AbortController` → `cancelSignal`；当前只 SIGTERM 到 Codex 主进程，`taskRuns.processGroupId` 列存在但写入 `null`（`repositories.ts:815`），进程组级取消尚未接入。
+- 取消：同一个 `AbortController` 覆盖远程 fetch、基线解析、Worktree 创建、Codex CLI 和结果 Commit。Git/Codex 子进程以独立进程组启动，当前 `processGroupId` 动态写入 `taskRuns`；用户取消、Worker 停止和服务重启恢复都会先终止整棵进程树，并在退出后清空登记。
 
 Codex 的 stdout 逐行解析为 JSON 事件，映射为 `RunnerEvent` 后经 `emit`（`agent-worker.ts:271-292`）驱动 `setRunPhase`，把 Run 依次推进到 PREPARING → AGENT_RUNNING → VERIFYING → PREPARING_REVIEW。
 
@@ -376,7 +376,6 @@ Codex 的 stdout 逐行解析为 JSON 事件，映射为 `RunnerEvent` 后经 `e
 以下项在代码中可见并已确认为"当前不做"或"待接入"，记录在此以避免误读文档：
 
 - **Worktree 清理**：`agent-worker.prepareWorkspace` 只创建 `data/worktrees/<runId>`。当前代码中没有任何路径调用 `git worktree remove` 或 `prune`。等"人工 dismiss"路径接入后由该动作触发清理。
-- **`taskRuns.processGroupId`**：Schema 列存在但始终写入 `null`。进程组级取消尚未实现。
 - **`packages/workflow`**：XState 状态机作为规格文档存在，不被 `apps/server` 引用；运行时状态机在 `packages/shared/src/transitions.ts` 与 Repository 中。
 - **`autoQueueTask` 触发条件**：以 `priority === 100`（`repositories.ts:666`）作为自动确认信号，属于当前的隐式约定。
 

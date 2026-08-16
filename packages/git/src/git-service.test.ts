@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -52,6 +52,42 @@ afterEach(async () => {
 });
 
 describe("GitService Worktree", () => {
+  it("AbortSignal 会终止 Git 进程组并返回 AbortError", async () => {
+    const root = await mkdtemp(join(tmpdir(), "devloop-git-cancel-"));
+    temporaryDirectories.push(root);
+    const executablePath = join(root, "hanging-git.mjs");
+    await writeFile(
+      executablePath,
+      `#!/usr/bin/env node
+setInterval(() => undefined, 1000);
+await new Promise(() => undefined);
+`,
+    );
+    await chmod(executablePath, 0o755);
+    const controller = new AbortController();
+    const processGroupIds: Array<number | null> = [];
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const service = new GitService(executablePath);
+
+    const fetching = service.fetchRepository(root, {
+      signal: controller.signal,
+      onProcessGroupId: (processGroupId) => {
+        processGroupIds.push(processGroupId);
+        if (processGroupId !== null) markStarted();
+      },
+    });
+    await started;
+    expect(processGroupIds[0]).toEqual(expect.any(Number));
+
+    controller.abort();
+
+    await expect(fetching).rejects.toMatchObject({ name: "AbortError" });
+    expect(processGroupIds.at(-1)).toBeNull();
+  });
+
   it("只接受处于分支上的 Git 仓库根目录", async () => {
     const root = await mkdtemp(join(tmpdir(), "devloop-git-inspect-"));
     temporaryDirectories.push(root);

@@ -1043,6 +1043,27 @@ export class DevLoopRepository {
     })();
   }
 
+  setRunProcessGroupId(runId: string, executionToken: string, processGroupId: number | null): void {
+    if (processGroupId !== null && (!Number.isSafeInteger(processGroupId) || processGroupId <= 0)) {
+      throw new Error("进程组 ID 无效");
+    }
+    const row = this.handle.db
+      .update(taskRuns)
+      .set({ processGroupId })
+      .where(
+        and(
+          eq(taskRuns.id, runId),
+          eq(taskRuns.executionToken, executionToken),
+          isNull(taskRuns.finishedAt),
+        ),
+      )
+      .returning({ id: taskRuns.id })
+      .get();
+    if (!row) {
+      throw new Error("当前 Run 的执行令牌已经失效");
+    }
+  }
+
   setRunBaseCommit(
     runId: string,
     executionToken: string,
@@ -1162,6 +1183,7 @@ export class DevLoopRepository {
           status: "SUCCEEDED",
           summary,
           resultCommit: resultCommit ?? currentRun.baseCommit,
+          processGroupId: null,
           finishedAt: timestamp,
         })
         .where(
@@ -1244,7 +1266,12 @@ export class DevLoopRepository {
       const timestamp = now();
       const runRow = this.handle.db
         .update(taskRuns)
-        .set({ status: "FAILED", summary: errorMessage, finishedAt: timestamp })
+        .set({
+          status: "FAILED",
+          summary: errorMessage,
+          processGroupId: null,
+          finishedAt: timestamp,
+        })
         .where(
           and(
             eq(taskRuns.id, runId),
@@ -1321,7 +1348,12 @@ export class DevLoopRepository {
       const timestamp = now();
       const runRow = this.handle.db
         .update(taskRuns)
-        .set({ status: "BLOCKED", summary: reason, finishedAt: timestamp })
+        .set({
+          status: "BLOCKED",
+          summary: reason,
+          processGroupId: null,
+          finishedAt: timestamp,
+        })
         .where(
           and(
             eq(taskRuns.id, runId),
@@ -1409,6 +1441,7 @@ export class DevLoopRepository {
           status: "CANCELLED",
           summary: "执行已由用户取消，Worktree 和运行日志已保留。",
           executionToken: randomUUID(),
+          processGroupId: null,
           finishedAt: timestamp,
         })
         .where(
@@ -1898,6 +1931,15 @@ export class DevLoopRepository {
       .orderBy(desc(reviewDecisions.createdAt))
       .get();
     return row ? mapReviewDecision(row) : null;
+  }
+
+  getRunProcessGroupId(runId: string): number | null {
+    const row = this.handle.db
+      .select({ processGroupId: taskRuns.processGroupId })
+      .from(taskRuns)
+      .where(eq(taskRuns.id, runId))
+      .get();
+    return row?.processGroupId ?? null;
   }
 
   listRuns(limit = 50): TaskRun[] {

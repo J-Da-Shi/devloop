@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,6 +27,11 @@ export interface GitCapabilities {
   error: string | null;
 }
 
+export interface GitExecutionOptions {
+  signal?: AbortSignal;
+  onProcessGroupId?: (processGroupId: number | null) => void;
+}
+
 export interface CloneRepositoryInput {
   repositoryUrl: string;
   destinationPath: string;
@@ -39,7 +45,7 @@ export interface ClonedRepositoryInfo {
   headCommit: string;
 }
 
-export interface ResolveRemoteTargetBaseInput {
+export interface ResolveRemoteTargetBaseInput extends GitExecutionOptions {
   repositoryPath: string;
   targetBranch: string;
   fallbackRef: string;
@@ -52,14 +58,14 @@ export interface PushResultInput {
   resultCommit: string;
 }
 
-export interface CreateWorktreeInput {
+export interface CreateWorktreeInput extends GitExecutionOptions {
   repositoryPath: string;
   worktreePath: string;
   branchName: string;
   baseCommit: string;
 }
 
-export interface CommitWorktreeInput {
+export interface CommitWorktreeInput extends GitExecutionOptions {
   worktreePath: string;
   message: string;
 }
@@ -132,7 +138,7 @@ export type {
   RunFilePatch,
 } from "@devloop/shared";
 
-export interface ResolveTargetBaseInput {
+export interface ResolveTargetBaseInput extends GitExecutionOptions {
   repositoryPath: string;
   targetBranch: string;
   fallbackRef: string;
@@ -183,6 +189,40 @@ const pathExists = async (path: string): Promise<boolean> => {
     }
     throw error;
   }
+};
+
+const terminateProcessGroup = (processGroupId: number): void => {
+  if (
+    !Number.isSafeInteger(processGroupId) ||
+    processGroupId <= 0 ||
+    processGroupId === process.pid
+  ) {
+    return;
+  }
+  if (process.platform === "win32") {
+    const taskkill = spawn("taskkill", ["/pid", String(processGroupId), "/T", "/F"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    taskkill.on("error", () => undefined);
+    taskkill.unref();
+    return;
+  }
+
+  try {
+    process.kill(-processGroupId, "SIGTERM");
+  } catch {
+    return;
+  }
+  const forceKillTimer = setTimeout(() => {
+    try {
+      process.kill(-processGroupId, "SIGKILL");
+    } catch {
+      // The process group has already exited.
+    }
+  }, 5_000);
+  forceKillTimer.unref();
 };
 
 interface NumstatEntry {
@@ -315,6 +355,58 @@ const parseNameStatusZ = (stdout: string): NameStatusEntry[] => {
 export class GitService {
   public constructor(private readonly executable = "git") {}
 
+  private async executeForRun(
+    argumentsList: string[],
+    execution: GitExecutionOptions,
+    options: { env?: NodeJS.ProcessEnv; reject?: boolean } = {},
+  ) {
+    execution.signal?.throwIfAborted();
+    const managed = Boolean(execution.signal || execution.onProcessGroupId);
+    const subprocess = execa(this.executable, argumentsList, {
+      ...options,
+      ...(managed ? { detached: true } : {}),
+      ...(execution.signal
+        ? {
+            cancelSignal: execution.signal,
+            forceKillAfterDelay: 5_000,
+          }
+        : {}),
+    });
+    const processGroupId = managed ? (subprocess.pid ?? null) : null;
+    const terminate = () => {
+      if (processGroupId !== null) {
+        terminateProcessGroup(processGroupId);
+      }
+    };
+    if (processGroupId !== null) {
+      try {
+        execution.onProcessGroupId?.(processGroupId);
+      } catch (error) {
+        terminate();
+        void subprocess.catch(() => undefined);
+        throw error;
+      }
+      execution.signal?.addEventListener("abort", terminate, { once: true });
+    }
+    try {
+      const result = await subprocess;
+      if (result.isCanceled) {
+        throw new DOMException("Git execution cancelled", "AbortError");
+      }
+      return result;
+    } catch (error) {
+      if (execution.signal?.aborted) {
+        throw new DOMException("Git execution cancelled", "AbortError");
+      }
+      throw error;
+    } finally {
+      execution.signal?.removeEventListener("abort", terminate);
+      if (processGroupId !== null) {
+        execution.onProcessGroupId?.(null);
+      }
+    }
+  }
+
   async detectCapabilities(): Promise<GitCapabilities> {
     try {
       const [{ stdout: version }, { stdout: executablePath }] = await Promise.all([
@@ -428,7 +520,7 @@ export class GitService {
     return `${user}${match.groups.host.toLowerCase()}:${path}`;
   }
 
-  async validateBranchName(branch: string): Promise<string> {
+  async validateBranchName(branch: string, execution: GitExecutionOptions = {}): Promise<string> {
     const candidate = branch.trim();
     if (candidate === "HEAD" || candidate.startsWith("refs/")) {
       throw new GitApplyError(
@@ -436,9 +528,11 @@ export class GitService {
         "分支只填写实际分支名，不要使用 HEAD 或 refs/heads/ 前缀。",
       );
     }
-    const result = await execa(this.executable, ["check-ref-format", "--branch", candidate], {
-      reject: false,
-    });
+    const result = await this.executeForRun(
+      ["check-ref-format", "--branch", candidate],
+      execution,
+      { reject: false },
+    );
     if (result.exitCode !== 0) {
       throw new GitApplyError(
         "INVALID_BRANCH",
@@ -497,12 +591,17 @@ export class GitService {
     await rm(repositoryPath, { recursive: true, force: true });
   }
 
-  async fetchRepository(repositoryPath: string): Promise<void> {
+  async fetchRepository(
+    repositoryPath: string,
+    execution: GitExecutionOptions = {},
+  ): Promise<void> {
+    execution.signal?.throwIfAborted();
     const resolvedPath = await realpath(repositoryPath);
-    const fetch = await execa(this.executable, ["-C", resolvedPath, "fetch", "--prune", "origin"], {
-      env: this.nonInteractiveEnvironment(),
-      reject: false,
-    });
+    const fetch = await this.executeForRun(
+      ["-C", resolvedPath, "fetch", "--prune", "origin"],
+      execution,
+      { env: this.nonInteractiveEnvironment(), reject: false },
+    );
     if (fetch.exitCode !== 0) {
       throw new GitApplyError(
         "REMOTE_ACCESS_FAILED",
@@ -512,14 +611,15 @@ export class GitService {
   }
 
   async resolveRemoteTargetBase(input: ResolveRemoteTargetBaseInput): Promise<ResolvedTargetBase> {
+    input.signal?.throwIfAborted();
     const repositoryPath = await realpath(input.repositoryPath);
-    const targetBranch = await this.validateBranchName(input.targetBranch);
-    const fallbackRef = await this.validateBranchName(input.fallbackRef);
-    const branchCommit = await this.resolveRemoteBranch(repositoryPath, targetBranch);
+    const targetBranch = await this.validateBranchName(input.targetBranch, input);
+    const fallbackRef = await this.validateBranchName(input.fallbackRef, input);
+    const branchCommit = await this.resolveRemoteBranch(repositoryPath, targetBranch, input);
     if (branchCommit) {
       return { targetBranch, baseCommit: branchCommit, branchExists: true };
     }
-    const fallbackCommit = await this.resolveRemoteBranch(repositoryPath, fallbackRef);
+    const fallbackCommit = await this.resolveRemoteBranch(repositoryPath, fallbackRef, input);
     if (!fallbackCommit) {
       throw new GitApplyError(
         "BASE_COMMIT_MISSING",
@@ -620,16 +720,17 @@ export class GitService {
   }
 
   async resolveTargetBase(input: ResolveTargetBaseInput): Promise<ResolvedTargetBase> {
+    input.signal?.throwIfAborted();
     const repositoryPath = await realpath(input.repositoryPath);
-    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
-    const branchCommit = await this.resolveLocalBranch(repositoryPath, targetBranch);
+    const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch, input);
+    const branchCommit = await this.resolveLocalBranch(repositoryPath, targetBranch, input);
     if (branchCommit) {
       return { targetBranch, baseCommit: branchCommit, branchExists: true };
     }
 
-    const fallback = await execa(
-      this.executable,
+    const fallback = await this.executeForRun(
       ["-C", repositoryPath, "rev-parse", "--verify", `${input.fallbackRef}^{commit}`],
+      input,
       { reject: false },
     );
     if (fallback.exitCode !== 0) {
@@ -646,37 +747,40 @@ export class GitService {
   }
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
+    input.signal?.throwIfAborted();
     const repositoryPath = await realpath(input.repositoryPath);
+    input.signal?.throwIfAborted();
     await mkdir(dirname(input.worktreePath), { recursive: true });
+    input.signal?.throwIfAborted();
     if (await pathExists(input.worktreePath)) {
       throw new Error("目标 Worktree 路径已经存在");
     }
 
-    await execa(this.executable, [
-      "-C",
-      repositoryPath,
-      "worktree",
-      "add",
-      "-b",
-      input.branchName,
-      input.worktreePath,
-      input.baseCommit,
-    ]);
+    await this.executeForRun(
+      [
+        "-C",
+        repositoryPath,
+        "worktree",
+        "add",
+        "-b",
+        input.branchName,
+        input.worktreePath,
+        input.baseCommit,
+      ],
+      input,
+    );
   }
 
   async commitWorktree(input: CommitWorktreeInput): Promise<string> {
+    input.signal?.throwIfAborted();
     const worktreePath = await realpath(input.worktreePath);
-    const { stdout: status } = await execa(this.executable, [
-      "-C",
-      worktreePath,
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-    ]);
+    const { stdout: status } = await this.executeForRun(
+      ["-C", worktreePath, "status", "--porcelain=v1", "--untracked-files=all"],
+      input,
+    );
     if (status.trim()) {
-      await execa(this.executable, ["-C", worktreePath, "add", "--all"]);
-      await execa(
-        this.executable,
+      await this.executeForRun(["-C", worktreePath, "add", "--all"], input);
+      await this.executeForRun(
         [
           "-c",
           "user.name=DevLoop",
@@ -690,16 +794,15 @@ export class GitService {
           "-m",
           input.message,
         ],
+        input,
         { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
       );
     }
 
-    const { stdout: resultCommit } = await execa(this.executable, [
-      "-C",
-      worktreePath,
-      "rev-parse",
-      "HEAD",
-    ]);
+    const { stdout: resultCommit } = await this.executeForRun(
+      ["-C", worktreePath, "rev-parse", "HEAD"],
+      input,
+    );
     return resultCommit.trim();
   }
 
@@ -1801,14 +1904,16 @@ export class GitService {
     return stdout.trim().length > 0;
   }
 
-  private async normalizeBranchName(repositoryPath: string, branch: string): Promise<string> {
+  private async normalizeBranchName(
+    repositoryPath: string,
+    branch: string,
+    execution: GitExecutionOptions = {},
+  ): Promise<string> {
     if (branch === "HEAD") {
-      const { stdout } = await execa(this.executable, [
-        "-C",
-        repositoryPath,
-        "branch",
-        "--show-current",
-      ]);
+      const { stdout } = await this.executeForRun(
+        ["-C", repositoryPath, "branch", "--show-current"],
+        execution,
+      );
       const currentBranch = stdout.trim();
       if (!currentBranch) {
         throw new GitApplyError(
@@ -1824,9 +1929,9 @@ export class GitService {
         "目标分支只填写分支名，不要包含 refs/heads/ 前缀。",
       );
     }
-    const result = await execa(
-      this.executable,
+    const result = await this.executeForRun(
       ["-C", repositoryPath, "check-ref-format", "--branch", branch],
+      execution,
       { reject: false },
     );
     if (result.exitCode !== 0) {
@@ -1838,10 +1943,14 @@ export class GitService {
     return branch;
   }
 
-  private async resolveLocalBranch(repositoryPath: string, branch: string): Promise<string | null> {
-    const result = await execa(
-      this.executable,
+  private async resolveLocalBranch(
+    repositoryPath: string,
+    branch: string,
+    execution: GitExecutionOptions = {},
+  ): Promise<string | null> {
+    const result = await this.executeForRun(
       ["-C", repositoryPath, "rev-parse", "--verify", `refs/heads/${branch}^{commit}`],
+      execution,
       { reject: false },
     );
     return result.exitCode === 0 ? result.stdout.trim() : null;
@@ -1850,10 +1959,11 @@ export class GitService {
   private async resolveRemoteBranch(
     repositoryPath: string,
     branch: string,
+    execution: GitExecutionOptions = {},
   ): Promise<string | null> {
-    const result = await execa(
-      this.executable,
+    const result = await this.executeForRun(
       ["-C", repositoryPath, "rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`],
+      execution,
       { reject: false },
     );
     return result.exitCode === 0 ? result.stdout.trim() : null;
