@@ -7,6 +7,7 @@ interface RunEventListProps {
   streamKey: string;
   compact?: boolean;
   label?: string;
+  title?: string;
 }
 
 export function RunEventList({
@@ -14,6 +15,7 @@ export function RunEventList({
   streamKey,
   compact = false,
   label = "执行日志",
+  title,
 }: RunEventListProps) {
   const listRef = useRef<HTMLOListElement>(null);
   const streamKeyRef = useRef(streamKey);
@@ -34,7 +36,7 @@ export function RunEventList({
     }
   }, [latestEventId, streamKey]);
 
-  return (
+  const eventList = (
     <ol
       ref={listRef}
       className={`event-list event-log-scroll${compact ? " compact" : ""}`}
@@ -67,5 +69,19 @@ export function RunEventList({
         </li>
       ))}
     </ol>
+  );
+
+  if (!title) {
+    return eventList;
+  }
+
+  return (
+    <section className={`event-log-panel${compact ? " compact" : ""}`} aria-label={title}>
+      <header className="event-log-heading">
+        <h4>{title}</h4>
+        <span>{events.length} 条</span>
+      </header>
+      {eventList}
+    </section>
   );
 }
