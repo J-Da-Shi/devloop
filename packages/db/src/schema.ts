@@ -111,6 +111,7 @@ export const taskRuns = sqliteTable(
     pushedAt: text("pushed_at"),
     pushedCommit: text("pushed_commit"),
     runInputHash: text("run_input_hash").notNull(),
+    skillSnapshotJson: text("skill_snapshot_json"),
     summary: text("summary"),
     startedAt: text("started_at").notNull(),
     finishedAt: text("finished_at"),

@@ -244,6 +244,17 @@ export class AgentWorker {
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
+      this.publish(
+        this.repository.setRunSkillSnapshot(
+          claimed.run.id,
+          claimed.run.executionToken,
+          skills.map((skill) => ({
+            skillId: skill.id,
+            version: skill.version,
+            contentHash: skill.contentHash,
+          })),
+        ),
+      );
       const workspace =
         this.runner.id === "codex"
           ? await this.prepareWorkspace(claimed, skills, controller.signal, onProcessGroupId)

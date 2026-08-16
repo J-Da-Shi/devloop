@@ -12,6 +12,7 @@ import {
   type RunPublishResult,
   type RunEvent,
   type RunStatus,
+  type RunSkillSnapshot,
   type Skill,
   type SkillVersion,
   type Task,
@@ -58,6 +59,51 @@ const parseStringArray = (value: string): string[] => {
   }
   return parsed;
 };
+
+const parseRunSkillSnapshot = (value: string | null): RunSkillSnapshot[] | null => {
+  if (value === null) {
+    return null;
+  }
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("数据库中的 Run Skill 快照格式无效");
+  }
+  const snapshot = parsed.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("数据库中的 Run Skill 快照格式无效");
+    }
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.skillId !== "string" ||
+      !record.skillId ||
+      typeof record.version !== "number" ||
+      !Number.isSafeInteger(record.version) ||
+      record.version <= 0 ||
+      typeof record.contentHash !== "string" ||
+      !record.contentHash
+    ) {
+      throw new Error("数据库中的 Run Skill 快照格式无效");
+    }
+    return {
+      skillId: record.skillId,
+      version: record.version,
+      contentHash: record.contentHash,
+    };
+  });
+  if (new Set(snapshot.map((skill) => skill.skillId)).size !== snapshot.length) {
+    throw new Error("数据库中的 Run Skill 快照包含重复 Skill");
+  }
+  return snapshot;
+};
+
+const buildRunInputHash = (input: {
+  taskRevisionId: string;
+  targetBranch: string;
+  baseCommit: string | null;
+  runner: string;
+  specHash: string;
+  skillSnapshot: RunSkillSnapshot[];
+}): string => hash(JSON.stringify(input));
 
 interface TaskRevisionSpecSnapshot {
   title: string;
@@ -179,6 +225,7 @@ const mapRun = (row: TaskRunRow): TaskRun => ({
   executionToken: row.executionToken,
   pushedAt: row.pushedAt,
   pushedCommit: row.pushedCommit,
+  skillSnapshot: parseRunSkillSnapshot(row.skillSnapshotJson),
   summary: row.summary,
   startedAt: row.startedAt,
   finishedAt: row.finishedAt,
@@ -923,15 +970,14 @@ export class DevLoopRepository {
       const runId = randomUUID();
       const executionToken = randomUUID();
       const timestamp = now();
-      const runInputHash = hash(
-        JSON.stringify({
-          taskRevisionId: revision.id,
-          targetBranch: revision.targetBranch,
-          baseCommit,
-          runner,
-          specHash: revision.specHash,
-        }),
-      );
+      const runInputHash = buildRunInputHash({
+        taskRevisionId: revision.id,
+        targetBranch: revision.targetBranch,
+        baseCommit,
+        runner,
+        specHash: revision.specHash,
+        skillSnapshot: [],
+      });
       const runRow = this.handle.db
         .insert(taskRuns)
         .values({
@@ -951,6 +997,7 @@ export class DevLoopRepository {
           pushedAt: null,
           pushedCommit: null,
           runInputHash,
+          skillSnapshotJson: null,
           summary: null,
           startedAt: timestamp,
           finishedAt: null,
@@ -1006,6 +1053,73 @@ export class DevLoopRepository {
         events: [taskEvent, runEvent],
         replayed: false,
       };
+    })();
+  }
+
+  setRunSkillSnapshot(
+    runId: string,
+    executionToken: string,
+    skillSnapshot: RunSkillSnapshot[],
+  ): EventfulResult<TaskRun> {
+    return this.handle.sqlite.transaction(() => {
+      const current = this.requireRunRow(runId);
+      if (current.executionToken !== executionToken || current.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失去 Skill 快照所有权");
+      }
+      if (current.skillSnapshotJson !== null) {
+        throw new Error("当前 Run 的 Skill 快照已经固定");
+      }
+      const normalizedSnapshot = parseRunSkillSnapshot(JSON.stringify(skillSnapshot));
+      if (normalizedSnapshot === null) {
+        throw new Error("Run Skill 快照不能为空");
+      }
+      const revision = this.handle.db
+        .select()
+        .from(taskRevisions)
+        .where(eq(taskRevisions.id, current.taskRevisionId))
+        .get();
+      if (!revision) {
+        throw new Error("执行记录关联的 Revision 不存在");
+      }
+      const runInputHash = buildRunInputHash({
+        taskRevisionId: revision.id,
+        targetBranch: current.targetBranch,
+        baseCommit: current.baseCommit,
+        runner: current.runner,
+        specHash: revision.specHash,
+        skillSnapshot: normalizedSnapshot,
+      });
+      const row = this.handle.db
+        .update(taskRuns)
+        .set({
+          skillSnapshotJson: JSON.stringify(normalizedSnapshot),
+          runInputHash,
+        })
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.skillSnapshotJson),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) {
+        throw new Error("当前 Run 的执行令牌已经失去 Skill 快照所有权");
+      }
+      this.insertRunEvent(
+        runId,
+        "run.skill_snapshot_recorded",
+        `已固定 ${normalizedSnapshot.length} 个 Skill 执行快照`,
+        { skills: normalizedSnapshot },
+      );
+      const event = this.insertDomainEvent("run", runId, "run.step_changed", {
+        runId,
+        status: row.status,
+        message: "Skill 执行快照已固定",
+      });
+      return { value: mapRun(row), events: [event], replayed: false };
     })();
   }
 
@@ -1082,15 +1196,14 @@ export class DevLoopRepository {
       if (!revision) {
         throw new Error("执行记录关联的 Revision 不存在");
       }
-      const runInputHash = hash(
-        JSON.stringify({
-          taskRevisionId: revision.id,
-          targetBranch: input.targetBranch,
-          baseCommit: input.baseCommit,
-          runner: current.runner,
-          specHash: revision.specHash,
-        }),
-      );
+      const runInputHash = buildRunInputHash({
+        taskRevisionId: revision.id,
+        targetBranch: input.targetBranch,
+        baseCommit: input.baseCommit,
+        runner: current.runner,
+        specHash: revision.specHash,
+        skillSnapshot: parseRunSkillSnapshot(current.skillSnapshotJson) ?? [],
+      });
       const row = this.handle.db
         .update(taskRuns)
         .set({ targetBranch: input.targetBranch, baseCommit: input.baseCommit, runInputHash })

@@ -43,6 +43,13 @@
       "when": 1786880372762,
       "tag": "0005_mighty_reavers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786895848832,
+      "tag": "0006_flippant_tana_nile",
+      "breakpoints": true
     }
   ]
 }

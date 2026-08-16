@@ -1,0 +1,1 @@
+ALTER TABLE `task_runs` ADD `skill_snapshot_json` text;

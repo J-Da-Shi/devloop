@@ -103,6 +103,12 @@ export interface ReviewDecision {
   createdAt: string;
 }
 
+export interface RunSkillSnapshot {
+  skillId: string;
+  version: number;
+  contentHash: string;
+}
+
 export interface TaskRun {
   id: string;
   taskId: string;
@@ -117,6 +123,7 @@ export interface TaskRun {
   executionToken: string;
   pushedAt: string | null;
   pushedCommit: string | null;
+  skillSnapshot: RunSkillSnapshot[] | null;
   summary: string | null;
   startedAt: string;
   finishedAt: string | null;

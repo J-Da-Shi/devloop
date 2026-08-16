@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { RunnerCapabilities } from "@devloop/shared";
 import { execa } from "execa";
 import { terminateProcessGroup } from "./process-group.js";
+import { buildSkillsPrompt } from "./skill-prompt.js";
 import type { AgentRunner, RunnerEvent, RunnerHandle, RunnerInput, RunnerResult } from "./types.js";
 
 export interface CodexRunnerOptions {
@@ -202,28 +203,6 @@ const parseAgentResult = (value: string): RunnerResult => {
     acceptanceCriteria,
     blockedReason: blockedReasonValue ?? null,
   };
-};
-
-const buildSkillsPrompt = (skills: RunnerInput["skills"]): string[] => {
-  if (skills.length === 0) {
-    return [];
-  }
-
-  return [
-    "",
-    "已启用的 DevLoop Skills：",
-    "- 必须先阅读以下 Skill，并在其适用范围内遵循其中的执行规范。",
-    "- Skill 与本任务的明确目标、验收标准或后续执行要求冲突时，以后者为准。",
-    ...skills.flatMap((skill, index) => [
-      "",
-      `===== Skill ${index + 1}: ${skill.name} (v${skill.version}) =====`,
-      `描述：${skill.description}`,
-      skill.content.trim(),
-      `===== Skill ${index + 1} 结束 =====`,
-    ]),
-    "",
-    "已启用 Skill 内容结束。上方任务目标、验收标准以及后续执行要求具有更高优先级。",
-  ];
 };
 
 const buildPrompt = (input: RunnerInput, outputSchema: string): string => {

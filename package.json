@@ -12,7 +12,7 @@
     "dev:web": "pnpm packages:build && concurrently -k -n server,web -c green,blue \"pnpm --filter @devloop/server dev\" \"pnpm --filter @devloop/web dev\"",
     "packages:build": "pnpm --filter './packages/**' build",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm packages:build && pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",

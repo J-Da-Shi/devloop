@@ -400,26 +400,29 @@ describe("AgentWorker", () => {
       },
     ];
     let loadCount = 0;
-    const worker = new AgentWorker(
-      repository,
-      runner,
-      new DomainEventBus(),
-      "/tmp/schema.json",
-      {
-        claimDelayMs: 0,
-        skillService: {
-          listEnabledForExecution: async () => {
-            loadCount += 1;
-            return skills;
-          },
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      skillService: {
+        listEnabledForExecution: async () => {
+          loadCount += 1;
+          return skills;
         },
       },
-    );
+    });
 
     expect(worker.pullNextTask()).toBe(true);
     await waitFor(() => runner.inputs.length === 1);
     expect(runner.inputs[0]).toMatchObject({ taskId: task.id, skills });
     expect(loadCount).toBe(1);
+    expect(repository.getRun(repository.getTask(task.id)!.latestRunId!)).toMatchObject({
+      skillSnapshot: [
+        {
+          skillId: "skill-id",
+          version: 2,
+          contentHash: "content-hash",
+        },
+      ],
+    });
 
     runner.succeedNext();
     await waitForTaskStatus(repository, task.id, "REVIEW");
@@ -445,6 +448,7 @@ describe("AgentWorker", () => {
     });
 
     expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
     expect(runner.inputs[0]?.taskId).toBe(highPriority.id);
     expect(repository.getTask(highPriority.id)?.status).toBe("RUNNING");
     expect(repository.getTask(lowPriority.id)?.status).toBe("READY");
@@ -457,6 +461,7 @@ describe("AgentWorker", () => {
     expect(repository.getWorkerState().activeRunId).toBeNull();
 
     expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 2);
     expect(runner.inputs[1]?.taskId).toBe(lowPriority.id);
     runner.succeedNext();
     await waitForTaskStatus(repository, lowPriority.id, "REVIEW");
@@ -539,6 +544,7 @@ describe("AgentWorker", () => {
     currentTime += 1;
     expect(worker.pullNextTask()).toBe(true);
     expect(repository.getTask(task.id)?.status).toBe("RUNNING");
+    await waitFor(() => runner.inputs.length === 1);
     runner.succeedNext();
     await waitForTaskStatus(repository, task.id, "REVIEW");
   });
@@ -573,6 +579,7 @@ describe("AgentWorker", () => {
     runner.succeedNext();
 
     await waitFor(() => worker.pullNextTask());
+    await waitFor(() => runner.inputs.length === 2);
     expect(runner.inputs[1]?.taskId).toBe(second.id);
     runner.succeedNext();
     await waitForTaskStatus(repository, second.id, "REVIEW");
