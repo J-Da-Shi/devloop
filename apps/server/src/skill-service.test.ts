@@ -10,8 +10,11 @@ const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", i
 const handles: DatabaseHandle[] = [];
 const temporaryDirectories: string[] = [];
 
-const validContent = (description = "规范化前端界面并检查交互一致性") => `---
-name: frontend-quality
+const validContent = (
+  description = "规范化前端界面并检查交互一致性",
+  name = "frontend-quality",
+) => `---
+name: ${name}
 description: ${description}
 ---
 
@@ -130,5 +133,44 @@ metadata: 不允许
         "local-desktop",
       ),
     ).toThrow("Version conflict");
+  });
+
+  it("为任务执行只加载已启用 Skill 的当前版本", async () => {
+    const service = await createService();
+    const created = await service.create(validContent(), "local-desktop");
+    const currentContent = validContent("执行当前版本的前端质量检查");
+    const updated = await service.createVersion(
+      created.value.id,
+      {
+        content: currentContent,
+        expectedVersion: created.value.version,
+        idempotencyKey: crypto.randomUUID(),
+      },
+      "local-desktop",
+    );
+    const disabled = await service.create(
+      validContent("检查服务端接口约定", "backend-quality"),
+      "local-desktop",
+    );
+    service.setEnabled(
+      disabled.value.id,
+      {
+        enabled: false,
+        expectedVersion: disabled.value.version,
+        idempotencyKey: crypto.randomUUID(),
+      },
+      "local-desktop",
+    );
+
+    await expect(service.listEnabledForExecution()).resolves.toEqual([
+      {
+        id: updated.value.id,
+        name: "frontend-quality",
+        description: "执行当前版本的前端质量检查",
+        version: 2,
+        contentHash: updated.value.contentHash,
+        content: currentContent,
+      },
+    ]);
   });
 });

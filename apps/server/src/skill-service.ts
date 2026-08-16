@@ -10,6 +10,7 @@ import type {
   UpdateSkillInput,
 } from "@devloop/shared";
 import type { DevLoopRepository, EventfulResult } from "@devloop/db";
+import type { RunnerSkill } from "@devloop/runners";
 import { parse } from "yaml";
 
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -56,6 +57,30 @@ export class SkillService {
 
   list(): Skill[] {
     return this.repository.listSkills();
+  }
+
+  async listEnabledForExecution(): Promise<RunnerSkill[]> {
+    const storedSkills = this.repository
+      .listSkills()
+      .filter((skill) => skill.enabled)
+      .map((skill) => {
+        const details = this.repository.getSkillDetails(skill.id);
+        if (!details) {
+          throw new Error(`找不到已启用 Skill：${skill.name}`);
+        }
+        return details;
+      });
+
+    return Promise.all(
+      storedSkills.map(async ({ skill, storagePath }) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        version: skill.currentVersion,
+        contentHash: skill.contentHash,
+        content: await readFile(this.resolveStoragePath(storagePath), "utf8"),
+      })),
+    );
   }
 
   async get(skillId: string): Promise<SkillDetails | null> {

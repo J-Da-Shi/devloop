@@ -614,6 +614,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       );
     }
 
+    const skills = await skillService.listEnabledForExecution();
     const controller = new AbortController();
     const promise = (async (): Promise<ConflictResolutionResponse> => {
       recordConflictRunEvent(
@@ -644,6 +645,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
                 title: revision.title,
                 goal: revision.goal,
                 acceptanceCriteria: revision.acceptanceCriteria,
+                skills,
                 mode: "conflict-resolution",
                 conflictPaths: files.map((file) => file.path),
                 worktreePath,

@@ -7,7 +7,13 @@ import type {
   GeneratedConflictResolutions,
   GitService,
 } from "@devloop/git";
-import type { AgentRunner, RunnerEvent, RunnerHandle, RunnerInput } from "@devloop/runners";
+import type {
+  AgentRunner,
+  RunnerEvent,
+  RunnerHandle,
+  RunnerInput,
+  RunnerSkill,
+} from "@devloop/runners";
 import type { RunnerCapabilities } from "@devloop/shared";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
@@ -18,6 +24,22 @@ import { SkillService } from "./skill-service.js";
 
 const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", import.meta.url));
 const targetCommit = "a".repeat(40);
+const enabledSkills: RunnerSkill[] = [
+  {
+    id: "skill-id",
+    name: "conflict-quality",
+    description: "检查冲突解决结果",
+    version: 3,
+    contentHash: "content-hash",
+    content: "# 冲突检查\n\n保留双方有效修改。\n",
+  },
+];
+
+class ConflictSkillService extends SkillService {
+  override async listEnabledForExecution(): Promise<RunnerSkill[]> {
+    return enabledSkills;
+  }
+}
 
 class ConflictRunner implements AgentRunner {
   readonly id = "codex";
@@ -180,7 +202,7 @@ describe("冲突解决接口", () => {
       config,
       repository,
       gitService: gitService as unknown as GitService,
-      skillService: new SkillService(repository, config.skillsPath),
+      skillService: new ConflictSkillService(repository, config.skillsPath),
       runners: [runner],
       eventBus: new DomainEventBus(),
       worker,
@@ -217,6 +239,7 @@ describe("冲突解决接口", () => {
         expect.objectContaining({
           mode: "conflict-resolution",
           conflictPaths: ["apps/demo.ts"],
+          skills: enabledSkills,
           worktreePath: "/tmp/devloop-conflict-agent-test",
         }),
       ]);

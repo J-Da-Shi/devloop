@@ -15,6 +15,7 @@ import type {
   RunnerHandle,
   RunnerInput,
   RunnerResult,
+  RunnerSkill,
 } from "@devloop/runners";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentWorker } from "./agent-worker.js";
@@ -376,6 +377,54 @@ afterEach(() => {
 });
 
 describe("AgentWorker", () => {
+  it("把已启用 Skill 快照传给 Runner", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "Skill 执行项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-skill-worker-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "执行启用 Skill", 100);
+    const runner = new ControlledRunner();
+    const skills: RunnerSkill[] = [
+      {
+        id: "skill-id",
+        name: "frontend-quality",
+        description: "检查前端质量",
+        version: 2,
+        contentHash: "content-hash",
+        content: "# 工作流\n\n检查响应式布局。\n",
+      },
+    ];
+    let loadCount = 0;
+    const worker = new AgentWorker(
+      repository,
+      runner,
+      new DomainEventBus(),
+      "/tmp/schema.json",
+      {
+        claimDelayMs: 0,
+        skillService: {
+          listEnabledForExecution: async () => {
+            loadCount += 1;
+            return skills;
+          },
+        },
+      },
+    );
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    expect(runner.inputs[0]).toMatchObject({ taskId: task.id, skills });
+    expect(loadCount).toBe(1);
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+  });
+
   it("优先领取高优先级任务，并在执行期间拒绝重复领取", async () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -917,6 +966,17 @@ describe("AgentWorker", () => {
     }).value;
     const task = createReadyTask(repository, project.id, "自动解决写入冲突", 100);
     const runner = new ControlledRunner("codex");
+    const skills: RunnerSkill[] = [
+      {
+        id: "conflict-skill-id",
+        name: "conflict-quality",
+        description: "检查冲突解决结果",
+        version: 3,
+        contentHash: "conflict-content-hash",
+        content: "# 冲突检查\n\n保留双方有效修改。\n",
+      },
+    ];
+    let loadCount = 0;
     const gitService = new ControlledGitService();
     gitService.localBaseCommits.push("local-base-commit", "target-current-commit");
     gitService.reconciliationResult = {
@@ -935,10 +995,17 @@ describe("AgentWorker", () => {
       claimDelayMs: 0,
       gitService,
       worktreesPath: "/tmp/devloop-worker-worktrees",
+      skillService: {
+        listEnabledForExecution: async () => {
+          loadCount += 1;
+          return skills;
+        },
+      },
     });
 
     expect(worker.pullNextTask()).toBe(true);
     await waitFor(() => runner.inputs.length === 1);
+    expect(runner.inputs[0]?.skills).toEqual(skills);
     const runId = repository.getTask(task.id)?.latestRunId;
     runner.succeedNext();
     await waitFor(() => runner.inputs.length === 2);
@@ -948,8 +1015,10 @@ describe("AgentWorker", () => {
     expect(runner.inputs[1]).toMatchObject({
       mode: "conflict-resolution",
       conflictPaths: ["src/app.ts"],
+      skills,
       worktreePath: "/tmp/devloop-worker-conflict-worktree",
     });
+    expect(loadCount).toBe(1);
 
     runner.succeedNext();
     await waitForTaskStatus(repository, task.id, "REVIEW");

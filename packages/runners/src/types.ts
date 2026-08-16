@@ -1,11 +1,21 @@
 import type { RunnerCapabilities } from "@devloop/shared";
 
+export interface RunnerSkill {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  contentHash: string;
+  content: string;
+}
+
 export interface RunnerInput {
   runId: string;
   taskId: string;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
+  skills: RunnerSkill[];
   reviewFeedback?: string | null;
   mode?: "implementation" | "conflict-resolution";
   conflictPaths?: string[];

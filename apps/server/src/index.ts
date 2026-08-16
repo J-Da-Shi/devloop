@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     runnerVersion: runnerCapabilities.version,
     gitService,
     worktreesPath: config.worktreesPath,
+    skillService,
   });
 
   const app = await createApp({

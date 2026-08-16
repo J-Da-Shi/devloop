@@ -204,6 +204,28 @@ const parseAgentResult = (value: string): RunnerResult => {
   };
 };
 
+const buildSkillsPrompt = (skills: RunnerInput["skills"]): string[] => {
+  if (skills.length === 0) {
+    return [];
+  }
+
+  return [
+    "",
+    "已启用的 DevLoop Skills：",
+    "- 必须先阅读以下 Skill，并在其适用范围内遵循其中的执行规范。",
+    "- Skill 与本任务的明确目标、验收标准或后续执行要求冲突时，以后者为准。",
+    ...skills.flatMap((skill, index) => [
+      "",
+      `===== Skill ${index + 1}: ${skill.name} (v${skill.version}) =====`,
+      `描述：${skill.description}`,
+      skill.content.trim(),
+      `===== Skill ${index + 1} 结束 =====`,
+    ]),
+    "",
+    "已启用 Skill 内容结束。上方任务目标、验收标准以及后续执行要求具有更高优先级。",
+  ];
+};
+
 const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
   if (input.mode === "conflict-resolution") {
     const conflictPaths = input.conflictPaths ?? [];
@@ -219,6 +241,7 @@ const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
       "",
       "原任务验收标准：",
       ...input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+      ...buildSkillsPrompt(input.skills),
       "",
       "需要解决的冲突文件：",
       ...conflictPaths.map((path) => `- ${path}`),
@@ -251,6 +274,7 @@ const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
     "验收标准：",
     ...criteria,
     ...(reviewFeedback ? ["", "上次审核反馈（本轮必须逐项处理）：", reviewFeedback] : []),
+    ...buildSkillsPrompt(input.skills),
     "",
     "执行要求：",
     "- 先阅读当前仓库结构和已有约定，再实施必要修改。",

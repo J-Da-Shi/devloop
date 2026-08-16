@@ -24,6 +24,7 @@ describe("CodexRunner", () => {
       title: "Task",
       goal: "Goal",
       acceptanceCriteria: ["Done"],
+      skills: [],
       worktreePath: "/tmp/worktree",
       outputSchemaPath: "/tmp/schema.json",
       signal: controller.signal,
@@ -68,8 +69,8 @@ for await (const chunk of process.stdin) prompt += chunk;
 const isRepair = prompt.includes("你只负责修复已有最终结果的 JSON 格式");
 if (args.includes("--output-schema")) process.exit(3);
 if (isRepair && (!args.includes("shell_tool") || !args.includes("unified_exec"))) process.exit(4);
-if (!isRepair && prompt.includes("处理审核反馈") && !prompt.includes("必须补充回归测试")) process.exit(5);
-if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("不要运行 git add、git rm") || !prompt.includes("统一暂存并校验冲突文件") || !prompt.includes("不要创建 Git commit"))) process.exit(6);
+if (!isRepair && prompt.includes("处理审核反馈") && (!prompt.includes("必须补充回归测试") || !prompt.includes("Skill 1: frontend-quality (v2)") || !prompt.includes("检查响应式布局"))) process.exit(5);
+if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("不要运行 git add、git rm") || !prompt.includes("统一暂存并校验冲突文件") || !prompt.includes("不要创建 Git commit") || !prompt.includes("Skill 1: frontend-quality (v2)") || !prompt.includes("检查响应式布局"))) process.exit(6);
 if ((!isRepair && !prompt.includes("实现真实执行")) || outputIndex < 0) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-test" }) + "\\n");
 if (prompt.includes("上游失败")) {
@@ -127,6 +128,16 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并处理审核反馈",
         acceptanceCriteria: ["完成开发"],
+        skills: [
+          {
+            id: "skill-id",
+            name: "frontend-quality",
+            description: "检查前端质量",
+            version: 2,
+            contentHash: "content-hash",
+            content: "# 工作流\n\n检查响应式布局。\n",
+          },
+        ],
         reviewFeedback: "必须补充回归测试",
         worktreePath,
         outputSchemaPath,
@@ -150,6 +161,16 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "实现真实执行",
         goal: "解决实现真实执行产生的写入冲突",
         acceptanceCriteria: ["完成开发"],
+        skills: [
+          {
+            id: "skill-id",
+            name: "frontend-quality",
+            description: "检查前端质量",
+            version: 2,
+            contentHash: "content-hash",
+            content: "# 工作流\n\n检查响应式布局。\n",
+          },
+        ],
         mode: "conflict-resolution",
         conflictPaths: ["README.md"],
         worktreePath,
@@ -171,6 +192,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并模拟格式错误",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
@@ -192,6 +214,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行、模拟格式错误并让修复仍然失败",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
@@ -215,6 +238,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并等待取消",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
@@ -242,6 +266,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并持续进展",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
@@ -262,6 +287,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并等待取消",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,
@@ -280,6 +306,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
         title: "真实执行",
         goal: "实现真实执行并模拟上游失败",
         acceptanceCriteria: ["完成开发"],
+        skills: [],
         worktreePath,
         outputSchemaPath,
         signal: new AbortController().signal,

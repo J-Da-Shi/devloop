@@ -14,8 +14,10 @@ import {
   type RunnerEvent,
   type RunnerHandle,
   type RunnerResult,
+  type RunnerSkill,
 } from "@devloop/runners";
 import type { DomainEventBus } from "./event-bus.js";
+import type { SkillService } from "./skill-service.js";
 
 const phaseByEvent: Record<string, RunStatus> = {
   "runner.preparing": "PREPARING",
@@ -41,6 +43,7 @@ export interface AgentWorkerOptions {
   >;
   worktreesPath?: string;
   terminateProcessGroup?: (processGroupId: number) => void;
+  skillService?: Pick<SkillService, "listEnabledForExecution">;
 }
 
 class AutoConflictResolutionError extends Error {
@@ -237,9 +240,13 @@ export class AgentWorker {
       this.handleProcessGroupChange(active, processGroupId);
 
     try {
+      const skills = await this.loadEnabledSkills(controller.signal);
+      if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+        return;
+      }
       const workspace =
         this.runner.id === "codex"
-          ? await this.prepareWorkspace(claimed, controller.signal, onProcessGroupId)
+          ? await this.prepareWorkspace(claimed, skills, controller.signal, onProcessGroupId)
           : { path: null, baseCommit: claimed.run.baseCommit };
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
@@ -251,6 +258,7 @@ export class AgentWorker {
           title: claimed.title,
           goal: claimed.goal,
           acceptanceCriteria: claimed.acceptanceCriteria,
+          skills,
           reviewFeedback: claimed.reviewFeedback,
           worktreePath: workspace.path,
           outputSchemaPath: this.outputSchemaPath,
@@ -278,6 +286,7 @@ export class AgentWorker {
         }
         const preparedResult = await this.prepareResultForReview(
           claimed,
+          skills,
           workspace.path,
           workspace.baseCommit,
           committedResult,
@@ -369,6 +378,7 @@ export class AgentWorker {
 
   private async prepareWorkspace(
     claimed: ClaimedTask,
+    skills: RunnerSkill[],
     signal: AbortSignal,
     onProcessGroupId: (processGroupId: number | null) => void,
   ): Promise<{ path: string; baseCommit: string }> {
@@ -416,6 +426,7 @@ export class AgentWorker {
       } else {
         const { reconciled, agentSummary } = await this.reconcileRunCommit(
           claimed,
+          skills,
           {
             repositoryPath: claimed.projectPath,
             targetBranch: targetBase.targetBranch,
@@ -513,6 +524,7 @@ export class AgentWorker {
 
   private async prepareResultForReview(
     claimed: ClaimedTask,
+    skills: RunnerSkill[],
     worktreePath: string | null,
     baseCommit: string | null,
     resultCommit: string | null,
@@ -555,6 +567,7 @@ export class AgentWorker {
 
     const { reconciled, agentSummary } = await this.reconcileRunCommit(
       claimed,
+      skills,
       {
         repositoryPath: claimed.projectPath,
         targetBranch: target.targetBranch,
@@ -624,6 +637,7 @@ export class AgentWorker {
 
   private async reconcileRunCommit(
     claimed: ClaimedTask,
+    skills: RunnerSkill[],
     input: ReconcileCommitInput,
     signal: AbortSignal,
     onProcessGroupId: (processGroupId: number | null) => void,
@@ -668,6 +682,7 @@ export class AgentWorker {
               title: claimed.title,
               goal: claimed.goal,
               acceptanceCriteria: claimed.acceptanceCriteria,
+              skills,
               mode: "conflict-resolution",
               conflictPaths: files.map((file) => file.path),
               worktreePath: conflictWorktree,
@@ -747,6 +762,13 @@ export class AgentWorker {
       signal,
       onProcessGroupId,
     });
+  }
+
+  private async loadEnabledSkills(signal: AbortSignal): Promise<RunnerSkill[]> {
+    signal.throwIfAborted();
+    const skills = (await this.options.skillService?.listEnabledForExecution()) ?? [];
+    signal.throwIfAborted();
+    return skills;
   }
 
   private handleConflictRunnerEvent(
