@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { DevLoopRepository, EventfulResult } from "@devloop/db";
 import { GitApplyError, type GitService } from "@devloop/git";
-import type { AgentRunner } from "@devloop/runners";
+import type { AgentRunner, RunnerResult } from "@devloop/runners";
 import {
   approveRunInputSchema,
   confirmTaskInputSchema,
@@ -13,12 +13,15 @@ import {
   createSkillVersionInputSchema,
   createTaskInputSchema,
   rejectRunInputSchema,
+  resolveRunConflictsInputSchema,
+  runConflictAgentResolutionSchema,
   taskCommandInputSchema,
   updateSkillInputSchema,
   updateTaskInputSchema,
   validateSkillInputSchema,
   workerStatusSchema,
   type DomainEvent,
+  type RunConflictAgentResolution,
   type Task,
 } from "@devloop/shared";
 import fastifyStatic from "@fastify/static";
@@ -89,6 +92,16 @@ const writeSseEvent = (response: NodeJS.WritableStream, event: DomainEvent): voi
   response.write(`data: ${JSON.stringify(event)}\n\n`);
 };
 
+const formatConflictRunnerResult = (result: RunnerResult): string =>
+  [
+    result.summary,
+    result.blockedReason ? `阻塞原因：${result.blockedReason}` : null,
+    result.risks.length ? `风险：${result.risks.join("；")}` : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n\n")
+    .slice(0, 16_000);
+
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
   const { config, repository, gitService, skillService, runners, eventBus, worker } = options;
   const requireRequestRole = (
@@ -112,6 +125,49 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const getRunnerCapabilities = async () => {
     capabilityCache ??= await Promise.all(runners.map((runner) => runner.detectCapabilities()));
     return capabilityCache;
+  };
+  type ConflictResolutionResponse = {
+    resolution: RunConflictAgentResolution;
+    replayed: boolean;
+  };
+  const activeConflictJobs = new Map<
+    string,
+    {
+      targetCommit: string;
+      controller: AbortController;
+      promise: Promise<ConflictResolutionResponse>;
+    }
+  >();
+  const getStoredConflictResolution = (
+    runId: string,
+    targetCommit: string,
+    idempotencyKey?: string,
+  ): RunConflictAgentResolution | null => {
+    const events = repository.getRunEvents(runId);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.type !== "run.conflict_resolution.completed") continue;
+      const payload =
+        event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+          ? (event.payload as Record<string, unknown>)
+          : null;
+      if (!payload || (idempotencyKey && payload.idempotencyKey !== idempotencyKey)) continue;
+      const parsed = runConflictAgentResolutionSchema.safeParse(payload);
+      if (parsed.success && parsed.data.targetCommit === targetCommit) {
+        return parsed.data;
+      }
+    }
+    return null;
+  };
+  const recordConflictRunEvent = (
+    runId: string,
+    type: string,
+    message: string,
+    payload: Record<string, unknown>,
+  ) => {
+    const result = repository.recordRunEvent(runId, type, message, payload);
+    publish(eventBus, result);
+    return result.value;
   };
 
   app.setErrorHandler((error, request, reply) => {
@@ -453,7 +509,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     const { runId } = runParamSchema.parse(request.params);
     const { run, task, project, repositoryPath } = resolveRunRepositoryPath(runId);
     if (!run.baseCommit || !run.resultCommit) {
-      return { files: [], conflictPreview: null };
+      return { files: [], conflictPreview: null, agentResolution: null };
     }
     const files = await gitService.listRunChangedFiles({
       repositoryPath,
@@ -487,7 +543,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         };
       }
     }
-    return { files, conflictPreview };
+    const agentResolution =
+      conflictPreview?.status === "conflicted" && conflictPreview.targetCommit
+        ? getStoredConflictResolution(runId, conflictPreview.targetCommit)
+        : null;
+    return { files, conflictPreview, agentResolution };
   });
 
   const patchQuerySchema = z.object({ path: z.string().min(1).max(1024) });
@@ -507,6 +567,149 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       path,
     });
     return result;
+  });
+
+  app.post("/api/runs/:runId/resolve-conflicts", async (request) => {
+    const identity = requireLocalRole(request, "operator");
+    const { runId } = runParamSchema.parse(request.params);
+    const input = resolveRunConflictsInputSchema.parse(request.body);
+    const replay = getStoredConflictResolution(
+      runId,
+      input.expectedTargetCommit,
+      input.idempotencyKey,
+    );
+    if (replay) {
+      return { resolution: replay, replayed: true };
+    }
+
+    const activeJob = activeConflictJobs.get(runId);
+    if (activeJob) {
+      if (activeJob.targetCommit !== input.expectedTargetCommit) {
+        throw new HttpError(
+          409,
+          "目标分支已发生变化，请等待当前 Agent 结束后刷新冲突内容。",
+          "TARGET_BRANCH_CHANGED",
+        );
+      }
+      return activeJob.promise.then((result) => ({ ...result, replayed: true }));
+    }
+
+    const approval = repository.getRunApprovalContext(runId, input.expectedVersion);
+    if (approval.type !== "local") {
+      throw new HttpError(409, "只有本地项目的写入冲突可以交给 Agent 解决。", "LOCAL_ONLY");
+    }
+    const revision = repository.getTaskRevision(resolveRunRepositoryPath(runId).run.taskRevisionId);
+    if (!revision) {
+      throw new HttpError(500, "执行记录关联的 Revision 不存在", "DATA_INTEGRITY_ERROR");
+    }
+    const conflictRunner = runners.find((runner) => runner.id === "codex");
+    const conflictRunnerCapability = (await getRunnerCapabilities()).find(
+      (capability) => capability.id === "codex",
+    );
+    if (!conflictRunner || !conflictRunnerCapability?.available) {
+      throw new HttpError(
+        503,
+        conflictRunnerCapability?.error ?? "Codex Agent 当前不可用或尚未登录。",
+        "AGENT_UNAVAILABLE",
+      );
+    }
+
+    const controller = new AbortController();
+    const promise = (async (): Promise<ConflictResolutionResponse> => {
+      recordConflictRunEvent(
+        runId,
+        "run.conflict_resolution.started",
+        `已将 ${revision.title} 的写入冲突交给 Agent 处理`,
+        {
+          idempotencyKey: input.idempotencyKey,
+          targetCommit: input.expectedTargetCommit,
+          deviceId: identity.id,
+        },
+      );
+      let runnerSummary = "Agent 已完成冲突解决。";
+      try {
+        const generated = await gitService.generateConflictResolutions(
+          {
+            repositoryPath: approval.context.projectPath,
+            targetBranch: approval.context.targetBranch,
+            baseCommit: approval.context.baseCommit,
+            resultCommit: approval.context.resultCommit,
+            expectedTargetCommit: input.expectedTargetCommit,
+          },
+          async ({ worktreePath, files }) => {
+            const handle = conflictRunner.start(
+              {
+                runId: `conflict-${randomUUID()}`,
+                taskId: revision.taskId,
+                title: revision.title,
+                goal: revision.goal,
+                acceptanceCriteria: revision.acceptanceCriteria,
+                mode: "conflict-resolution",
+                conflictPaths: files.map((file) => file.path),
+                worktreePath,
+                outputSchemaPath: config.outputSchemaPath,
+                signal: controller.signal,
+              },
+              (event) => {
+                recordConflictRunEvent(runId, "run.conflict_resolution.progress", event.message, {
+                  idempotencyKey: input.idempotencyKey,
+                  targetCommit: input.expectedTargetCommit,
+                  runnerEventType: event.type,
+                  ...(event.data ? { data: event.data } : {}),
+                });
+              },
+            );
+            const result = await handle.result;
+            runnerSummary = formatConflictRunnerResult(result);
+            if (result.outcome === "blocked") {
+              throw new HttpError(
+                409,
+                result.blockedReason ?? runnerSummary,
+                "AGENT_CONFLICT_RESOLUTION_BLOCKED",
+              );
+            }
+            if (result.outcome !== "succeeded") {
+              throw new HttpError(502, runnerSummary, "AGENT_CONFLICT_RESOLUTION_FAILED");
+            }
+          },
+        );
+        const resolution: RunConflictAgentResolution = {
+          ...generated,
+          summary: runnerSummary,
+          completedAt: new Date().toISOString(),
+        };
+        recordConflictRunEvent(
+          runId,
+          "run.conflict_resolution.completed",
+          `Agent 已生成 ${resolution.resolutions.length} 个冲突文件的解决建议，等待人工审核`,
+          { idempotencyKey: input.idempotencyKey, ...resolution },
+        );
+        return { resolution, replayed: false };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Agent 解决冲突时发生未知错误。";
+        try {
+          recordConflictRunEvent(runId, "run.conflict_resolution.failed", message, {
+            idempotencyKey: input.idempotencyKey,
+            targetCommit: input.expectedTargetCommit,
+          });
+        } catch {
+          // 关闭服务时数据库可能先于 Agent 清理完成。
+        }
+        throw error;
+      }
+    })();
+    activeConflictJobs.set(runId, {
+      targetCommit: input.expectedTargetCommit,
+      controller,
+      promise,
+    });
+    try {
+      return await promise;
+    } finally {
+      if (activeConflictJobs.get(runId)?.promise === promise) {
+        activeConflictJobs.delete(runId);
+      }
+    }
   });
 
   app.post("/api/runs/:runId/approve", { bodyLimit: 5 * 1024 * 1024 }, async (request) => {
@@ -627,6 +830,12 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return reply.code(404).send({
       error: { code: "WEB_NOT_BUILT", message: "Web 应用尚未构建，请使用 Vite 开发服务" },
     });
+  });
+
+  app.addHook("onClose", async () => {
+    const jobs = Array.from(activeConflictJobs.values());
+    for (const job of jobs) job.controller.abort();
+    await Promise.allSettled(jobs.map((job) => job.promise));
   });
 
   return app;

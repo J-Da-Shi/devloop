@@ -7,6 +7,8 @@ export interface RunnerInput {
   goal: string;
   acceptanceCriteria: string[];
   reviewFeedback?: string | null;
+  mode?: "implementation" | "conflict-resolution";
+  conflictPaths?: string[];
   worktreePath: string | null;
   outputSchemaPath: string | null;
   signal: AbortSignal;

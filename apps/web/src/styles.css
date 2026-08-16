@@ -4596,6 +4596,13 @@ code {
   flex: 0 0 auto;
 }
 
+.diff-preview-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .diff-dialog-body {
   display: grid;
   min-height: 0;
@@ -4616,15 +4623,22 @@ code {
   }
 
   .diff-preview-launcher-main {
-    min-width: calc(100% - 110px);
+    min-width: 100%;
   }
 
   .diff-preview-conflict-state {
-    order: 3;
+    order: 2;
     width: 100%;
   }
 
-  .diff-preview-button {
-    margin-left: auto;
+  .diff-preview-actions {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .diff-preview-actions .ant-btn {
+    min-width: 0;
+    flex: 1 1 148px;
   }
 }

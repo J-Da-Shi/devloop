@@ -243,6 +243,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const localProject = taskProject?.repositoryUrl === null;
   const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
   const unresolvedConflictCount = diffApprovalState?.unresolvedPaths.length ?? 0;
+  const agentResolving = diffApprovalState?.agentResolving ?? false;
   const confirmCopy = {
     confirm: {
       title: "确认任务并加入队列？",
@@ -532,6 +533,10 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     <RunDiffPanel
                       runId={task.latestRunId}
                       reviewing={task.status === "REVIEW"}
+                      taskVersion={task.version}
+                      canResolveConflicts={Boolean(
+                        localProject && task.status === "REVIEW" && canEdit,
+                      )}
                       onApprovalStateChange={
                         localProject && task.status === "REVIEW" ? setDiffApprovalState : undefined
                       }
@@ -553,7 +558,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         danger
                         icon={<CornerDownLeft size={17} />}
                         onClick={() => setConfirmAction("reject")}
-                        disabled={pending || !rejectFeedback.trim()}
+                        disabled={pending || agentResolving || !rejectFeedback.trim()}
                       >
                         驳回
                       </Button>
@@ -561,7 +566,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         type="primary"
                         icon={<Check size={17} />}
                         onClick={() => setConfirmAction("approve")}
-                        disabled={pending}
+                        disabled={pending || agentResolving}
                       >
                         {localProject ? "通过并写入" : "通过并推送"}
                       </Button>
@@ -634,7 +639,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 danger
                 icon={<Trash2 size={17} />}
                 onClick={() => setConfirmAction("delete")}
-                disabled={pending}
+                disabled={pending || agentResolving}
               >
                 删除任务
               </Button>

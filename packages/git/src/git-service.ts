@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
@@ -71,6 +71,16 @@ export interface ApplyCommitInput {
   resultCommit: string;
   expectedTargetCommit?: string | null;
   conflictResolutions?: RunConflictResolution[];
+}
+
+export interface ConflictResolutionWorkspace {
+  worktreePath: string;
+  files: RunConflictFile[];
+}
+
+export interface GeneratedConflictResolutions {
+  targetCommit: string;
+  resolutions: RunConflictResolution[];
 }
 
 export interface ListRunChangedFilesInput {
@@ -155,7 +165,12 @@ interface NumstatEntry {
 interface ConflictStageEntry {
   mode: string;
   objectId: string;
-  stage: 1 | 2 | 3;
+  stage: 0 | 1 | 2 | 3;
+}
+
+interface PreparedConflictFile {
+  file: RunConflictFile;
+  stages: ConflictStageEntry[];
 }
 
 const maxEditableConflictBytes = 750_000;
@@ -772,6 +787,62 @@ export class GitService {
     };
   }
 
+  async generateConflictResolutions(
+    input: ApplyCommitInput,
+    resolver: (workspace: ConflictResolutionWorkspace) => Promise<void>,
+  ): Promise<GeneratedConflictResolutions> {
+    const { repositoryPath, targetCommit } = await this.prepareApplication(input);
+    if (!targetCommit) {
+      throw new GitApplyError("APPLY_CONFLICT", "目标分支尚不存在，不需要解决写入冲突。");
+    }
+
+    return this.withPatchedConflictWorktree(
+      repositoryPath,
+      targetCommit,
+      input.baseCommit,
+      input.resultCommit,
+      async ({ worktreePath, files }) => {
+        if (files.length === 0) {
+          throw new GitApplyError("APPLY_CONFLICT", "当前目标分支与本次结果已经不存在冲突。");
+        }
+        if (files.length > 100) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            `冲突文件数量为 ${files.length}，超过单次 Agent 解决上限 100 个。`,
+          );
+        }
+        await resolver({
+          worktreePath,
+          files: files.map((item) => item.file),
+        });
+
+        const remainingPaths = await this.getUnmergedPaths(worktreePath);
+        if (remainingPaths.length > 0) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            `Agent 完成后仍有 ${remainingPaths.length} 个冲突文件未解决：${remainingPaths.join("、")}`,
+          );
+        }
+
+        const resolutions = await Promise.all(
+          files.map((file) => this.collectConflictResolution(worktreePath, file)),
+        );
+        const contentLength = resolutions.reduce(
+          (total, resolution) =>
+            total + (resolution.strategy === "content" ? resolution.content.length : 0),
+          0,
+        );
+        if (contentLength > 900_000) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            "Agent 生成的冲突解决内容超过 900000 个字符，请改为人工分批处理。",
+          );
+        }
+        return { targetCommit, resolutions };
+      },
+    );
+  }
+
   async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {
     const { repositoryPath, targetBranch, targetCommit, changedPaths } =
       await this.prepareApplication(input);
@@ -916,6 +987,22 @@ export class GitService {
     baseCommit: string,
     resultCommit: string,
   ): Promise<RunConflictFile[]> {
+    return this.withPatchedConflictWorktree(
+      repositoryPath,
+      targetCommit,
+      baseCommit,
+      resultCommit,
+      async ({ files }) => files.map((item) => item.file),
+    );
+  }
+
+  private async withPatchedConflictWorktree<T>(
+    repositoryPath: string,
+    targetCommit: string,
+    baseCommit: string,
+    resultCommit: string,
+    callback: (workspace: { worktreePath: string; files: PreparedConflictFile[] }) => Promise<T>,
+  ): Promise<T> {
     const { stdout: patch } = await execa(
       this.executable,
       [
@@ -953,7 +1040,7 @@ export class GitService {
         { input: patch, reject: false },
       );
       if (apply.exitCode === 0) {
-        return [];
+        return await callback({ worktreePath: temporaryWorktree, files: [] });
       }
 
       const conflictPaths = await this.getUnmergedPaths(temporaryWorktree);
@@ -962,7 +1049,7 @@ export class GitService {
         throw new GitApplyError("APPLY_FAILED", `无法生成冲突预览：${message}`);
       }
 
-      return Promise.all(
+      const files = await Promise.all(
         conflictPaths.map(async (path) => {
           const [{ stdout: conflictPatch }, { stdout: numstatOutput }, stages] = await Promise.all([
             execa(
@@ -996,15 +1083,19 @@ export class GitService {
             }
           }
           return {
-            path,
-            patch: conflictPatch,
-            isBinary,
-            content,
-            targetExists: stages.some((entry) => entry.stage === 2),
-            resultExists: stages.some((entry) => entry.stage === 3),
+            file: {
+              path,
+              patch: conflictPatch,
+              isBinary,
+              content,
+              targetExists: stages.some((entry) => entry.stage === 2),
+              resultExists: stages.some((entry) => entry.stage === 3),
+            },
+            stages,
           };
         }),
       );
+      return await callback({ worktreePath: temporaryWorktree, files });
     } finally {
       if (worktreeCreated) {
         await execa(
@@ -1015,6 +1106,83 @@ export class GitService {
       }
       await rm(temporaryRoot, { recursive: true, force: true });
     }
+  }
+
+  private async collectConflictResolution(
+    worktreePath: string,
+    conflict: PreparedConflictFile,
+  ): Promise<RunConflictResolution> {
+    const path = conflict.file.path;
+    const indexEntry = await this.getResolvedIndexEntry(worktreePath, path);
+    const targetStage = conflict.stages.find((entry) => entry.stage === 2);
+    const resultStage = conflict.stages.find((entry) => entry.stage === 3);
+
+    if (!indexEntry) {
+      if (await pathExists(join(worktreePath, path))) {
+        throw new GitApplyError("APPLY_CONFLICT", `Agent 未暂存冲突文件 ${path}。`);
+      }
+      if (!targetStage && resultStage) return { path, strategy: "target" };
+      if (!resultStage && targetStage) return { path, strategy: "result" };
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `Agent 删除了冲突文件 ${path}，但该删除无法映射到目标分支侧或本次结果侧。`,
+      );
+    }
+
+    const worktreeDiff = await execa(
+      this.executable,
+      ["-C", worktreePath, "diff", "--quiet", "--", path],
+      { reject: false },
+    );
+    if (worktreeDiff.exitCode !== 0) {
+      throw new GitApplyError("APPLY_CONFLICT", `Agent 暂存后又修改了冲突文件 ${path}。`);
+    }
+
+    if (targetStage && this.indexEntriesMatch(indexEntry, targetStage)) {
+      return { path, strategy: "target" };
+    }
+    if (resultStage && this.indexEntriesMatch(indexEntry, resultStage)) {
+      return { path, strategy: "result" };
+    }
+
+    if (conflict.file.isBinary || !indexEntry.mode.startsWith("100")) {
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `Agent 对二进制或特殊文件 ${path} 生成了新的内容，只允许选择目标分支侧或本次结果侧。`,
+      );
+    }
+    const stat = await lstat(join(worktreePath, path)).catch(() => null);
+    if (!stat?.isFile() || stat.size > maxEditableConflictBytes) {
+      throw new GitApplyError(
+        "APPLY_CONFLICT",
+        `Agent 解决后的文件 ${path} 无法作为文本内容交给人工审核。`,
+      );
+    }
+    const content = await readFile(join(worktreePath, path), "utf8");
+    if (hasUnresolvedConflictMarkers(content)) {
+      throw new GitApplyError("APPLY_CONFLICT", `Agent 解决后的文件 ${path} 仍包含冲突标记。`);
+    }
+    return { path, strategy: "content", content };
+  }
+
+  private indexEntriesMatch(left: ConflictStageEntry, right: ConflictStageEntry): boolean {
+    return left.mode === right.mode && left.objectId === right.objectId;
+  }
+
+  private async getResolvedIndexEntry(
+    worktreePath: string,
+    path: string,
+  ): Promise<ConflictStageEntry | null> {
+    const { stdout } = await execa(this.executable, [
+      "-C",
+      worktreePath,
+      "ls-files",
+      "--stage",
+      "-z",
+      "--",
+      path,
+    ]);
+    return this.parseIndexEntries(stdout).find((entry) => entry.stage === 0) ?? null;
   }
 
   private async createPatchedCommit(
@@ -1257,15 +1425,22 @@ export class GitService {
       "--",
       path,
     ]);
+    return this.parseIndexEntries(stdout).filter((entry) => entry.stage !== 0);
+  }
+
+  private parseIndexEntries(stdout: string): ConflictStageEntry[] {
     return stdout
       .split("\0")
       .filter(Boolean)
-      .map((entry) => {
+      .flatMap((entry) => {
         const separatorIndex = entry.indexOf("\t");
+        if (separatorIndex < 0) return [];
         const [mode = "", objectId = "", stageText = ""] = entry
           .slice(0, separatorIndex)
           .split(" ");
-        return { mode, objectId, stage: Number(stageText) as 1 | 2 | 3 };
+        const stage = Number(stageText);
+        if (![0, 1, 2, 3].includes(stage) || !mode || !objectId) return [];
+        return [{ mode, objectId, stage: stage as 0 | 1 | 2 | 3 }];
       });
   }
 

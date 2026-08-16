@@ -589,6 +589,39 @@ describe("GitService Worktree", () => {
       execa("git", ["-C", repositoryPath, "status", "--porcelain"]),
     ).resolves.toMatchObject({ stdout: "" });
 
+    await expect(
+      service.generateConflictResolutions(
+        {
+          repositoryPath,
+          targetBranch: "main",
+          baseCommit: baseCommit.trim(),
+          resultCommit,
+          expectedTargetCommit: previousCommit.trim(),
+        },
+        async () => undefined,
+      ),
+    ).rejects.toMatchObject({ code: "APPLY_CONFLICT" });
+
+    const agentResolution = await service.generateConflictResolutions(
+      {
+        repositoryPath,
+        targetBranch: "main",
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+        expectedTargetCommit: previousCommit.trim(),
+      },
+      async ({ worktreePath: conflictWorktree, files }) => {
+        expect(files.map((file) => file.path)).toEqual(["README.md"]);
+        await writeFile(join(conflictWorktree, "README.md"), "计数=300\n");
+        await execa("git", ["-C", conflictWorktree, "add", "README.md"]);
+      },
+    );
+    expect(agentResolution).toEqual({
+      targetCommit: previousCommit.trim(),
+      resolutions: [{ path: "README.md", strategy: "content", content: "计数=300\n" }],
+    });
+    expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+
     await execa("git", [
       "-C",
       repositoryPath,
@@ -664,7 +697,7 @@ describe("GitService Worktree", () => {
         baseCommit: baseCommit.trim(),
         resultCommit,
         expectedTargetCommit: previousCommit.trim(),
-        conflictResolutions: [{ path: "README.md", strategy: "content", content: "计数=300\n" }],
+        conflictResolutions: agentResolution.resolutions,
       }),
     ).resolves.toMatchObject({ status: "applied", branch: "main", workingTreeUpdated: true });
     expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=300\n");

@@ -1857,6 +1857,23 @@ export class DevLoopRepository {
       .map(mapRunEvent);
   }
 
+  recordRunEvent(
+    runId: string,
+    type: string,
+    message: string,
+    payload: Record<string, unknown>,
+  ): EventfulResult<RunEvent> {
+    return this.handle.sqlite.transaction(() => {
+      this.requireRunRow(runId);
+      const runEvent = this.insertRunEvent(runId, type, message, payload);
+      const domainEvent = this.insertDomainEvent("run", runId, "run.step_changed", {
+        runId,
+        eventType: type,
+      });
+      return { value: runEvent, events: [domainEvent], replayed: false };
+    })();
+  }
+
   getWorkerState(): WorkerState {
     const row = this.handle.db
       .select()

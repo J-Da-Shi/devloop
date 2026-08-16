@@ -11,10 +11,12 @@ import type {
   DomainEvent,
   Project,
   RejectRunInput,
+  ResolveRunConflictsInput,
   ReviewDecision,
   RunChangedFile,
   RunApplicationResult,
   RunConflictPreview,
+  RunConflictAgentResolution,
   RunEvent,
   RunFilePatch,
   Skill,
@@ -49,6 +51,12 @@ export interface RunApprovalResponse {
   publication?: RunPublishResult;
   application?: RunApplicationResult;
   replayed: boolean;
+}
+
+export interface RunChangedFilesResponse {
+  files: RunChangedFile[];
+  conflictPreview: RunConflictPreview | null;
+  agentResolution: RunConflictAgentResolution | null;
 }
 
 export class ApiError extends Error {
@@ -166,9 +174,7 @@ export const api = {
   runs: () => request<{ runs: TaskRun[] }>("/api/runs"),
   run: (runId: string) => request<RunDetails>(`/api/runs/${runId}`),
   runChangedFiles: (runId: string) =>
-    request<{ files: RunChangedFile[]; conflictPreview: RunConflictPreview | null }>(
-      `/api/runs/${runId}/changed-files`,
-    ),
+    request<RunChangedFilesResponse>(`/api/runs/${runId}/changed-files`),
   runFilePatch: (runId: string, path: string) =>
     request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
   approveRun: (runId: string, input: ApproveRunInput) =>
@@ -176,6 +182,11 @@ export const api = {
       method: "POST",
       body: json(input),
     }),
+  resolveRunConflicts: (runId: string, input: ResolveRunConflictsInput) =>
+    request<{ resolution: RunConflictAgentResolution; replayed: boolean }>(
+      `/api/runs/${runId}/resolve-conflicts`,
+      { method: "POST", body: json(input) },
+    ),
   rejectRun: (runId: string, input: RejectRunInput) =>
     request<{ task: Task; replayed: boolean }>(`/api/runs/${runId}/reject`, {
       method: "POST",

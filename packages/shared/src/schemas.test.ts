@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { approveRunInputSchema } from "./schemas.js";
+import {
+  approveRunInputSchema,
+  resolveRunConflictsInputSchema,
+  runConflictAgentResolutionSchema,
+} from "./schemas.js";
 
 const command = {
   expectedVersion: 3,
@@ -30,5 +34,24 @@ describe("approveRunInputSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("resolveRunConflictsInputSchema", () => {
+  it("要求固定目标 Commit，并接受持久化的 Agent 建议", () => {
+    expect(
+      resolveRunConflictsInputSchema.parse({
+        ...command,
+        expectedTargetCommit: "b".repeat(40),
+      }),
+    ).toMatchObject({ expectedTargetCommit: "b".repeat(40) });
+    expect(
+      runConflictAgentResolutionSchema.parse({
+        targetCommit: "b".repeat(40),
+        resolutions: [{ path: "src/app.ts", strategy: "content", content: "resolved\n" }],
+        summary: "Agent 已解决冲突",
+        completedAt: "2026-08-16T10:00:00.000Z",
+      }),
+    ).toMatchObject({ summary: "Agent 已解决冲突" });
   });
 });

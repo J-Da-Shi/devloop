@@ -520,6 +520,23 @@ describe("DevLoopRepository 自动入队", () => {
       "等待审核",
       "result-commit",
     ).value;
+    const conflictEvent = repository.recordRunEvent(
+      claimed!.value.run.id,
+      "run.conflict_resolution.completed",
+      "Agent 已生成冲突解决建议",
+      {
+        targetCommit: "target-commit",
+        resolutions: [{ path: "README.md", strategy: "content", content: "resolved\n" }],
+      },
+    );
+    expect(conflictEvent.replayed).toBe(false);
+    expect(conflictEvent.events).toEqual([
+      expect.objectContaining({
+        aggregateType: "run",
+        aggregateId: claimed!.value.run.id,
+        type: "run.step_changed",
+      }),
+    ]);
     const feedback = "命令失败详情需要保留。";
     const rejected = repository.rejectRun(
       claimed!.value.run.id,
@@ -575,6 +592,14 @@ describe("DevLoopRepository 自动入队", () => {
           aggregated_output: "1 test failed",
         },
       },
+    });
+    expect(
+      repository
+        .getRunEvents(claimed!.value.run.id)
+        .find((event) => event.type === "run.conflict_resolution.completed")?.payload,
+    ).toEqual({
+      targetCommit: "target-commit",
+      resolutions: [{ path: "README.md", strategy: "content", content: "resolved\n" }],
     });
   });
 

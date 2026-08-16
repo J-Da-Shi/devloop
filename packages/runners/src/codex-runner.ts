@@ -204,6 +204,39 @@ const parseAgentResult = (value: string): RunnerResult => {
 };
 
 const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
+  if (input.mode === "conflict-resolution") {
+    const conflictPaths = input.conflictPaths ?? [];
+    return [
+      "你正在 DevLoop 的一次性 Git Worktree 中解决一次写入冲突。",
+      "当前 Worktree 已把本次执行结果以三方方式应用到目标分支，并保留了真实冲突状态。",
+      "你的修改只会生成供人工审核的冲突解决建议，不会自动写入或提交目标分支。",
+      "",
+      `原任务标题：${input.title}`,
+      "",
+      "原任务目标：",
+      input.goal,
+      "",
+      "原任务验收标准：",
+      ...input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+      "",
+      "需要解决的冲突文件：",
+      ...conflictPaths.map((path) => `- ${path}`),
+      "",
+      "冲突解决要求：",
+      "- 结合原任务意图、目标分支当前代码和本次执行结果，逐个解决上面列出的冲突文件。",
+      "- 可以阅读相关代码和测试理解上下文，但不要修改未列出的文件。",
+      "- 必须清除全部 Git 冲突标记；二进制或删除冲突只能明确选择目标分支侧或本次结果侧。",
+      "- 使用 git add 或 git rm 暂存每一个已经解决的冲突文件。",
+      "- 不要创建 Git commit，不要切换分支，不要修改 .devloop-runtime 目录。",
+      "- 可以运行必要的只读或验证命令；无法可靠判断时返回 blocked，不要猜测。",
+      "- 最终回复只能包含一个 JSON 对象，不要使用 Markdown 代码块或附加说明。",
+      "- 最终 JSON 必须严格满足下面的 AgentResult Schema，结果会由 DevLoop 在本地校验。",
+      "",
+      "AgentResult Schema：",
+      outputSchema.trim(),
+    ].join("\n");
+  }
+
   const criteria = input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`);
   const reviewFeedback = input.reviewFeedback?.trim();
   return [

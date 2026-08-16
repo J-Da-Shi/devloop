@@ -70,7 +70,10 @@ export const taskCommandInputSchema = z.object({
 });
 
 const conflictPathSchema = z.string().min(1).max(1024);
-const runConflictResolutionSchema = z.discriminatedUnion("strategy", [
+const commitHashSchema = z
+  .string()
+  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i, "目标 Commit 格式无效");
+export const runConflictResolutionSchema = z.discriminatedUnion("strategy", [
   z.object({
     path: conflictPathSchema,
     strategy: z.literal("content"),
@@ -82,11 +85,7 @@ const runConflictResolutionSchema = z.discriminatedUnion("strategy", [
 
 export const approveRunInputSchema = taskCommandInputSchema
   .extend({
-    expectedTargetCommit: z
-      .string()
-      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i, "目标 Commit 格式无效")
-      .nullable()
-      .optional(),
+    expectedTargetCommit: commitHashSchema.nullable().optional(),
     conflictResolutions: z.array(runConflictResolutionSchema).max(100).optional(),
   })
   .superRefine((value, context) => {
@@ -113,6 +112,17 @@ export const approveRunInputSchema = taskCommandInputSchema
       });
     }
   });
+
+export const resolveRunConflictsInputSchema = taskCommandInputSchema.extend({
+  expectedTargetCommit: commitHashSchema,
+});
+
+export const runConflictAgentResolutionSchema = z.object({
+  targetCommit: commitHashSchema,
+  resolutions: z.array(runConflictResolutionSchema).max(100),
+  summary: z.string().min(1).max(16_000),
+  completedAt: z.string().datetime(),
+});
 
 export const confirmTaskInputSchema = taskCommandInputSchema.extend({
   baseStrategy: baseStrategySchema.default("LATEST_ACCEPTED"),
@@ -156,6 +166,7 @@ export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
 export type ApproveRunInput = z.infer<typeof approveRunInputSchema>;
+export type ResolveRunConflictsInput = z.infer<typeof resolveRunConflictsInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;
 export type RejectRunInput = z.infer<typeof rejectRunInputSchema>;
 export type ValidateSkillInput = z.infer<typeof validateSkillInputSchema>;

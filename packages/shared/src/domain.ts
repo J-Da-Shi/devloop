@@ -175,6 +175,13 @@ export type RunConflictResolution =
       strategy: "target" | "result";
     };
 
+export interface RunConflictAgentResolution {
+  targetCommit: string;
+  resolutions: RunConflictResolution[];
+  summary: string;
+  completedAt: string;
+}
+
 export interface RunApplicationResult {
   status: "applied" | "already_applied";
   branch: string;

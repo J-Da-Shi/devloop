@@ -69,6 +69,7 @@ const isRepair = prompt.includes("你只负责修复已有最终结果的 JSON �
 if (args.includes("--output-schema")) process.exit(3);
 if (isRepair && (!args.includes("shell_tool") || !args.includes("unified_exec"))) process.exit(4);
 if (!isRepair && prompt.includes("处理审核反馈") && !prompt.includes("必须补充回归测试")) process.exit(5);
+if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("git add") || !prompt.includes("不要创建 Git commit"))) process.exit(6);
 if ((!isRepair && !prompt.includes("实现真实执行")) || outputIndex < 0) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-test" }) + "\\n");
 if (prompt.includes("上游失败")) {
@@ -141,6 +142,26 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     expect(events).toContain("Codex 会话已启动");
     expect(events).toContain("Codex 正在执行：pnpm test");
     expect(events).toContain("Codex 已完成本轮开发");
+
+    const conflictHandle = runner.start(
+      {
+        runId: "conflict-run",
+        taskId: "task",
+        title: "实现真实执行",
+        goal: "解决实现真实执行产生的写入冲突",
+        acceptanceCriteria: ["完成开发"],
+        mode: "conflict-resolution",
+        conflictPaths: ["README.md"],
+        worktreePath,
+        outputSchemaPath,
+        signal: new AbortController().signal,
+      },
+      () => undefined,
+    );
+    await expect(conflictHandle.result).resolves.toMatchObject({
+      outcome: "succeeded",
+      summary: "实现完成",
+    });
 
     const repairEvents: string[] = [];
     const repairHandle = runner.start(
