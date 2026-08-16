@@ -20,6 +20,69 @@ afterEach(() => {
 });
 
 describe("DevLoopRepository 自动入队", () => {
+  it("自动解决冲突默认开启，并随不可变 Revision 和审核重试保留", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "自动解决冲突测试项目",
+      repositoryUrl: "git@example.com:team/auto-resolve.git",
+      repositoryPath: "/tmp/devloop-auto-resolve-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "自动解决冲突设置",
+      goal: "验证设置完整传递",
+      acceptanceCriteria: ["Worker 读取 Revision 中的设置"],
+      priority: 50,
+    }).value;
+
+    expect(draft.autoResolveConflicts).toBe(true);
+
+    const updated = repository.updateDraftTask(draft.id, "instance-owner", {
+      autoResolveConflicts: false,
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+    }).value;
+    const ready = repository.confirmTask(updated.id, "instance-owner", {
+      expectedVersion: updated.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+
+    expect(updated.autoResolveConflicts).toBe(false);
+    expect(repository.getTaskRevision(ready.activeRevisionId!)).toMatchObject({
+      autoResolveConflicts: false,
+      reviewFeedback: null,
+    });
+
+    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(firstClaim?.value.autoResolveConflicts).toBe(false);
+    const completed = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "等待审核",
+      "result-commit",
+    ).value;
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      "请调整实现",
+    ).value;
+
+    expect(repository.getTaskRevision(rejected.activeRevisionId!)).toMatchObject({
+      autoResolveConflicts: false,
+      reviewFeedback: "请调整实现",
+    });
+    expect(
+      repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z")?.value.autoResolveConflicts,
+    ).toBe(false);
+  });
+
   it("公开项目不包含服务器托管路径", () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -444,6 +507,12 @@ describe("DevLoopRepository 自动入队", () => {
       type: "run.rejected",
       message: `审核已驳回：${feedback}`,
     });
+    expect(repository.getTaskRevision(rejected.value.activeRevisionId!)).toMatchObject({
+      baseStrategy: "PINNED",
+      baseRef: "first-result-commit",
+      confirmedBaseCommit: "first-result-commit",
+      reviewFeedback: feedback,
+    });
 
     const retryClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
     expect(retryClaim?.value).toMatchObject({
@@ -451,19 +520,34 @@ describe("DevLoopRepository 自动入队", () => {
       goal: "按审核意见完善实现",
       acceptanceCriteria: ["补充回归测试", "保留现有行为"],
       reviewFeedback: feedback,
+      continuationBaseCommit: "base-commit",
+      continuationResultCommit: "first-result-commit",
+      run: { baseCommit: "first-result-commit" },
     });
-    const retryCompleted = repository.completeRun(
+    const blockedRetry = repository.blockRun(
       retryClaim!.value.run.id,
       retryClaim!.value.run.executionToken,
-      "第二轮执行完成",
-      "second-result-commit",
-    ).value;
+      "第二轮暂时阻塞",
+    ).value.task;
+    const directRetry = repository.confirmTask(blockedRetry.id, "instance-owner", {
+      expectedVersion: blockedRetry.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const directRetryClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(directRetryClaim?.value).toMatchObject({
+      reviewFeedback: feedback,
+      continuationBaseCommit: "base-commit",
+      continuationResultCommit: "first-result-commit",
+      run: { baseCommit: "first-result-commit", taskRevisionId: directRetry.activeRevisionId },
+    });
 
     expect(() =>
       repository.rejectRun(
         firstClaim!.value.run.id,
         "instance-owner",
-        retryCompleted.task.version,
+        directRetryClaim!.value.task.version,
         randomUUID(),
         "错误地驳回旧 Run",
       ),

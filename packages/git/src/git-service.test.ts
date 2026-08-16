@@ -613,7 +613,6 @@ describe("GitService Worktree", () => {
       async ({ worktreePath: conflictWorktree, files }) => {
         expect(files.map((file) => file.path)).toEqual(["README.md"]);
         await writeFile(join(conflictWorktree, "README.md"), "计数=300\n");
-        await execa("git", ["-C", conflictWorktree, "add", "README.md"]);
       },
     );
     expect(agentResolution).toEqual({
@@ -621,6 +620,38 @@ describe("GitService Worktree", () => {
       resolutions: [{ path: "README.md", strategy: "content", content: "计数=300\n" }],
     });
     expect(await readFile(join(repositoryPath, "README.md"), "utf8")).toBe("计数=200\n");
+
+    const reconciled = await service.reconcileCommitConflicts(
+      {
+        repositoryPath,
+        targetBranch: "main",
+        targetCommit: previousCommit.trim(),
+        baseCommit: baseCommit.trim(),
+        resultCommit,
+      },
+      async ({ worktreePath: conflictWorktree }) => {
+        await writeFile(join(conflictWorktree, "README.md"), "计数=350\n");
+      },
+    );
+    expect(reconciled).toMatchObject({
+      status: "resolved",
+      targetCommit: previousCommit.trim(),
+      resolutions: [{ path: "README.md", strategy: "content", content: "计数=350\n" }],
+    });
+    await expect(
+      execa("git", ["-C", repositoryPath, "show", `${reconciled.resultCommit}:README.md`]),
+    ).resolves.toMatchObject({ stdout: "计数=350" });
+    await expect(
+      execa("git", ["-C", repositoryPath, "rev-parse", `${reconciled.resultCommit}^`]),
+    ).resolves.toMatchObject({ stdout: previousCommit.trim() });
+    await service.moveWorktreeToCommit({
+      worktreePath,
+      expectedCommit: resultCommit,
+      targetCommit: reconciled.resultCommit,
+    });
+    await expect(execa("git", ["-C", worktreePath, "rev-parse", "HEAD"])).resolves.toMatchObject({
+      stdout: reconciled.resultCommit,
+    });
 
     await execa("git", [
       "-C",
@@ -807,7 +838,7 @@ describe("GitService 远程仓库", () => {
     });
   });
 
-  it("远程目标分支已前进时拒绝强制覆盖", async () => {
+  it("远程目标分支已前进时拒绝旧结果，并允许无冲突对齐后推送", async () => {
     const { root, remotePath, managedPath, baseCommit } = await createRemoteFixture(
       "devloop-git-remote-drift-",
     );
@@ -842,5 +873,45 @@ describe("GitService 远程仓库", () => {
     await expect(
       execa("git", ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
     ).resolves.toMatchObject({ stdout: peerCommit });
+
+    let resolverCalled = false;
+    const reconciled = await service.reconcileCommitConflicts(
+      {
+        repositoryPath: managedPath,
+        targetBranch: "main",
+        targetCommit: peerCommit,
+        baseCommit,
+        resultCommit,
+      },
+      async () => {
+        resolverCalled = true;
+      },
+    );
+
+    expect(resolverCalled).toBe(false);
+    expect(reconciled).toMatchObject({
+      status: "clean",
+      targetCommit: peerCommit,
+      resolutions: [],
+    });
+    expect(reconciled.resultCommit).not.toBe(resultCommit);
+    await expect(
+      execa("git", ["-C", managedPath, "rev-parse", `${reconciled.resultCommit}^`]),
+    ).resolves.toMatchObject({ stdout: peerCommit });
+    await expect(
+      service.pushResult({
+        repositoryPath: managedPath,
+        targetBranch: "main",
+        baseCommit: peerCommit,
+        resultCommit: reconciled.resultCommit,
+      }),
+    ).resolves.toMatchObject({
+      status: "pushed",
+      previousCommit: peerCommit,
+      currentCommit: reconciled.resultCommit,
+    });
+    await expect(
+      execa("git", ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
+    ).resolves.toMatchObject({ stdout: reconciled.resultCommit });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   approveRunInputSchema,
+  createTaskInputSchema,
   resolveRunConflictsInputSchema,
   runConflictAgentResolutionSchema,
 } from "./schemas.js";
@@ -9,6 +10,24 @@ const command = {
   expectedVersion: 3,
   idempotencyKey: "2d29a851-94c7-4c79-a58b-87ad6aa4241e",
 };
+
+describe("createTaskInputSchema", () => {
+  const input = {
+    projectId: "2d29a851-94c7-4c79-a58b-87ad6aa4241e",
+    targetBranch: "main",
+    title: "自动解决冲突",
+    goal: "验证任务配置默认值",
+    acceptanceCriteria: ["默认开启"],
+    priority: 50,
+  };
+
+  it("默认开启自动解决冲突，同时允许用户关闭", () => {
+    expect(createTaskInputSchema.parse(input).autoResolveConflicts).toBe(true);
+    expect(
+      createTaskInputSchema.parse({ ...input, autoResolveConflicts: false }).autoResolveConflicts,
+    ).toBe(false);
+  });
+});
 
 describe("approveRunInputSchema", () => {
   it("接受目标 Commit 和多种冲突解决策略", () => {

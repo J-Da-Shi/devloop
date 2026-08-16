@@ -59,6 +59,7 @@ export interface Task {
   projectId: string;
   projectName: string;
   targetBranch: string;
+  autoResolveConflicts: boolean;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -76,6 +77,7 @@ export interface TaskRevision {
   id: string;
   taskId: string;
   revision: number;
+  autoResolveConflicts: boolean;
   title: string;
   goal: string;
   acceptanceCriteria: string[];

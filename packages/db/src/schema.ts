@@ -46,6 +46,9 @@ export const tasks = sqliteTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     targetBranch: text("target_branch").notNull().default("HEAD"),
+    autoResolveConflicts: integer("auto_resolve_conflicts", { mode: "boolean" })
+      .notNull()
+      .default(true),
     title: text("title").notNull(),
     goal: text("goal").notNull(),
     acceptanceCriteriaJson: text("acceptance_criteria_json").notNull(),

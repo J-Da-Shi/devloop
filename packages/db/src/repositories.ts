@@ -64,6 +64,9 @@ interface TaskRevisionSpecSnapshot {
   goal: string;
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
+  autoResolveConflicts: boolean;
+  continuationBaseCommit: string | null;
+  continuationResultCommit: string | null;
 }
 
 const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
@@ -74,12 +77,26 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
   const record = parsed as Record<string, unknown>;
   const acceptanceCriteria = record.acceptanceCriteria;
   const reviewFeedback = record.reviewFeedback;
+  const autoResolveConflicts = record.autoResolveConflicts;
+  const continuationBaseCommit = record.continuationBaseCommit;
+  const continuationResultCommit = record.continuationResultCommit;
   if (
     typeof record.title !== "string" ||
     typeof record.goal !== "string" ||
     !Array.isArray(acceptanceCriteria) ||
     !acceptanceCriteria.every((item) => typeof item === "string") ||
-    (reviewFeedback !== undefined && reviewFeedback !== null && typeof reviewFeedback !== "string")
+    (reviewFeedback !== undefined &&
+      reviewFeedback !== null &&
+      typeof reviewFeedback !== "string") ||
+    (autoResolveConflicts !== undefined && typeof autoResolveConflicts !== "boolean") ||
+    (continuationBaseCommit !== undefined &&
+      continuationBaseCommit !== null &&
+      (typeof continuationBaseCommit !== "string" || !continuationBaseCommit.trim())) ||
+    (continuationResultCommit !== undefined &&
+      continuationResultCommit !== null &&
+      (typeof continuationResultCommit !== "string" || !continuationResultCommit.trim())) ||
+    (continuationBaseCommit === undefined || continuationBaseCommit === null) !==
+      (continuationResultCommit === undefined || continuationResultCommit === null)
   ) {
     throw new Error("任务 Revision 内容格式无效");
   }
@@ -88,6 +105,9 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
     goal: record.goal,
     acceptanceCriteria,
     reviewFeedback: reviewFeedback ?? null,
+    autoResolveConflicts: autoResolveConflicts ?? true,
+    continuationBaseCommit: continuationBaseCommit ?? null,
+    continuationResultCommit: continuationResultCommit ?? null,
   };
 };
 
@@ -109,6 +129,7 @@ const mapTask = (row: TaskRow, projectName: string): Task => ({
   projectId: row.projectId,
   projectName,
   targetBranch: row.targetBranch,
+  autoResolveConflicts: row.autoResolveConflicts,
   title: row.title,
   goal: row.goal,
   acceptanceCriteria: parseStringArray(row.acceptanceCriteriaJson),
@@ -128,6 +149,7 @@ const mapTaskRevision = (row: TaskRevisionRow): TaskRevision => {
     id: row.id,
     taskId: row.taskId,
     revision: row.revision,
+    autoResolveConflicts: spec.autoResolveConflicts,
     title: spec.title,
     goal: spec.goal,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -249,10 +271,13 @@ export interface ClaimedTask {
   projectPath: string;
   projectDefaultBaseRef: string;
   projectRepositoryUrl: string | null;
+  autoResolveConflicts: boolean;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
+  continuationBaseCommit: string | null;
+  continuationResultCommit: string | null;
 }
 
 export interface RunApplicationContext {
@@ -580,7 +605,11 @@ export class DevLoopRepository {
     return row ? mapTask(row.task, row.projectName) : null;
   }
 
-  createTask(input: CreateTaskInput): EventfulResult<Task> {
+  createTask(
+    input: Omit<CreateTaskInput, "autoResolveConflicts"> & {
+      autoResolveConflicts?: boolean;
+    },
+  ): EventfulResult<Task> {
     const id = randomUUID();
     const timestamp = now();
 
@@ -600,6 +629,7 @@ export class DevLoopRepository {
           id,
           projectId: input.projectId,
           targetBranch: input.targetBranch,
+          autoResolveConflicts: input.autoResolveConflicts ?? true,
           title: input.title,
           goal: input.goal,
           acceptanceCriteriaJson: JSON.stringify(input.acceptanceCriteria),
@@ -625,6 +655,7 @@ export class DevLoopRepository {
     deviceId: string,
     input: {
       targetBranch?: string | undefined;
+      autoResolveConflicts?: boolean | undefined;
       title?: string | undefined;
       goal?: string | undefined;
       acceptanceCriteria?: string[] | undefined;
@@ -650,6 +681,7 @@ export class DevLoopRepository {
           .update(tasks)
           .set({
             targetBranch: input.targetBranch ?? current.targetBranch,
+            autoResolveConflicts: input.autoResolveConflicts ?? current.autoResolveConflicts,
             title: input.title ?? current.title,
             goal: input.goal ?? current.goal,
             acceptanceCriteriaJson:
@@ -700,12 +732,30 @@ export class DevLoopRepository {
             .get()?.value ?? 0) + 1;
         const timestamp = now();
         const revisionId = randomUUID();
+        const previousRevision = current.activeRevisionId
+          ? this.handle.db
+              .select()
+              .from(taskRevisions)
+              .where(eq(taskRevisions.id, current.activeRevisionId))
+              .get()
+          : null;
+        const previousSpec = previousRevision
+          ? parseTaskRevisionSpec(previousRevision.specJson)
+          : null;
+        const continuationBaseCommit = previousSpec?.continuationBaseCommit ?? null;
+        const continuationResultCommit = previousSpec?.continuationResultCommit ?? null;
+        const baseStrategy = continuationResultCommit ? "PINNED" : input.baseStrategy;
+        const baseRef = continuationResultCommit ?? current.targetBranch;
         const spec = {
           title: current.title,
           goal: current.goal,
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
-          baseStrategy: input.baseStrategy,
-          baseRef: current.targetBranch,
+          reviewFeedback: previousSpec?.reviewFeedback ?? null,
+          autoResolveConflicts: current.autoResolveConflicts,
+          continuationBaseCommit,
+          continuationResultCommit,
+          baseStrategy,
+          baseRef,
           targetBranch: current.targetBranch,
         };
         const specJson = JSON.stringify(spec);
@@ -718,9 +768,9 @@ export class DevLoopRepository {
             specJson,
             specHash: hash(specJson),
             targetBranch: current.targetBranch,
-            baseRef: current.targetBranch,
-            baseStrategy: input.baseStrategy,
-            confirmedBaseCommit: project.integrationCommit,
+            baseRef,
+            baseStrategy,
+            confirmedBaseCommit: continuationResultCommit ?? project.integrationCommit,
             createdFrom: current.activeRevisionId ?? "draft",
             createdByDeviceId: deviceId,
             confirmedAt: timestamp,
@@ -945,10 +995,13 @@ export class DevLoopRepository {
           projectPath: project.path,
           projectDefaultBaseRef: project.defaultBaseRef,
           projectRepositoryUrl: project.repositoryUrl,
+          autoResolveConflicts: revisionSpec.autoResolveConflicts,
           title: revisionSpec.title,
           goal: revisionSpec.goal,
           acceptanceCriteria: revisionSpec.acceptanceCriteria,
           reviewFeedback: revisionSpec.reviewFeedback,
+          continuationBaseCommit: revisionSpec.continuationBaseCommit,
+          continuationResultCommit: revisionSpec.continuationResultCommit,
         },
         events: [taskEvent, runEvent],
         replayed: false,
@@ -1745,6 +1798,9 @@ export class DevLoopRepository {
       if (!currentRevision) {
         throw new Error("执行记录关联的 Revision 不存在");
       }
+      if (!currentRun.baseCommit || !currentRun.resultCommit) {
+        throw new Error("执行记录缺少连续迭代所需的基础或结果 Commit");
+      }
       const project = this.requireProjectRow(currentTask.projectId);
       const timestamp = now();
       const revisionNumber =
@@ -1755,7 +1811,14 @@ export class DevLoopRepository {
           .get()?.value ?? 0) + 1;
       const revisionId = randomUUID();
       const previousSpec = JSON.parse(currentRevision.specJson) as Record<string, unknown>;
-      const specJson = JSON.stringify({ ...previousSpec, reviewFeedback: feedback });
+      const specJson = JSON.stringify({
+        ...previousSpec,
+        reviewFeedback: feedback,
+        continuationBaseCommit: currentRun.baseCommit,
+        continuationResultCommit: currentRun.resultCommit,
+        baseStrategy: "PINNED",
+        baseRef: currentRun.resultCommit,
+      });
       this.handle.db
         .insert(taskRevisions)
         .values({
@@ -1765,9 +1828,9 @@ export class DevLoopRepository {
           specJson,
           specHash: hash(specJson),
           targetBranch: currentRevision.targetBranch,
-          baseRef: currentRevision.baseRef,
-          baseStrategy: currentRevision.baseStrategy,
-          confirmedBaseCommit: project.integrationCommit,
+          baseRef: currentRun.resultCommit,
+          baseStrategy: "PINNED",
+          confirmedBaseCommit: currentRun.resultCommit,
           createdFrom: currentRevision.id,
           createdByDeviceId: deviceId,
           confirmedAt: timestamp,

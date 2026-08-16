@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Form, Input, InputNumber, Modal, Select } from "antd";
+import { Button, Form, Input, InputNumber, Modal, Select, Switch } from "antd";
 import {
   Ban,
   Check,
@@ -32,6 +32,7 @@ const taskFormSchema = z.object({
   goal: z.string().trim().min(1, "请输入任务目标").max(8_000, "目标内容过长"),
   criteriaText: z.string().trim().min(1, "请至少填写一条验收标准"),
   priority: z.number().int().min(0).max(100),
+  autoResolveConflicts: z.boolean(),
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -79,6 +80,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       goal: task?.goal ?? "",
       criteriaText: task?.acceptanceCriteria.join("\n") ?? "",
       priority: task?.priority ?? 50,
+      autoResolveConflicts: task?.autoResolveConflicts ?? true,
     };
   }, [projects, task]);
   const form = useForm<TaskFormValues>({
@@ -112,6 +114,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
           goal: values.goal,
           acceptanceCriteria,
           priority: values.priority,
+          autoResolveConflicts: values.autoResolveConflicts,
           expectedVersion: task.version,
           idempotencyKey: crypto.randomUUID(),
         });
@@ -123,6 +126,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         goal: values.goal,
         acceptanceCriteria,
         priority: values.priority,
+        autoResolveConflicts: values.autoResolveConflicts,
       });
     },
     onSuccess: async (data) => {
@@ -330,6 +334,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
             </StatusBadge>
             <span>分数 {task.priority}</span>
             <span>版本 {task.version}</span>
+            <span>{task.autoResolveConflicts ? "自动解决冲突" : "人工解决冲突"}</span>
           </div>
         ) : null}
 
@@ -452,6 +457,27 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                       max={100}
                       onBlur={field.onBlur}
                       onChange={(value) => field.onChange(value ?? 0)}
+                    />
+                  )}
+                />
+              </Form.Item>
+              <Form.Item
+                label="自动解决冲突"
+                htmlFor="task-auto-resolve-conflicts"
+                tooltip="Codex 完成开发后会检查目标分支；存在冲突时先自动解决，再进入待审核。"
+                className="field-compact"
+              >
+                <Controller
+                  control={form.control}
+                  name="autoResolveConflicts"
+                  render={({ field }) => (
+                    <Switch
+                      id="task-auto-resolve-conflicts"
+                      checked={field.value}
+                      disabled={!canEdit}
+                      checkedChildren="开启"
+                      unCheckedChildren="关闭"
+                      onChange={field.onChange}
                     />
                   )}
                 />

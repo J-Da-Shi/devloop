@@ -38,6 +38,7 @@ export const targetBranchSchema = z
 export const createTaskInputSchema = z.object({
   projectId: z.string().uuid(),
   targetBranch: targetBranchSchema,
+  autoResolveConflicts: z.boolean().default(true),
   title: z.string().trim().min(1).max(160),
   goal: z.string().trim().min(1).max(8000),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20),
@@ -47,6 +48,7 @@ export const createTaskInputSchema = z.object({
 export const updateTaskInputSchema = z
   .object({
     targetBranch: targetBranchSchema.optional(),
+    autoResolveConflicts: z.boolean().optional(),
     title: z.string().trim().min(1).max(160).optional(),
     goal: z.string().trim().min(1).max(8000).optional(),
     acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20).optional(),
@@ -58,6 +60,7 @@ export const updateTaskInputSchema = z
     (value) =>
       value.title !== undefined ||
       value.targetBranch !== undefined ||
+      value.autoResolveConflicts !== undefined ||
       value.goal !== undefined ||
       value.acceptanceCriteria !== undefined ||
       value.priority !== undefined,

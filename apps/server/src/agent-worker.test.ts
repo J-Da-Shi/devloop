@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DevLoopRepository, openDatabase, type DatabaseHandle } from "@devloop/db";
+import type {
+  ConflictResolutionWorkspace,
+  MoveWorktreeToCommitInput,
+  ReconcileCommitInput,
+  ReconcileCommitResult,
+} from "@devloop/git";
 import type { RunnerCapabilities, TaskStatus } from "@devloop/shared";
 import type {
   AgentRunner,
@@ -78,6 +84,15 @@ class ControlledRunner implements AgentRunner {
       risks: [],
     });
   }
+
+  blockNext(): void {
+    this.pending.shift()?.resolve({
+      outcome: "blocked",
+      summary: "冲突无法自动解决",
+      risks: [],
+      blockedReason: "需要人工判断业务语义",
+    });
+  }
 }
 
 class ControlledGitService {
@@ -94,6 +109,11 @@ class ControlledGitService {
     baseCommit: string;
   }> = [];
   readonly committed: Array<{ worktreePath: string; message: string }> = [];
+  readonly reconciled: ReconcileCommitInput[] = [];
+  readonly moved: MoveWorktreeToCommitInput[] = [];
+  readonly remoteBaseCommits: string[] = [];
+  readonly localBaseCommits: string[] = [];
+  reconciliationResult: ReconcileCommitResult | null = null;
 
   async fetchRepository(repositoryPath: string): Promise<void> {
     this.fetched.push(repositoryPath);
@@ -104,9 +124,11 @@ class ControlledGitService {
     targetBranch: string;
     fallbackRef: string;
   }): Promise<{ targetBranch: string; baseCommit: string; branchExists: boolean }> {
+    const configuredCommit = this.remoteBaseCommits.shift();
     return {
       targetBranch: input.targetBranch,
-      baseCommit: input.targetBranch === "main" ? "base-commit" : "fallback-commit",
+      baseCommit:
+        configuredCommit ?? (input.targetBranch === "main" ? "base-commit" : "fallback-commit"),
       branchExists: input.targetBranch === "main",
     };
   }
@@ -119,7 +141,7 @@ class ControlledGitService {
     this.resolvedLocal.push(input);
     return {
       targetBranch: input.targetBranch,
-      baseCommit: "local-base-commit",
+      baseCommit: this.localBaseCommits.shift() ?? "local-base-commit",
       branchExists: true,
     };
   }
@@ -131,6 +153,42 @@ class ControlledGitService {
   async commitWorktree(input: (typeof this.committed)[number]): Promise<string> {
     this.committed.push(input);
     return "result-commit";
+  }
+
+  async reconcileCommitConflicts(
+    input: ReconcileCommitInput,
+    resolver: (workspace: ConflictResolutionWorkspace) => Promise<void>,
+  ): Promise<ReconcileCommitResult> {
+    this.reconciled.push(input);
+    const result =
+      this.reconciliationResult ??
+      ({
+        status: "clean",
+        targetCommit: input.targetCommit,
+        resultCommit: input.resultCommit,
+        resolutions: [],
+      } satisfies ReconcileCommitResult);
+    if (result.status === "clean") {
+      return result;
+    }
+    await resolver({
+      worktreePath: "/tmp/devloop-worker-conflict-worktree",
+      files: [
+        {
+          path: "src/app.ts",
+          patch: "",
+          isBinary: false,
+          content: "<<<<<<< target\n=======\n>>>>>>> result\n",
+          targetExists: true,
+          resultExists: true,
+        },
+      ],
+    });
+    return result;
+  }
+
+  async moveWorktreeToCommit(input: MoveWorktreeToCommitInput): Promise<void> {
+    this.moved.push(input);
   }
 }
 
@@ -166,6 +224,7 @@ const createReadyTask = (
   projectId: string,
   title: string,
   priority: number,
+  autoResolveConflicts = true,
 ) => {
   const draft = repository.createTask({
     projectId,
@@ -174,6 +233,7 @@ const createReadyTask = (
     goal: `完成 ${title}`,
     acceptanceCriteria: ["任务被 AgentWorker 正确领取"],
     priority,
+    autoResolveConflicts,
   }).value;
   return repository.confirmTask(draft.id, "local-desktop", {
     expectedVersion: draft.version,
@@ -412,6 +472,150 @@ describe("AgentWorker", () => {
     await waitForTaskStatus(repository, ready.id, "REVIEW");
   });
 
+  it("审核驳回后先对齐上一轮结果，再根据反馈继续执行", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "连续审核迭代项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-continuous-review-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const ready = createReadyTask(repository, project.id, "连续处理审核反馈", 100);
+    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstCompleted = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "第一轮等待审核",
+      "previous-result-commit",
+    ).value;
+    const feedback = "保留上一轮实现，并补充异常路径测试";
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      firstCompleted.task.version,
+      randomUUID(),
+      feedback,
+    ).value;
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    gitService.localBaseCommits.push("target-current-commit", "target-current-commit");
+    gitService.reconciliationResult = {
+      status: "resolved",
+      targetCommit: "target-current-commit",
+      resultCommit: "continued-result-commit",
+      resolutions: [
+        {
+          path: "src/app.ts",
+          strategy: "content",
+          content: 'export const value = "continued";\n',
+        },
+      ],
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      now: () => Date.parse(rejected.updatedAt) + 1,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(ready.id)?.latestRunId;
+    expect(gitService.reconciled).toEqual([
+      {
+        repositoryPath: "/tmp/devloop-continuous-review-project",
+        targetBranch: "main",
+        targetCommit: "target-current-commit",
+        baseCommit: "local-base-commit",
+        resultCommit: "previous-result-commit",
+      },
+    ]);
+    expect(runner.inputs[0]).toMatchObject({
+      mode: "conflict-resolution",
+      conflictPaths: ["src/app.ts"],
+    });
+
+    runner.succeedNext();
+    await waitFor(() => runner.inputs.length === 2);
+    expect(gitService.created[0]).toMatchObject({
+      branchName: `devloop/run/${runId}`,
+      baseCommit: "continued-result-commit",
+    });
+    expect(runner.inputs[1]).toMatchObject({
+      runId,
+      reviewFeedback: feedback,
+      worktreePath: `/tmp/devloop-worker-worktrees/${runId}`,
+    });
+    expect(repository.getRun(runId ?? "")?.baseCommit).toBe("target-current-commit");
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, ready.id, "REVIEW");
+    expect(repository.getRun(runId ?? "")).toMatchObject({
+      baseCommit: "target-current-commit",
+      resultCommit: "result-commit",
+      status: "SUCCEEDED",
+    });
+    expect(repository.getRunEvents(runId ?? "").map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "run.continuation.started",
+        "run.conflict_resolution.completed",
+        "run.continuation.prepared",
+      ]),
+    );
+  });
+
+  it("连续迭代存在冲突且关闭自动解决时保持阻塞", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "人工处理连续迭代冲突项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-manual-continuation-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const ready = createReadyTask(repository, project.id, "人工处理连续迭代冲突", 100, false);
+    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstCompleted = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "第一轮等待审核",
+      "previous-result-commit",
+    ).value;
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      firstCompleted.task.version,
+      randomUUID(),
+      "继续完善实现",
+    ).value;
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    gitService.localBaseCommits.push("target-current-commit");
+    gitService.reconciliationResult = {
+      status: "resolved",
+      targetCommit: "target-current-commit",
+      resultCommit: "continued-result-commit",
+      resolutions: [],
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      now: () => Date.parse(rejected.updatedAt) + 1,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitForTaskStatus(repository, ready.id, "BLOCKED");
+    expect(runner.inputs).toHaveLength(0);
+    expect(gitService.created).toHaveLength(0);
+    expect(repository.getRun(repository.getTask(ready.id)?.latestRunId ?? "")?.summary).toContain(
+      "任务已关闭自动解决冲突",
+    );
+  });
+
   it("Codex 执行前创建 Worktree，成功后保存结果 Commit", async () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -449,6 +653,10 @@ describe("AgentWorker", () => {
 
     runner.succeedNext();
     await waitForTaskStatus(repository, task.id, "REVIEW");
+    expect(gitService.fetched).toEqual([
+      "/tmp/devloop-codex-worker-project",
+      "/tmp/devloop-codex-worker-project",
+    ]);
     const run = runId ? repository.getRun(runId) : null;
     expect(run).toMatchObject({
       runner: "codex",
@@ -504,5 +712,198 @@ describe("AgentWorker", () => {
 
     runner.succeedNext();
     await waitForTaskStatus(repository, task.id, "REVIEW");
+    expect(gitService.resolvedLocal).toHaveLength(2);
+  });
+
+  it("Codex 完成开发后自动解决冲突，再把已解决 Commit 交给审核", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "自动解决冲突项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-auto-conflict-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "自动解决写入冲突", 100);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    gitService.localBaseCommits.push("local-base-commit", "target-current-commit");
+    gitService.reconciliationResult = {
+      status: "resolved",
+      targetCommit: "target-current-commit",
+      resultCommit: "resolved-result-commit",
+      resolutions: [
+        {
+          path: "src/app.ts",
+          strategy: "content",
+          content: 'export const value = "merged";\n',
+        },
+      ],
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(task.id)?.latestRunId;
+    runner.succeedNext();
+    await waitFor(() => runner.inputs.length === 2);
+
+    expect(repository.getTask(task.id)?.status).toBe("RUNNING");
+    expect(repository.getRun(runId ?? "")?.status).toBe("REPAIRING");
+    expect(runner.inputs[1]).toMatchObject({
+      mode: "conflict-resolution",
+      conflictPaths: ["src/app.ts"],
+      worktreePath: "/tmp/devloop-worker-conflict-worktree",
+    });
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+    expect(repository.getRun(runId ?? "")).toMatchObject({
+      baseCommit: "target-current-commit",
+      resultCommit: "resolved-result-commit",
+      status: "SUCCEEDED",
+    });
+    expect(gitService.moved).toEqual([
+      {
+        worktreePath: `/tmp/devloop-worker-worktrees/${runId}`,
+        expectedCommit: "result-commit",
+        targetCommit: "resolved-result-commit",
+      },
+    ]);
+    expect(repository.getRunEvents(runId ?? "").map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "run.conflict_check.started",
+        "run.conflict_resolution.started",
+        "run.conflict_resolution.progress",
+        "run.conflict_resolution.completed",
+        "run.finished",
+      ]),
+    );
+  });
+
+  it("目标分支无冲突前进时先对齐最新 Commit 再进入待审核", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "无冲突对齐项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-clean-reconcile-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "对齐最新目标分支", 100);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    gitService.localBaseCommits.push("local-base-commit", "target-current-commit");
+    gitService.reconciliationResult = {
+      status: "clean",
+      targetCommit: "target-current-commit",
+      resultCommit: "clean-reconciled-result-commit",
+      resolutions: [],
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(task.id)?.latestRunId;
+    runner.succeedNext();
+
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+    expect(runner.inputs).toHaveLength(1);
+    expect(repository.getRun(runId ?? "")).toMatchObject({
+      baseCommit: "target-current-commit",
+      resultCommit: "clean-reconciled-result-commit",
+      status: "SUCCEEDED",
+    });
+    expect(gitService.moved).toEqual([
+      {
+        worktreePath: `/tmp/devloop-worker-worktrees/${runId}`,
+        expectedCommit: "result-commit",
+        targetCommit: "clean-reconciled-result-commit",
+      },
+    ]);
+    expect(repository.getRunEvents(runId ?? "").map((event) => event.type)).toContain(
+      "run.conflict_check.completed",
+    );
+  });
+
+  it("自动解决冲突被阻塞时不会进入待审核", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "自动解决冲突阻塞项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-blocked-auto-conflict-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "处理无法自动解决的冲突", 100);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    gitService.localBaseCommits.push("local-base-commit", "target-current-commit");
+    gitService.reconciliationResult = {
+      status: "resolved",
+      targetCommit: "target-current-commit",
+      resultCommit: "resolved-result-commit",
+      resolutions: [],
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(task.id)?.latestRunId;
+    runner.succeedNext();
+    await waitFor(() => runner.inputs.length === 2);
+    runner.blockNext();
+
+    await waitForTaskStatus(repository, task.id, "BLOCKED");
+    expect(repository.getTask(task.id)?.status).not.toBe("REVIEW");
+    expect(repository.getRun(runId ?? "")?.status).toBe("BLOCKED");
+    expect(gitService.moved).toHaveLength(0);
+    expect(repository.getRunEvents(runId ?? "").map((event) => event.type)).toContain(
+      "run.blocked",
+    );
+  });
+
+  it("关闭自动解决冲突后直接进入待审核并保留人工处理流程", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "人工解决冲突项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-manual-conflict-project",
+      defaultBaseRef: "main",
+      headCommit: "local-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const task = createReadyTask(repository, project.id, "保留人工冲突处理", 100, false);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+
+    expect(runner.inputs).toHaveLength(1);
+    expect(gitService.reconciled).toHaveLength(0);
+    expect(gitService.resolvedLocal).toHaveLength(1);
   });
 });

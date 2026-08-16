@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `auto_resolve_conflicts` integer DEFAULT true NOT NULL;

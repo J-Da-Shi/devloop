@@ -226,7 +226,7 @@ const buildPrompt = (input: RunnerInput, outputSchema: string): string => {
       "- 结合原任务意图、目标分支当前代码和本次执行结果，逐个解决上面列出的冲突文件。",
       "- 可以阅读相关代码和测试理解上下文，但不要修改未列出的文件。",
       "- 必须清除全部 Git 冲突标记；二进制或删除冲突只能明确选择目标分支侧或本次结果侧。",
-      "- 使用 git add 或 git rm 暂存每一个已经解决的冲突文件。",
+      "- 不要运行 git add、git rm 或其他写入 Git 索引的命令；DevLoop 控制器会在你完成编辑后统一暂存并校验冲突文件。",
       "- 不要创建 Git commit，不要切换分支，不要修改 .devloop-runtime 目录。",
       "- 可以运行必要的只读或验证命令；无法可靠判断时返回 blocked，不要猜测。",
       "- 最终回复只能包含一个 JSON 对象，不要使用 Markdown 代码块或附加说明。",

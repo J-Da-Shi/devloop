@@ -69,7 +69,7 @@ const isRepair = prompt.includes("你只负责修复已有最终结果的 JSON �
 if (args.includes("--output-schema")) process.exit(3);
 if (isRepair && (!args.includes("shell_tool") || !args.includes("unified_exec"))) process.exit(4);
 if (!isRepair && prompt.includes("处理审核反馈") && !prompt.includes("必须补充回归测试")) process.exit(5);
-if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("git add") || !prompt.includes("不要创建 Git commit"))) process.exit(6);
+if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("不要运行 git add、git rm") || !prompt.includes("统一暂存并校验冲突文件") || !prompt.includes("不要创建 Git commit"))) process.exit(6);
 if ((!isRepair && !prompt.includes("实现真实执行")) || outputIndex < 0) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-test" }) + "\\n");
 if (prompt.includes("上游失败")) {

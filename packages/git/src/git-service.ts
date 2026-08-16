@@ -83,6 +83,34 @@ export interface GeneratedConflictResolutions {
   resolutions: RunConflictResolution[];
 }
 
+export interface ReconcileCommitInput {
+  repositoryPath: string;
+  targetBranch: string;
+  targetCommit: string;
+  baseCommit: string;
+  resultCommit: string;
+}
+
+export type ReconcileCommitResult =
+  | {
+      status: "clean";
+      targetCommit: string;
+      resultCommit: string;
+      resolutions: [];
+    }
+  | {
+      status: "resolved";
+      targetCommit: string;
+      resultCommit: string;
+      resolutions: RunConflictResolution[];
+    };
+
+export interface MoveWorktreeToCommitInput {
+  worktreePath: string;
+  expectedCommit: string;
+  targetCommit: string;
+}
+
 export interface ListRunChangedFilesInput {
   repositoryPath: string;
   baseCommit: string;
@@ -124,6 +152,7 @@ export type GitApplyErrorCode =
   | "INVALID_BRANCH"
   | "BRANCH_CHECKED_OUT"
   | "TARGET_BRANCH_CHANGED"
+  | "TARGET_COMMIT_MISSING"
   | "BASE_COMMIT_MISSING"
   | "RESULT_COMMIT_MISSING"
   | "INVALID_RESULT_RANGE"
@@ -171,6 +200,13 @@ interface ConflictStageEntry {
 interface PreparedConflictFile {
   file: RunConflictFile;
   stages: ConflictStageEntry[];
+}
+
+interface PreparedCommitComparison {
+  repositoryPath: string;
+  targetBranch: string;
+  targetCommit: string | null;
+  changedPaths: string[];
 }
 
 const maxEditableConflictBytes = 750_000;
@@ -667,6 +703,41 @@ export class GitService {
     return resultCommit.trim();
   }
 
+  async moveWorktreeToCommit(input: MoveWorktreeToCommitInput): Promise<void> {
+    const worktreePath = await realpath(input.worktreePath);
+    const [{ stdout: currentCommit }, { stdout: status }, targetCheck] = await Promise.all([
+      execa(this.executable, ["-C", worktreePath, "rev-parse", "HEAD"]),
+      execa(this.executable, [
+        "-C",
+        worktreePath,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+      ]),
+      execa(
+        this.executable,
+        ["-C", worktreePath, "cat-file", "-e", `${input.targetCommit}^{commit}`],
+        { reject: false },
+      ),
+    ]);
+    if (currentCommit.trim() !== input.expectedCommit) {
+      throw new GitApplyError(
+        "TARGET_BRANCH_CHANGED",
+        "Run Worktree 的结果 Commit 已发生变化，拒绝覆盖 Codex 结果。",
+      );
+    }
+    if (status.trim()) {
+      throw new GitApplyError(
+        "WORKTREE_DIRTY",
+        "Run Worktree 在冲突解决后出现未提交修改，拒绝切换到已解决结果。",
+      );
+    }
+    if (targetCheck.exitCode !== 0) {
+      throw new GitApplyError("RESULT_COMMIT_MISSING", "自动解决后的结果 Commit 已不存在。");
+    }
+    await execa(this.executable, ["-C", worktreePath, "reset", "--hard", input.targetCommit]);
+  }
+
   async listRunChangedFiles(input: ListRunChangedFilesInput): Promise<RunChangedFile[]> {
     if (input.baseCommit === input.resultCommit) {
       return [];
@@ -747,44 +818,8 @@ export class GitService {
   }
 
   async previewCommitConflicts(input: ApplyCommitInput): Promise<RunConflictPreview> {
-    const { repositoryPath, targetBranch, targetCommit, changedPaths } =
-      await this.prepareApplication(input);
-    const cleanPreview = (): RunConflictPreview => ({
-      status: "clean",
-      targetBranch,
-      targetCommit,
-      files: [],
-      message: null,
-    });
-
-    if (!targetCommit || changedPaths.length === 0) {
-      return cleanPreview();
-    }
-    if (
-      (await this.isAncestor(repositoryPath, targetCommit, input.resultCommit)) ||
-      (await this.isAncestor(repositoryPath, input.resultCommit, targetCommit)) ||
-      (await this.hasAppliedResultMarker(repositoryPath, targetCommit, input.resultCommit)) ||
-      (await this.pathsMatchCommit(repositoryPath, targetCommit, input.resultCommit, changedPaths))
-    ) {
-      return cleanPreview();
-    }
-
-    const files = await this.previewPatchedCommitConflicts(
-      repositoryPath,
-      targetCommit,
-      input.baseCommit,
-      input.resultCommit,
-    );
-    if (files.length === 0) {
-      return cleanPreview();
-    }
-    return {
-      status: "conflicted",
-      targetBranch,
-      targetCommit,
-      files,
-      message: `本次结果与目标分支 ${targetBranch} 存在 ${files.length} 个冲突文件。`,
-    };
+    const prepared = await this.prepareApplication(input);
+    return this.previewPreparedCommitConflicts(prepared, input.baseCommit, input.resultCommit);
   }
 
   async generateConflictResolutions(
@@ -796,51 +831,81 @@ export class GitService {
       throw new GitApplyError("APPLY_CONFLICT", "目标分支尚不存在，不需要解决写入冲突。");
     }
 
-    return this.withPatchedConflictWorktree(
+    return this.generatePreparedConflictResolutions(
       repositoryPath,
       targetCommit,
       input.baseCommit,
       input.resultCommit,
-      async ({ worktreePath, files }) => {
-        if (files.length === 0) {
-          throw new GitApplyError("APPLY_CONFLICT", "当前目标分支与本次结果已经不存在冲突。");
-        }
-        if (files.length > 100) {
-          throw new GitApplyError(
-            "APPLY_CONFLICT",
-            `冲突文件数量为 ${files.length}，超过单次 Agent 解决上限 100 个。`,
-          );
-        }
-        await resolver({
-          worktreePath,
-          files: files.map((item) => item.file),
-        });
-
-        const remainingPaths = await this.getUnmergedPaths(worktreePath);
-        if (remainingPaths.length > 0) {
-          throw new GitApplyError(
-            "APPLY_CONFLICT",
-            `Agent 完成后仍有 ${remainingPaths.length} 个冲突文件未解决：${remainingPaths.join("、")}`,
-          );
-        }
-
-        const resolutions = await Promise.all(
-          files.map((file) => this.collectConflictResolution(worktreePath, file)),
-        );
-        const contentLength = resolutions.reduce(
-          (total, resolution) =>
-            total + (resolution.strategy === "content" ? resolution.content.length : 0),
-          0,
-        );
-        if (contentLength > 900_000) {
-          throw new GitApplyError(
-            "APPLY_CONFLICT",
-            "Agent 生成的冲突解决内容超过 900000 个字符，请改为人工分批处理。",
-          );
-        }
-        return { targetCommit, resolutions };
-      },
+      resolver,
     );
+  }
+
+  async reconcileCommitConflicts(
+    input: ReconcileCommitInput,
+    resolver: (workspace: ConflictResolutionWorkspace) => Promise<void>,
+  ): Promise<ReconcileCommitResult> {
+    const prepared = await this.prepareReconciliation(input);
+    const preview = await this.previewPreparedCommitConflicts(
+      prepared,
+      input.baseCommit,
+      input.resultCommit,
+    );
+    if (preview.status !== "conflicted") {
+      const resultCommit = await this.reconcileCleanCommit(
+        prepared,
+        input.baseCommit,
+        input.resultCommit,
+      );
+      return {
+        status: "clean",
+        targetCommit: input.targetCommit,
+        resultCommit,
+        resolutions: [],
+      };
+    }
+
+    const generated = await this.generatePreparedConflictResolutions(
+      prepared.repositoryPath,
+      input.targetCommit,
+      input.baseCommit,
+      input.resultCommit,
+      resolver,
+    );
+    const resultCommit = await this.createPatchedCommit(
+      prepared.repositoryPath,
+      input.targetCommit,
+      input.baseCommit,
+      input.resultCommit,
+      generated.resolutions,
+    );
+    return {
+      status: "resolved",
+      targetCommit: input.targetCommit,
+      resultCommit,
+      resolutions: generated.resolutions,
+    };
+  }
+
+  private async reconcileCleanCommit(
+    prepared: PreparedCommitComparison & { targetCommit: string },
+    baseCommit: string,
+    resultCommit: string,
+  ): Promise<string> {
+    const { repositoryPath, targetCommit, changedPaths } = prepared;
+    if (changedPaths.length === 0) {
+      return targetCommit;
+    }
+    if (await this.isAncestor(repositoryPath, targetCommit, resultCommit)) {
+      return resultCommit;
+    }
+    if (
+      (await this.isAncestor(repositoryPath, resultCommit, targetCommit)) ||
+      (await this.hasAppliedResultMarker(repositoryPath, targetCommit, resultCommit)) ||
+      (await this.pathsMatchCommit(repositoryPath, targetCommit, resultCommit, changedPaths))
+    ) {
+      return targetCommit;
+    }
+    return this.createPatchedCommit(repositoryPath, targetCommit, baseCommit, resultCommit, []);
   }
 
   async applyCommitToWorkingTree(input: ApplyCommitInput): Promise<RunApplicationResult> {
@@ -935,6 +1000,44 @@ export class GitService {
     targetCommit: string | null;
     changedPaths: string[];
   }> {
+    const prepared = await this.prepareCommitRange(input);
+    const targetCommit = await this.resolveLocalBranch(
+      prepared.repositoryPath,
+      prepared.targetBranch,
+    );
+    if (input.expectedTargetCommit !== undefined && input.expectedTargetCommit !== targetCommit) {
+      throw new GitApplyError(
+        "TARGET_BRANCH_CHANGED",
+        `目标分支 ${prepared.targetBranch} 已发生变化，请刷新冲突内容后重新处理。`,
+      );
+    }
+    return { ...prepared, targetCommit };
+  }
+
+  private async prepareReconciliation(
+    input: ReconcileCommitInput,
+  ): Promise<PreparedCommitComparison & { targetCommit: string }> {
+    const prepared = await this.prepareCommitRange(input);
+    const targetCheck = await execa(
+      this.executable,
+      ["-C", prepared.repositoryPath, "cat-file", "-e", `${input.targetCommit}^{commit}`],
+      { reject: false },
+    );
+    if (targetCheck.exitCode !== 0) {
+      throw new GitApplyError(
+        "TARGET_COMMIT_MISSING",
+        `目标分支 ${prepared.targetBranch} 的最新 Commit 已不存在。`,
+      );
+    }
+    return { ...prepared, targetCommit: input.targetCommit };
+  }
+
+  private async prepareCommitRange(input: {
+    repositoryPath: string;
+    targetBranch: string;
+    baseCommit: string;
+    resultCommit: string;
+  }): Promise<Omit<PreparedCommitComparison, "targetCommit">> {
     const repositoryPath = await realpath(input.repositoryPath);
     const targetBranch = await this.normalizeBranchName(repositoryPath, input.targetBranch);
     const [baseCommitCheck, resultCommitCheck] = await Promise.all([
@@ -968,17 +1071,130 @@ export class GitService {
       );
     }
 
-    const [targetCommit, changedPaths] = await Promise.all([
-      this.resolveLocalBranch(repositoryPath, targetBranch),
-      this.getChangedPaths(repositoryPath, input.baseCommit, input.resultCommit),
-    ]);
-    if (input.expectedTargetCommit !== undefined && input.expectedTargetCommit !== targetCommit) {
+    const changedPaths = await this.getChangedPaths(
+      repositoryPath,
+      input.baseCommit,
+      input.resultCommit,
+    );
+    return { repositoryPath, targetBranch, changedPaths };
+  }
+
+  private async previewPreparedCommitConflicts(
+    prepared: PreparedCommitComparison,
+    baseCommit: string,
+    resultCommit: string,
+  ): Promise<RunConflictPreview> {
+    const { repositoryPath, targetBranch, targetCommit, changedPaths } = prepared;
+    const cleanPreview = (): RunConflictPreview => ({
+      status: "clean",
+      targetBranch,
+      targetCommit,
+      files: [],
+      message: null,
+    });
+
+    if (!targetCommit || changedPaths.length === 0) {
+      return cleanPreview();
+    }
+    if (
+      (await this.isAncestor(repositoryPath, targetCommit, resultCommit)) ||
+      (await this.isAncestor(repositoryPath, resultCommit, targetCommit)) ||
+      (await this.hasAppliedResultMarker(repositoryPath, targetCommit, resultCommit)) ||
+      (await this.pathsMatchCommit(repositoryPath, targetCommit, resultCommit, changedPaths))
+    ) {
+      return cleanPreview();
+    }
+
+    const files = await this.previewPatchedCommitConflicts(
+      repositoryPath,
+      targetCommit,
+      baseCommit,
+      resultCommit,
+    );
+    if (files.length === 0) {
+      return cleanPreview();
+    }
+    return {
+      status: "conflicted",
+      targetBranch,
+      targetCommit,
+      files,
+      message: `本次结果与目标分支 ${targetBranch} 存在 ${files.length} 个冲突文件。`,
+    };
+  }
+
+  private async generatePreparedConflictResolutions(
+    repositoryPath: string,
+    targetCommit: string,
+    baseCommit: string,
+    resultCommit: string,
+    resolver: (workspace: ConflictResolutionWorkspace) => Promise<void>,
+  ): Promise<GeneratedConflictResolutions> {
+    return this.withPatchedConflictWorktree(
+      repositoryPath,
+      targetCommit,
+      baseCommit,
+      resultCommit,
+      async ({ worktreePath, files }) => {
+        if (files.length === 0) {
+          throw new GitApplyError("APPLY_CONFLICT", "当前目标分支与本次结果已经不存在冲突。");
+        }
+        if (files.length > 100) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            `冲突文件数量为 ${files.length}，超过单次 Agent 解决上限 100 个。`,
+          );
+        }
+        await resolver({
+          worktreePath,
+          files: files.map((item) => item.file),
+        });
+
+        await this.stageConflictResolutions(worktreePath, files);
+
+        const remainingPaths = await this.getUnmergedPaths(worktreePath);
+        if (remainingPaths.length > 0) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            `Agent 完成后仍有 ${remainingPaths.length} 个冲突文件未解决：${remainingPaths.join("、")}`,
+          );
+        }
+
+        const resolutions = await Promise.all(
+          files.map((file) => this.collectConflictResolution(worktreePath, file)),
+        );
+        const contentLength = resolutions.reduce(
+          (total, resolution) =>
+            total + (resolution.strategy === "content" ? resolution.content.length : 0),
+          0,
+        );
+        if (contentLength > 900_000) {
+          throw new GitApplyError(
+            "APPLY_CONFLICT",
+            "Agent 生成的冲突解决内容超过 900000 个字符，请改为人工分批处理。",
+          );
+        }
+        return { targetCommit, resolutions };
+      },
+    );
+  }
+
+  private async stageConflictResolutions(
+    worktreePath: string,
+    files: PreparedConflictFile[],
+  ): Promise<void> {
+    const stage = await execa(
+      this.executable,
+      ["-C", worktreePath, "add", "-A", "--", ...files.map((item) => item.file.path)],
+      { reject: false },
+    );
+    if (stage.exitCode !== 0) {
+      const message = stage.stderr.trim() || stage.stdout.trim() || "Git 暂存失败";
       throw new GitApplyError(
-        "TARGET_BRANCH_CHANGED",
-        `目标分支 ${targetBranch} 已发生变化，请刷新冲突内容后重新处理。`,
+        "APPLY_CONFLICT",
+        `DevLoop 无法暂存 Agent 解决的冲突文件：${message}`,
       );
     }
-    return { repositoryPath, targetBranch, targetCommit, changedPaths };
   }
 
   private async previewPatchedCommitConflicts(
