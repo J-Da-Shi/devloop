@@ -7,6 +7,7 @@ import {
   type DomainEvent,
   type PairedDevice,
   type Project,
+  type ReviewDecision,
   type RunApplicationResult,
   type RunPublishResult,
   type RunEvent,
@@ -14,6 +15,7 @@ import {
   type Skill,
   type SkillVersion,
   type Task,
+  type TaskRevision,
   type TaskRun,
   type TaskStatus,
   type WorkerState,
@@ -37,9 +39,11 @@ import {
   type DomainEventRow,
   type PairedDeviceRow,
   type ProjectRow,
+  type ReviewDecisionRow,
   type RunEventRow,
   type SkillRow,
   type SkillVersionRow,
+  type TaskRevisionRow,
   type TaskRow,
   type TaskRunRow,
 } from "./schema.js";
@@ -75,7 +79,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
     typeof record.goal !== "string" ||
     !Array.isArray(acceptanceCriteria) ||
     !acceptanceCriteria.every((item) => typeof item === "string") ||
-    (reviewFeedback !== undefined && typeof reviewFeedback !== "string")
+    (reviewFeedback !== undefined && reviewFeedback !== null && typeof reviewFeedback !== "string")
   ) {
     throw new Error("任务 Revision 内容格式无效");
   }
@@ -118,6 +122,27 @@ const mapTask = (row: TaskRow, projectName: string): Task => ({
   updatedAt: row.updatedAt,
 });
 
+const mapTaskRevision = (row: TaskRevisionRow): TaskRevision => {
+  const spec = parseTaskRevisionSpec(row.specJson);
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    revision: row.revision,
+    title: spec.title,
+    goal: spec.goal,
+    acceptanceCriteria: spec.acceptanceCriteria,
+    reviewFeedback: spec.reviewFeedback,
+    specHash: row.specHash,
+    targetBranch: row.targetBranch,
+    baseRef: row.baseRef,
+    baseStrategy: row.baseStrategy,
+    confirmedBaseCommit: row.confirmedBaseCommit,
+    createdFrom: row.createdFrom,
+    createdByDeviceId: row.createdByDeviceId,
+    confirmedAt: row.confirmedAt,
+  };
+};
+
 const mapRun = (row: TaskRunRow): TaskRun => ({
   id: row.id,
   taskId: row.taskId,
@@ -143,6 +168,16 @@ const mapRunEvent = (row: RunEventRow): RunEvent => ({
   sequence: row.sequence,
   type: row.type,
   message: row.message,
+  payload: JSON.parse(row.payloadJson) as unknown,
+  createdAt: row.createdAt,
+});
+
+const mapReviewDecision = (row: ReviewDecisionRow): ReviewDecision => ({
+  id: row.id,
+  runId: row.runId,
+  decision: row.decision,
+  feedback: row.feedback,
+  deviceId: row.deviceId,
   createdAt: row.createdAt,
 });
 
@@ -1781,6 +1816,25 @@ export class DevLoopRepository {
   getRun(runId: string): TaskRun | null {
     const row = this.handle.db.select().from(taskRuns).where(eq(taskRuns.id, runId)).get();
     return row ? mapRun(row) : null;
+  }
+
+  getTaskRevision(revisionId: string): TaskRevision | null {
+    const row = this.handle.db
+      .select()
+      .from(taskRevisions)
+      .where(eq(taskRevisions.id, revisionId))
+      .get();
+    return row ? mapTaskRevision(row) : null;
+  }
+
+  getRunReviewDecision(runId: string): ReviewDecision | null {
+    const row = this.handle.db
+      .select()
+      .from(reviewDecisions)
+      .where(eq(reviewDecisions.runId, runId))
+      .orderBy(desc(reviewDecisions.createdAt))
+      .get();
+    return row ? mapReviewDecision(row) : null;
   }
 
   listRuns(limit = 50): TaskRun[] {

@@ -419,9 +419,15 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (!run) {
       throw new HttpError(404, "执行记录不存在", "NOT_FOUND");
     }
+    const revision = repository.getTaskRevision(run.taskRevisionId);
+    if (!revision) {
+      throw new HttpError(500, "执行记录关联的 Revision 不存在", "DATA_INTEGRITY_ERROR");
+    }
     return {
       run,
       task: repository.getTaskIncludingDeleted(run.taskId),
+      revision,
+      reviewDecision: repository.getRunReviewDecision(runId),
       events: repository.getRunEvents(runId),
     };
   });

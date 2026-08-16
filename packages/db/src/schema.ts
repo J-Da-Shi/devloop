@@ -1,6 +1,7 @@
 import type {
   BaseStrategy,
   DeviceRole,
+  ReviewDecisionType,
   RunStatus,
   TaskStatus,
   WorkerStatus,
@@ -174,7 +175,7 @@ export const reviewDecisions = sqliteTable(
     runId: text("run_id")
       .notNull()
       .references(() => taskRuns.id, { onDelete: "cascade" }),
-    decision: text("decision").notNull(),
+    decision: text("decision").$type<ReviewDecisionType>().notNull(),
     feedback: text("feedback"),
     deviceId: text("device_id"),
     createdAt: text("created_at").notNull(),
@@ -291,6 +292,7 @@ export type TaskRow = typeof tasks.$inferSelect;
 export type TaskRevisionRow = typeof taskRevisions.$inferSelect;
 export type TaskRunRow = typeof taskRuns.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
+export type ReviewDecisionRow = typeof reviewDecisions.$inferSelect;
 export type DomainEventRow = typeof domainEvents.$inferSelect;
 export type PairedDeviceRow = typeof pairedDevices.$inferSelect;
 export type SkillRow = typeof skills.$inferSelect;

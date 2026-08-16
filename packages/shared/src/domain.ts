@@ -76,12 +76,29 @@ export interface TaskRevision {
   id: string;
   taskId: string;
   revision: number;
+  title: string;
+  goal: string;
+  acceptanceCriteria: string[];
+  reviewFeedback: string | null;
   specHash: string;
   targetBranch: string;
   baseRef: string;
   baseStrategy: BaseStrategy;
   confirmedBaseCommit: string | null;
+  createdFrom: string;
+  createdByDeviceId: string | null;
   confirmedAt: string;
+}
+
+export type ReviewDecisionType = "APPROVED" | "REJECTED";
+
+export interface ReviewDecision {
+  id: string;
+  runId: string;
+  decision: ReviewDecisionType;
+  feedback: string | null;
+  deviceId: string | null;
+  createdAt: string;
 }
 
 export interface TaskRun {
@@ -109,6 +126,7 @@ export interface RunEvent {
   sequence: number;
   type: string;
   message: string;
+  payload: unknown;
   createdAt: string;
 }
 

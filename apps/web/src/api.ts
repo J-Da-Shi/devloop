@@ -11,6 +11,7 @@ import type {
   DomainEvent,
   Project,
   RejectRunInput,
+  ReviewDecision,
   RunChangedFile,
   RunApplicationResult,
   RunConflictPreview,
@@ -21,6 +22,7 @@ import type {
   SkillValidationResult,
   Task,
   TaskCommandInput,
+  TaskRevision,
   TaskRun,
   RunPublishResult,
   UpdateSkillInput,
@@ -37,6 +39,8 @@ export interface RequestIdentity {
 export interface RunDetails {
   run: TaskRun;
   task: Task | null;
+  revision: TaskRevision;
+  reviewDecision: ReviewDecision | null;
   events: RunEvent[];
 }
 

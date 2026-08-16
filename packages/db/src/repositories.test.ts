@@ -470,6 +470,114 @@ describe("DevLoopRepository 自动入队", () => {
     ).toThrow("只有任务最近一次成功执行可以驳回");
   });
 
+  it("完整读取 Run 对应的不可变 Revision、审核决定和事件 payload", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "运行审计测试项目",
+      repositoryUrl: "git@example.com:team/run-audit.git",
+      repositoryPath: "/tmp/devloop-run-audit-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "feature/run-audit",
+      title: "原始任务标题",
+      goal: "保留运行时任务快照",
+      acceptanceCriteria: ["可读取命令详情", "可读取驳回反馈"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    expect(claimed).not.toBeNull();
+
+    repository.setRunPhase(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "AGENT_RUNNING",
+      "runner.agent",
+      "Codex 命令执行完成，退出码 1",
+      {
+        event: {
+          type: "item.completed",
+          item: {
+            type: "command_execution",
+            command: "pnpm test",
+            exit_code: 1,
+            aggregated_output: "1 test failed",
+          },
+        },
+      },
+    );
+    const completed = repository.completeRun(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "等待审核",
+      "result-commit",
+    ).value;
+    const feedback = "命令失败详情需要保留。";
+    const rejected = repository.rejectRun(
+      claimed!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      feedback,
+    ).value;
+    const reopened = repository.unconfirmTask(
+      rejected.id,
+      "instance-owner",
+      rejected.version,
+      randomUUID(),
+    ).value;
+    repository.updateDraftTask(reopened.id, "instance-owner", {
+      title: "后来修改的任务标题",
+      goal: "当前任务内容不应覆盖旧 Run",
+      acceptanceCriteria: ["当前内容已变化"],
+      expectedVersion: reopened.version,
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(repository.getTaskIncludingDeleted(draft.id)?.title).toBe("后来修改的任务标题");
+    expect(repository.getTaskRevision(claimed!.value.run.taskRevisionId)).toMatchObject({
+      id: claimed!.value.run.taskRevisionId,
+      taskId: draft.id,
+      revision: 1,
+      title: "原始任务标题",
+      goal: "保留运行时任务快照",
+      acceptanceCriteria: ["可读取命令详情", "可读取驳回反馈"],
+      reviewFeedback: null,
+      createdFrom: "draft",
+      createdByDeviceId: "instance-owner",
+    });
+    expect(repository.getRunReviewDecision(claimed!.value.run.id)).toMatchObject({
+      runId: claimed!.value.run.id,
+      decision: "REJECTED",
+      feedback,
+      deviceId: "instance-owner",
+    });
+    expect(
+      repository
+        .getRunEvents(claimed!.value.run.id)
+        .find((event) => event.message === "Codex 命令执行完成，退出码 1")?.payload,
+    ).toEqual({
+      status: "AGENT_RUNNING",
+      event: {
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          command: "pnpm test",
+          exit_code: 1,
+          aggregated_output: "1 test failed",
+        },
+      },
+    });
+  });
+
   it("阻塞任务可直接重试，失败任务可退回草稿修改后重试", () => {
     const repository = createRepository();
     const project = repository.createProject({

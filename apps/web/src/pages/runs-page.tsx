@@ -1,12 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button, Flex } from "antd";
-import { Clock3, GitBranch, GitCommitHorizontal } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock3,
+  FileText,
+  GitBranch,
+  GitCommitHorizontal,
+  MessageSquareText,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
 import { RunEventList } from "../components/run-event-list.js";
 import { StatusBadge } from "../components/status-badge.js";
 import { formatDateTime, formatDuration, runStatusText } from "../utils.js";
+
+const reviewDecisionText = {
+  APPROVED: "审核通过",
+  REJECTED: "审核驳回",
+} as const;
 
 export function RunsPage() {
   const runs = useQuery({ queryKey: queryKeys.runs, queryFn: api.runs });
@@ -23,6 +36,13 @@ export function RunsPage() {
   });
   const appliedLocally =
     details.data?.events.some((event) => event.type === "run.applied") ?? false;
+  const reviewLabel = details.data?.reviewDecision
+    ? reviewDecisionText[details.data.reviewDecision.decision]
+    : details.data?.run.status === "SUCCEEDED" &&
+        details.data.task?.status === "REVIEW" &&
+        details.data.task.latestRunId === details.data.run.id
+      ? "待审核"
+      : "无审核记录";
 
   if (runs.isPending) return <LoadingPanel label="正在加载执行记录" />;
   if (runs.isError) return <ErrorPanel error={runs.error} />;
@@ -54,9 +74,10 @@ export function RunsPage() {
           <>
             <div className="section-heading">
               <div>
-                <h2>{details.data.task?.title ?? "未知任务"}</h2>
+                <h2>{details.data.revision.title}</h2>
                 <span>
-                  {details.data.task?.projectName}
+                  {details.data.task?.projectName ?? "未知项目"} · Revision #
+                  {details.data.revision.revision}
                   {details.data.task?.deletedAt ? " · 任务已删除" : ""}
                 </span>
               </div>
@@ -78,6 +99,13 @@ export function RunsPage() {
                   {details.data.run.runner}
                   {details.data.run.runnerVersion ? ` · ${details.data.run.runnerVersion}` : ""}
                 </strong>
+              </span>
+              <span>
+                <small>任务 Revision</small>
+                <code>
+                  <FileText size={14} />#{details.data.revision.revision} ·{" "}
+                  {details.data.revision.specHash.slice(0, 10)}
+                </code>
               </span>
               <span>
                 <small>基础 Commit</small>
@@ -108,6 +136,13 @@ export function RunsPage() {
                 </code>
               </span>
               <span>
+                <small>审核决定</small>
+                <strong>
+                  <MessageSquareText size={14} />
+                  {reviewLabel}
+                </strong>
+              </span>
+              <span>
                 <small>{appliedLocally ? "本地写入" : "远程推送"}</small>
                 <code>
                   <GitCommitHorizontal size={14} />
@@ -120,6 +155,63 @@ export function RunsPage() {
             {details.data.run.summary ? (
               <p className="run-summary">{details.data.run.summary}</p>
             ) : null}
+            <section className="run-audit-section">
+              <div className="run-audit-heading">
+                <div>
+                  <h3>本次任务内容</h3>
+                  <span>确认于 {formatDateTime(details.data.revision.confirmedAt)}</span>
+                </div>
+                <code>{details.data.revision.id.slice(0, 8)}</code>
+              </div>
+              <div className="run-revision-grid">
+                <div className="run-audit-field">
+                  <small>任务目标</small>
+                  <p>{details.data.revision.goal}</p>
+                </div>
+                <div className="run-audit-field">
+                  <small>验收标准</small>
+                  <ol>
+                    {details.data.revision.acceptanceCriteria.map((criterion) => (
+                      <li key={criterion}>{criterion}</li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+              {details.data.revision.reviewFeedback ? (
+                <div className="run-feedback-block">
+                  <small>执行前审核反馈</small>
+                  <p>{details.data.revision.reviewFeedback}</p>
+                </div>
+              ) : null}
+            </section>
+            {details.data.reviewDecision ? (
+              <section className="run-review-section">
+                <div className="run-audit-heading">
+                  <div>
+                    <h3>审核记录</h3>
+                    <span>{formatDateTime(details.data.reviewDecision.createdAt)}</span>
+                  </div>
+                  <code>{details.data.reviewDecision.deviceId ?? "未记录审核设备"}</code>
+                </div>
+                <div
+                  className={`run-review-outcome ${details.data.reviewDecision.decision.toLowerCase()}`}
+                >
+                  {details.data.reviewDecision.decision === "APPROVED" ? (
+                    <CheckCircle2 size={17} aria-hidden="true" />
+                  ) : (
+                    <XCircle size={17} aria-hidden="true" />
+                  )}
+                  <strong>{reviewDecisionText[details.data.reviewDecision.decision]}</strong>
+                </div>
+                {details.data.reviewDecision.feedback ? (
+                  <p className="run-review-feedback">{details.data.reviewDecision.feedback}</p>
+                ) : null}
+              </section>
+            ) : null}
+            <div className="run-log-heading">
+              <h3>运行事件</h3>
+              <span>{details.data.events.length} 条</span>
+            </div>
             <RunEventList
               events={details.data.events}
               streamKey={details.data.run.id}
