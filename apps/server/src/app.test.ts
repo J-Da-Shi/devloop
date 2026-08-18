@@ -374,3 +374,48 @@ describe("完成任务继续迭代接口", () => {
     }
   });
 });
+
+describe("Worker 并发配置接口", () => {
+  it("持久化并发上限并拒绝超出范围的配置", async () => {
+    const database = openDatabase({ filePath: ":memory:", migrationsFolder });
+    const repository = new DevLoopRepository(database);
+    const worker = {
+      setConcurrency: (concurrencyLimit: number) => {
+        repository.setWorkerConcurrency(concurrencyLimit);
+      },
+    } as unknown as AgentWorker;
+    const app = await createApp({
+      config,
+      repository,
+      gitService: new ConflictGitService() as unknown as GitService,
+      skillService: new SkillService(repository, config.skillsPath),
+      runners: [new ConflictRunner()],
+      eventBus: new DomainEventBus(),
+      worker,
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/worker/concurrency",
+        payload: { concurrencyLimit: 3 },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        worker: { concurrencyLimit: 3, activeRunIds: [] },
+      });
+      expect(repository.getWorkerState().concurrencyLimit).toBe(3);
+
+      const invalid = await app.inject({
+        method: "POST",
+        url: "/api/worker/concurrency",
+        payload: { concurrencyLimit: 11 },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(repository.getWorkerState().concurrencyLimit).toBe(3);
+    } finally {
+      await app.close();
+      database.close();
+    }
+  });
+});

@@ -1,0 +1,1 @@
+ALTER TABLE `worker_state` ADD `concurrency_limit` integer DEFAULT 1 NOT NULL;

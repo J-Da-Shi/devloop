@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Statistic } from "antd";
+import { Button, Statistic, Tabs } from "antd";
 import {
   Activity,
   CheckCircle2,
@@ -20,7 +20,6 @@ import { StatusBadge } from "../components/status-badge.js";
 import { TaskDialog } from "../components/task-dialog.js";
 import {
   formatDateTime,
-  formatDuration,
   runStatusText,
   taskStatusText,
   workerStatusText,
@@ -46,13 +45,16 @@ export function StatusPage() {
   const queryClient = useQueryClient();
   const { notify } = useNotice();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const dashboard = useQuery({
     queryKey: queryKeys.dashboard,
     queryFn: api.dashboard,
     refetchInterval: (query) => getDashboardRefetchInterval(query.state.data),
     refetchIntervalInBackground: true,
   });
-  const currentRunId = dashboard.data?.currentRun?.id ?? null;
+  const activeRuns = dashboard.data?.activeRuns ?? [];
+  const currentRun = activeRuns.find((run) => run.id === selectedRunId) ?? activeRuns[0] ?? null;
+  const currentRunId = currentRun?.id ?? null;
   const runDetails = useQuery({
     queryKey: queryKeys.run(currentRunId ?? "none"),
     queryFn: () => api.run(currentRunId ?? ""),
@@ -105,7 +107,7 @@ export function StatusPage() {
     return <ErrorPanel error={dashboard.error} />;
   }
 
-  const { worker, currentRun, tasks, projects } = dashboard.data;
+  const { worker, tasks, projects } = dashboard.data;
   const currentTask = currentRun
     ? (tasks.find((task) => task.id === currentRun.taskId) ?? null)
     : null;
@@ -122,11 +124,13 @@ export function StatusPage() {
         </div>
         <div className="worker-primary">
           <div>
-            <small>{currentTask ? "当前任务" : "本机 Worker"}</small>
-            <strong>{currentTask ? currentTask.title : "当前空闲"}</strong>
+            <small>{activeRuns.length > 0 ? "并发执行" : "本机 Worker"}</small>
+            <strong>
+              {activeRuns.length > 0 ? `${activeRuns.length} 个任务正在执行` : "当前空闲"}
+            </strong>
             <span>
-              {currentRun
-                ? `${runStatusText[currentRun.status]} · 已运行 ${formatDuration(currentRun.startedAt, currentRun.finishedAt)}`
+              {activeRuns.length > 0
+                ? `并发槽位 ${activeRuns.length}/${worker.concurrencyLimit}`
                 : `最近心跳 ${formatDateTime(worker.heartbeatAt)}`}
             </span>
           </div>
@@ -170,7 +174,7 @@ export function StatusPage() {
               <h2>当前执行</h2>
               <span>
                 {currentRun
-                  ? `${currentRun.runner}${currentRun.runnerVersion ? ` · ${currentRun.runnerVersion}` : ""}`
+                  ? `${activeRuns.length}/${worker.concurrencyLimit} 个槽位使用中 · ${currentRun.runner}${currentRun.runnerVersion ? ` · ${currentRun.runnerVersion}` : ""}`
                   : "无运行实例"}
               </span>
             </div>
@@ -180,6 +184,20 @@ export function StatusPage() {
               </StatusBadge>
             ) : null}
           </div>
+          {activeRuns.length > 1 ? (
+            <Tabs
+              className="active-run-tabs"
+              activeKey={currentRun ? currentRun.id : activeRuns[0]!.id}
+              onChange={setSelectedRunId}
+              items={activeRuns.map((run) => {
+                const task = tasks.find((item) => item.id === run.taskId);
+                return {
+                  key: run.id,
+                  label: <span title={task?.title}>{task?.title ?? run.id.slice(0, 8)}</span>,
+                };
+              })}
+            />
+          ) : null}
           {!currentRun ? (
             <ExecutionIdle queued={queuedTasks.length > 0} />
           ) : runDetails.isPending ? (

@@ -30,6 +30,7 @@ import type {
   UpdateProjectRunnerInput,
   UpdateSkillInput,
   UpdateTaskInput,
+  UpdateWorkerConcurrencyInput,
 } from "@devloop/shared";
 
 export interface RequestIdentity {
@@ -107,7 +108,7 @@ export const queryKeys = {
 };
 
 export const getDashboardRefetchInterval = (dashboard: DashboardSnapshot | undefined): number =>
-  dashboard?.currentRun ||
+  dashboard?.activeRuns.length ||
   dashboard?.tasks.some((task) => task.status === "READY" || task.status === "RUNNING")
     ? 1_000
     : 15_000;
@@ -208,6 +209,11 @@ export const api = {
       method: "POST",
       body: json({ status }),
     }),
+  setWorkerConcurrency: (input: UpdateWorkerConcurrencyInput) =>
+    request<{ worker: DashboardSnapshot["worker"] }>("/api/worker/concurrency", {
+      method: "POST",
+      body: json(input),
+    }),
 };
 
 export const eventNames: DomainEvent["type"][] = [
@@ -227,4 +233,5 @@ export const eventNames: DomainEvent["type"][] = [
   "run.pushed",
   "run.rejected",
   "worker.status_changed",
+  "worker.concurrency_changed",
 ];

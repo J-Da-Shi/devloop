@@ -90,8 +90,8 @@ interface ActiveExecution {
 export class AgentWorker {
   private timer: NodeJS.Timeout | null = null;
   private pulling = false;
-  private execution: Promise<void> | null = null;
-  private activeExecution: ActiveExecution | null = null;
+  private readonly executions = new Map<string, Promise<void>>();
+  private readonly activeExecutions = new Map<string, ActiveExecution>();
   private readonly runners: Map<string, AgentRunner>;
   private readonly defaultRunnerId: string;
   private readonly runnerCapabilitiesById: Map<string, RunnerCapabilities>;
@@ -156,26 +156,21 @@ export class AgentWorker {
       return;
     }
 
-    const persisted = this.repository.getWorkerState();
-    if (persisted.activeRunId) {
+    for (const interruptedRun of this.repository.listActiveRuns()) {
       try {
-        const interruptedRun = this.repository.getRun(persisted.activeRunId);
-        if (!interruptedRun) {
-          throw new Error("找不到上次执行记录");
-        }
-        const processGroupId = this.repository.getRunProcessGroupId(persisted.activeRunId);
+        const processGroupId = this.repository.getRunProcessGroupId(interruptedRun.id);
         if (processGroupId !== null) {
           this.terminateProcessGroup(processGroupId);
         }
         this.publish(
           this.repository.failRun(
-            persisted.activeRunId,
+            interruptedRun.id,
             interruptedRun.executionToken,
             "服务器重启，上一轮执行已标记为中断，请检查后重试。",
           ),
         );
       } catch {
-        // 恢复动作失败时仍允许服务启动，后续诊断页会暴露持久化状态。
+        // 单个恢复动作失败时继续处理其他 Run，诊断页会保留异常状态。
       }
     }
     const targetStatus = this.isWorkerAvailable() ? "RUNNING" : "DEGRADED";
@@ -193,10 +188,10 @@ export class AgentWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
-    if (this.activeExecution) {
-      this.abortExecution(this.activeExecution);
+    for (const active of this.activeExecutions.values()) {
+      this.abortExecution(active);
     }
-    await this.execution?.catch(() => undefined);
+    await Promise.allSettled(this.executions.values());
     if (this.repository.getWorkerState().status !== "STOPPED") {
       this.publish(this.repository.setWorkerStatus("STOPPED"));
     }
@@ -214,6 +209,13 @@ export class AgentWorker {
     }
   }
 
+  setConcurrency(concurrencyLimit: number): void {
+    this.publish(this.repository.setWorkerConcurrency(concurrencyLimit));
+    if (this.repository.getWorkerState().status === "RUNNING") {
+      this.wake();
+    }
+  }
+
   cancelTask(taskId: string, deviceId: string, expectedVersion: number, idempotencyKey: string) {
     const result = this.repository.cancelRunningTask(
       taskId,
@@ -221,7 +223,7 @@ export class AgentWorker {
       expectedVersion,
       idempotencyKey,
     );
-    const active = this.activeExecution;
+    const active = this.activeExecutions.get(result.value.run.id);
     if (active?.taskId === taskId && active.runId === result.value.run.id) {
       active.cancelled = true;
       this.abortExecution(active);
@@ -230,48 +232,53 @@ export class AgentWorker {
   }
 
   pullNextTask(): boolean {
-    if (this.pulling || this.execution) {
+    if (this.pulling) {
       return false;
     }
 
     this.pulling = true;
     try {
       this.repository.heartbeat();
-      if (this.repository.getWorkerState().status !== "RUNNING") {
+      const worker = this.repository.getWorkerState();
+      if (worker.status !== "RUNNING") {
         return false;
       }
 
       const claimDelayMs = this.options.claimDelayMs ?? 5_000;
       const currentTime = this.options.now?.() ?? Date.now();
       const readyBefore = new Date(currentTime - claimDelayMs).toISOString();
-      const claimed = this.repository.claimNextTask({
-        readyBefore,
-        resolveRunnerVersion: (runnerId) => {
-          const { runner } = this.resolveRunnerForProject(runnerId);
-          return (
-            this.runnerCapabilitiesById.get(runner.id)?.version ??
-            (runner.id === "fake" ? "built-in" : null)
-          );
-        },
-      });
-      if (!claimed) {
-        return false;
-      }
+      let claimedAny = false;
+      while (this.executions.size < worker.concurrencyLimit) {
+        const claimed = this.repository.claimNextTask({
+          readyBefore,
+          resolveRunnerVersion: (runnerId) => {
+            const { runner } = this.resolveRunnerForProject(runnerId);
+            return (
+              this.runnerCapabilitiesById.get(runner.id)?.version ??
+              (runner.id === "fake" ? "built-in" : null)
+            );
+          },
+        });
+        if (!claimed) {
+          break;
+        }
 
-      this.eventBus.publish(claimed.events);
-      const execution = this.execute(claimed.value).finally(() => {
-        if (this.execution === execution) {
-          this.execution = null;
-        }
-        if (this.activeExecution?.runId === claimed.value.run.id) {
-          this.activeExecution = null;
-        }
-        if (this.timer) {
-          this.wake();
-        }
-      });
-      this.execution = execution;
-      return true;
+        claimedAny = true;
+        this.eventBus.publish(claimed.events);
+        const runId = claimed.value.run.id;
+        const execution = this.execute(claimed.value).finally(() => {
+          if (this.executions.get(runId) === execution) {
+            this.executions.delete(runId);
+          }
+          this.activeExecutions.delete(runId);
+          if (this.timer) {
+            this.wake();
+          }
+        });
+        this.executions.set(runId, execution);
+        void execution.catch(() => undefined);
+      }
+      return claimedAny;
     } finally {
       this.pulling = false;
     }
@@ -292,7 +299,7 @@ export class AgentWorker {
       processGroupId: null,
       cancelled: false,
     };
-    this.activeExecution = active;
+    this.activeExecutions.set(active.runId, active);
     const emit = (event: RunnerEvent) =>
       this.handleRunnerEvent(claimed.run.id, claimed.run.executionToken, event);
     const onProcessGroupId = (processGroupId: number | null) =>
@@ -784,8 +791,9 @@ export class AgentWorker {
             (event: RunnerEvent) =>
               this.handleConflictRunnerEvent(claimed, input.targetCommit, event, stage),
           );
-          if (this.activeExecution?.runId === claimed.run.id) {
-            this.activeExecution.handle = handle;
+          const active = this.activeExecutions.get(claimed.run.id);
+          if (active) {
+            active.handle = handle;
           }
           const result = await handle.result;
           agentSummary = formatRunnerResult(result);
@@ -890,12 +898,12 @@ export class AgentWorker {
   }
 
   private isExecutionActive(runId: string, executionToken: string): boolean {
-    const active = this.activeExecution;
+    const active = this.activeExecutions.get(runId);
     return active?.runId === runId && active.executionToken === executionToken && !active.cancelled;
   }
 
   private handleProcessGroupChange(active: ActiveExecution, processGroupId: number | null): void {
-    if (this.activeExecution !== active) {
+    if (this.activeExecutions.get(active.runId) !== active) {
       if (processGroupId !== null) {
         this.terminateProcessGroup(processGroupId);
       }

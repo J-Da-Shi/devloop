@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { baseStrategySchema, projectRunnerSchema, taskStatusSchema } from "./domain.js";
+import {
+  baseStrategySchema,
+  projectRunnerSchema,
+  taskStatusSchema,
+  workerConcurrencyMax,
+  workerConcurrencyMin,
+} from "./domain.js";
 
 const isSshRepositoryUrl = (value: string): boolean => {
   if (value.startsWith("ssh://")) {
@@ -78,6 +84,10 @@ export const updateTaskInputSchema = z
 export const taskCommandInputSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
   idempotencyKey: z.string().uuid(),
+});
+
+export const updateWorkerConcurrencyInputSchema = z.object({
+  concurrencyLimit: z.number().int().min(workerConcurrencyMin).max(workerConcurrencyMax),
 });
 
 const conflictPathSchema = z.string().min(1).max(1024);
@@ -177,6 +187,7 @@ export type UpdateProjectRunnerInput = z.infer<typeof updateProjectRunnerInputSc
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
+export type UpdateWorkerConcurrencyInput = z.infer<typeof updateWorkerConcurrencyInputSchema>;
 export type ApproveRunInput = z.infer<typeof approveRunInputSchema>;
 export type ResolveRunConflictsInput = z.infer<typeof resolveRunConflictsInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;

@@ -1043,6 +1043,27 @@ code {
   gap: 2px;
 }
 
+.active-run-tabs {
+  min-width: 0;
+  margin: -6px 0 14px;
+}
+
+.active-run-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.active-run-tabs .ant-tabs-tab {
+  max-width: 220px;
+}
+
+.active-run-tabs .ant-tabs-tab-btn,
+.active-run-tabs .ant-tabs-tab-btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .run-meta-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2063,6 +2084,17 @@ code {
 .setting-row small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.setting-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-control .ant-input-number {
+  width: 88px;
 }
 
 .runner-setting > span:first-child {

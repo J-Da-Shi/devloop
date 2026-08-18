@@ -1,19 +1,26 @@
-import { useQuery } from "@tanstack/react-query";
-import { Switch } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, InputNumber, Switch } from "antd";
+import { workerConcurrencyMax, workerConcurrencyMin } from "@devloop/shared";
 import {
   CheckCircle2,
   CircleX,
   Database,
+  Gauge,
   Radio,
+  Save,
   ShieldCheck,
   TerminalSquare,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api, queryKeys } from "../api.js";
 import { ErrorPanel, LoadingPanel } from "../components/feedback.js";
+import { useNotice } from "../components/notice-provider.js";
 import { StatusBadge } from "../components/status-badge.js";
 import { useUiStore } from "../store.js";
 
 export function SettingsPage() {
+  const queryClient = useQueryClient();
+  const { notify } = useNotice();
   const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard });
   const session = useQuery({
     queryKey: queryKeys.session,
@@ -22,6 +29,23 @@ export function SettingsPage() {
   });
   const realtimeEnabled = useUiStore((state) => state.realtimeEnabled);
   const setRealtimeEnabled = useUiStore((state) => state.setRealtimeEnabled);
+  const [concurrencyLimit, setConcurrencyLimit] = useState(workerConcurrencyMin);
+  const persistedConcurrencyLimit = dashboard.data?.worker.concurrencyLimit;
+  useEffect(() => {
+    if (persistedConcurrencyLimit !== undefined) {
+      setConcurrencyLimit(persistedConcurrencyLimit);
+    }
+  }, [persistedConcurrencyLimit]);
+  const concurrencyMutation = useMutation({
+    mutationFn: (nextLimit: number) => api.setWorkerConcurrency({ concurrencyLimit: nextLimit }),
+    onSuccess: async ({ worker }) => {
+      setConcurrencyLimit(worker.concurrencyLimit);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      notify(`任务并发数已调整为 ${worker.concurrencyLimit}`);
+    },
+    onError: (error) =>
+      notify(error instanceof Error ? error.message : "并发配置保存失败", "danger"),
+  });
   if (dashboard.isPending || session.isPending) return <LoadingPanel label="正在加载设置" />;
   if (dashboard.isError) return <ErrorPanel error={dashboard.error} />;
 
@@ -63,6 +87,39 @@ export function SettingsPage() {
             <small>无 DevLoop 账户，由本机、Tailscale 或反向代理保护入口</small>
           </span>
           <StatusBadge status="COMPLETED">单用户</StatusBadge>
+        </div>
+      </section>
+      <section className="tool-panel settings-section">
+        <div className="section-heading">
+          <h2>任务调度</h2>
+          <Gauge size={18} />
+        </div>
+        <div className="setting-row">
+          <span>
+            <strong>任务并发数</strong>
+            <small>
+              {`运行中 ${dashboard.data.worker.activeRunIds.length} 个 · 范围 ${workerConcurrencyMin}-${workerConcurrencyMax}`}
+            </small>
+          </span>
+          <div className="setting-control">
+            <InputNumber
+              min={workerConcurrencyMin}
+              max={workerConcurrencyMax}
+              precision={0}
+              value={concurrencyLimit}
+              onChange={(value) => value !== null && setConcurrencyLimit(value)}
+              aria-label="任务并发数"
+            />
+            <Button
+              type="primary"
+              icon={<Save size={16} />}
+              loading={concurrencyMutation.isPending}
+              disabled={concurrencyLimit === dashboard.data.worker.concurrencyLimit}
+              onClick={() => concurrencyMutation.mutate(concurrencyLimit)}
+            >
+              保存
+            </Button>
+          </div>
         </div>
       </section>
       <section className="tool-panel settings-section">

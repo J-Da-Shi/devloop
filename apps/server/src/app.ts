@@ -19,6 +19,7 @@ import {
   updateProjectRunnerInputSchema,
   updateSkillInputSchema,
   updateTaskInputSchema,
+  updateWorkerConcurrencyInputSchema,
   validateSkillInputSchema,
   workerStatusSchema,
   type DomainEvent,
@@ -221,11 +222,13 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   app.get("/api/dashboard", async (request) => {
     requireRequestRole(request, "viewer");
     const workerState = repository.getWorkerState();
+    const activeRuns = repository.listActiveRuns();
     return {
       worker: workerState,
       projects: repository.listProjects(),
       tasks: repository.listTasks(),
-      currentRun: workerState.activeRunId ? repository.getRun(workerState.activeRunId) : null,
+      activeRuns,
+      currentRun: activeRuns[0] ?? null,
       runnerCapabilities: await getRunnerCapabilities(),
     };
   });
@@ -818,6 +821,13 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       throw new HttpError(400, "只允许启动或暂停 Worker", "INVALID_WORKER_STATUS");
     }
     worker.setStatus(input.status);
+    return { worker: repository.getWorkerState() };
+  });
+
+  app.post("/api/worker/concurrency", async (request) => {
+    requireRequestRole(request, "operator");
+    const input = updateWorkerConcurrencyInputSchema.parse(request.body);
+    worker.setConcurrency(input.concurrencyLimit);
     return { worker: repository.getWorkerState() };
   });
 

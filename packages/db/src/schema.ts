@@ -154,6 +154,7 @@ export const workerState = sqliteTable("worker_state", {
   status: text("status").$type<WorkerStatus>().notNull(),
   heartbeatAt: text("heartbeat_at").notNull(),
   activeRunId: text("active_run_id"),
+  concurrencyLimit: integer("concurrency_limit").notNull().default(1),
   version: integer("version").notNull().default(0),
 });
 

@@ -26,6 +26,8 @@ export const runStatuses = [
 ] as const;
 
 export const workerStatuses = ["RUNNING", "PAUSED", "STOPPED", "DEGRADED"] as const;
+export const workerConcurrencyMin = 1;
+export const workerConcurrencyMax = 10;
 export const deviceRoles = ["viewer", "operator", "editor"] as const;
 export const baseStrategies = ["LATEST_ACCEPTED", "PINNED"] as const;
 export const projectRunners = ["codex", "claude-code"] as const;
@@ -216,6 +218,8 @@ export interface WorkerState {
   status: WorkerStatus;
   heartbeatAt: string;
   activeRunId: string | null;
+  activeRunIds: string[];
+  concurrencyLimit: number;
   version: number;
 }
 
@@ -293,6 +297,7 @@ export interface DashboardSnapshot {
   worker: WorkerState;
   projects: Project[];
   tasks: Task[];
+  activeRuns: TaskRun[];
   currentRun: TaskRun | null;
   runnerCapabilities: RunnerCapabilities[];
 }

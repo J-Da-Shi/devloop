@@ -20,6 +20,8 @@ import {
   type TaskRun,
   type TaskStatus,
   type WorkerState,
+  workerConcurrencyMax,
+  workerConcurrencyMin,
 } from "@devloop/shared";
 import { and, desc, eq, gt, isNull, lte, max } from "drizzle-orm";
 import type { DatabaseHandle } from "./client.js";
@@ -1147,16 +1149,7 @@ export class DevLoopRepository {
         .where(eq(tasks.id, current.id))
         .returning()
         .get();
-      const worker = this.getWorkerState();
-      this.handle.db
-        .update(workerState)
-        .set({
-          activeRunId: runId,
-          heartbeatAt: timestamp,
-          version: worker.version + 1,
-        })
-        .where(eq(workerState.id, "primary"))
-        .run();
+      this.refreshWorkerActivity(timestamp);
       this.insertRunEvent(runId, "run.claimed", "Worker claimed the task", {});
       const taskEvent = this.insertDomainEvent("task", current.id, "task.status_changed", {
         taskId: current.id,
@@ -1465,16 +1458,7 @@ export class DevLoopRepository {
       if (!taskRow) {
         throw new Error("当前任务已经不再由此 Run 执行");
       }
-      const worker = this.getWorkerState();
-      this.handle.db
-        .update(workerState)
-        .set({
-          activeRunId: null,
-          heartbeatAt: timestamp,
-          version: worker.version + 1,
-        })
-        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
-        .run();
+      this.refreshWorkerActivity(timestamp);
       this.insertRunEvent(runId, "run.finished", "审核结果包已准备完成", { summary });
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
@@ -1547,16 +1531,7 @@ export class DevLoopRepository {
       if (!taskRow) {
         throw new Error("当前任务已经不再由此 Run 执行");
       }
-      const worker = this.getWorkerState();
-      this.handle.db
-        .update(workerState)
-        .set({
-          activeRunId: null,
-          heartbeatAt: timestamp,
-          version: worker.version + 1,
-        })
-        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
-        .run();
+      this.refreshWorkerActivity(timestamp);
       this.insertRunEvent(runId, "run.failed", errorMessage, {});
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
@@ -1629,16 +1604,7 @@ export class DevLoopRepository {
       if (!taskRow) {
         throw new Error("当前任务已经不再由此 Run 执行");
       }
-      const worker = this.getWorkerState();
-      this.handle.db
-        .update(workerState)
-        .set({
-          activeRunId: null,
-          heartbeatAt: timestamp,
-          version: worker.version + 1,
-        })
-        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, runId)))
-        .run();
+      this.refreshWorkerActivity(timestamp);
       this.insertRunEvent(runId, "run.blocked", reason, {});
       const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
         taskId: currentTask.id,
@@ -1670,12 +1636,7 @@ export class DevLoopRepository {
       }
       this.assertVersion(currentTask.version, expectedVersion);
       const currentRun = this.requireRunRow(currentTask.latestRunId);
-      const worker = this.getWorkerState();
-      if (
-        currentRun.taskId !== currentTask.id ||
-        currentRun.finishedAt !== null ||
-        worker.activeRunId !== currentRun.id
-      ) {
+      if (currentRun.taskId !== currentTask.id || currentRun.finishedAt !== null) {
         throw new Error("当前执行已经变化，请刷新后重试");
       }
       assertTaskTransition(currentTask.status, "CANCELLED");
@@ -1722,15 +1683,7 @@ export class DevLoopRepository {
       if (!taskRow) {
         throw new Error("当前执行已经变化，请刷新后重试");
       }
-      this.handle.db
-        .update(workerState)
-        .set({
-          activeRunId: null,
-          heartbeatAt: timestamp,
-          version: worker.version + 1,
-        })
-        .where(and(eq(workerState.id, "primary"), eq(workerState.activeRunId, currentRun.id)))
-        .run();
+      this.refreshWorkerActivity(timestamp);
       this.insertRunEvent(currentRun.id, "run.cancelled", "执行已由用户取消", {
         deviceId,
       });
@@ -2198,6 +2151,16 @@ export class DevLoopRepository {
       .map(mapRun);
   }
 
+  listActiveRuns(): TaskRun[] {
+    return this.handle.db
+      .select()
+      .from(taskRuns)
+      .where(isNull(taskRuns.finishedAt))
+      .orderBy(taskRuns.startedAt)
+      .all()
+      .map(mapRun);
+  }
+
   getRunEvents(runId: string): RunEvent[] {
     return this.handle.db
       .select()
@@ -2234,10 +2197,19 @@ export class DevLoopRepository {
     if (!row) {
       throw new Error("Worker state not initialized");
     }
+    const activeRunIds = this.handle.db
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .where(isNull(taskRuns.finishedAt))
+      .orderBy(taskRuns.startedAt)
+      .all()
+      .map((run) => run.id);
     return {
       status: row.status,
       heartbeatAt: row.heartbeatAt,
-      activeRunId: row.activeRunId,
+      activeRunId: activeRunIds[0] ?? null,
+      activeRunIds,
+      concurrencyLimit: row.concurrencyLimit,
       version: row.version,
     };
   }
@@ -2252,19 +2224,50 @@ export class DevLoopRepository {
         .where(eq(workerState.id, "primary"))
         .returning()
         .get();
+      if (!row) {
+        throw new Error("Worker state not initialized");
+      }
       const event = this.insertDomainEvent("worker", "primary", "worker.status_changed", {
         status,
       });
       return {
-        value: {
-          status: row.status,
-          heartbeatAt: row.heartbeatAt,
-          activeRunId: row.activeRunId,
-          version: row.version,
-        },
+        value: this.getWorkerState(),
         events: [event],
         replayed: false,
       };
+    })();
+  }
+
+  setWorkerConcurrency(concurrencyLimit: number): EventfulResult<WorkerState> {
+    if (
+      !Number.isSafeInteger(concurrencyLimit) ||
+      concurrencyLimit < workerConcurrencyMin ||
+      concurrencyLimit > workerConcurrencyMax
+    ) {
+      throw new Error(
+        `Worker 并发数必须是 ${workerConcurrencyMin}-${workerConcurrencyMax} 之间的整数`,
+      );
+    }
+    return this.handle.sqlite.transaction(() => {
+      const current = this.getWorkerState();
+      const timestamp = now();
+      const row = this.handle.db
+        .update(workerState)
+        .set({
+          concurrencyLimit,
+          heartbeatAt: timestamp,
+          version: current.version + 1,
+        })
+        .where(eq(workerState.id, "primary"))
+        .returning()
+        .get();
+      if (!row) {
+        throw new Error("Worker state not initialized");
+      }
+      const event = this.insertDomainEvent("worker", "primary", "worker.concurrency_changed", {
+        concurrencyLimit,
+      });
+      return { value: this.getWorkerState(), events: [event], replayed: false };
     })();
   }
 
@@ -2272,6 +2275,32 @@ export class DevLoopRepository {
     this.handle.db
       .update(workerState)
       .set({ heartbeatAt: now() })
+      .where(eq(workerState.id, "primary"))
+      .run();
+  }
+
+  private refreshWorkerActivity(timestamp: string): void {
+    const activeRun = this.handle.db
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .where(isNull(taskRuns.finishedAt))
+      .orderBy(taskRuns.startedAt)
+      .get();
+    const current = this.handle.db
+      .select({ version: workerState.version })
+      .from(workerState)
+      .where(eq(workerState.id, "primary"))
+      .get();
+    if (!current) {
+      throw new Error("Worker state not initialized");
+    }
+    this.handle.db
+      .update(workerState)
+      .set({
+        activeRunId: activeRun?.id ?? null,
+        heartbeatAt: timestamp,
+        version: current.version + 1,
+      })
       .where(eq(workerState.id, "primary"))
       .run();
   }

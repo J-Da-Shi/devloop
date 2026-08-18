@@ -13,6 +13,28 @@ const createRepository = (): DevLoopRepository => {
   return new DevLoopRepository(handle);
 };
 
+const createReadyTask = (
+  repository: DevLoopRepository,
+  projectId: string,
+  title: string,
+  priority: number,
+) => {
+  const draft = repository.createTask({
+    projectId,
+    targetBranch: "main",
+    title,
+    goal: `完成 ${title}`,
+    acceptanceCriteria: ["任务可以被 Worker 领取"],
+    priority,
+  }).value;
+  return repository.confirmTask(draft.id, "instance-owner", {
+    expectedVersion: draft.version,
+    idempotencyKey: randomUUID(),
+    baseStrategy: "LATEST_ACCEPTED",
+    baseRef: "main",
+  }).value;
+};
+
 afterEach(() => {
   for (const handle of handles.splice(0)) {
     handle.close();
@@ -523,6 +545,59 @@ describe("DevLoopRepository 自动入队", () => {
     );
     expect(replayed.replayed).toBe(true);
     expect(replayed.value.task.status).toBe("CANCELLED");
+  });
+
+  it("持久化并发上限并返回全部活跃 Run", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "并发 Worker 测试项目",
+      repositoryUrl: "git@example.com:team/concurrency.git",
+      repositoryPath: "/tmp/devloop-concurrency-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const first = createReadyTask(repository, project.id, "并发任务一", 90);
+    const second = createReadyTask(repository, project.id, "并发任务二", 80);
+
+    expect(repository.getWorkerState()).toMatchObject({
+      concurrencyLimit: 1,
+      activeRunIds: [],
+    });
+    const configured = repository.setWorkerConcurrency(2).value;
+    expect(configured.concurrencyLimit).toBe(2);
+
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const secondClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(firstClaim?.value.task.id).toBe(first.id);
+    expect(secondClaim?.value.task.id).toBe(second.id);
+    const expectedRunIds = [firstClaim!.value.run.id, secondClaim!.value.run.id].sort();
+    const activeState = repository.getWorkerState();
+    expect([...activeState.activeRunIds].sort()).toEqual(expectedRunIds);
+    expect(
+      repository
+        .listActiveRuns()
+        .map((run) => run.id)
+        .sort(),
+    ).toEqual(expectedRunIds);
+
+    const secondaryClaim =
+      activeState.activeRunId === firstClaim!.value.run.id ? secondClaim! : firstClaim!;
+    const primaryClaim = secondaryClaim === firstClaim ? secondClaim! : firstClaim!;
+    const cancelled = repository.cancelRunningTask(
+      secondaryClaim.value.task.id,
+      "instance-owner",
+      secondaryClaim.value.task.version,
+      randomUUID(),
+    ).value;
+    expect(cancelled.run.status).toBe("CANCELLED");
+    expect(repository.getWorkerState().activeRunIds).toEqual([primaryClaim.value.run.id]);
+
+    repository.completeRun(
+      primaryClaim.value.run.id,
+      primaryClaim.value.run.executionToken,
+      "第一条完成",
+    );
+    expect(repository.getWorkerState().activeRunIds).toEqual([]);
   });
 
   it("驳回最新成功执行后把审核反馈传入下一 Revision，并拒绝驳回旧 Run", () => {

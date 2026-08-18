@@ -467,6 +467,52 @@ describe("AgentWorker", () => {
     await waitForTaskStatus(repository, lowPriority.id, "REVIEW");
   });
 
+  it("按并发上限同时领取任务，并在槽位释放后继续领取", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "并发执行项目",
+      repositoryUrl: "git@example.com:team/agent-worker-concurrency.git",
+      repositoryPath: "/tmp/devloop-agent-worker-concurrency",
+      defaultBaseRef: "main",
+      headCommit: "test-base-commit",
+    }).value;
+    const first = createReadyTask(repository, project.id, "并发任务一", 100);
+    const second = createReadyTask(repository, project.id, "并发任务二", 90);
+    const third = createReadyTask(repository, project.id, "并发任务三", 80);
+    const runner = new ControlledRunner();
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+    });
+    worker.setConcurrency(2);
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 2);
+    expect(runner.inputs.map((input) => input.taskId)).toEqual([first.id, second.id]);
+    expect(repository.getTask(first.id)?.status).toBe("RUNNING");
+    expect(repository.getTask(second.id)?.status).toBe("RUNNING");
+    expect(repository.getTask(third.id)?.status).toBe("READY");
+    expect(worker.pullNextTask()).toBe(false);
+
+    worker.setConcurrency(1);
+    expect(repository.getWorkerState().concurrencyLimit).toBe(1);
+    expect(repository.getTask(first.id)?.status).toBe("RUNNING");
+    expect(repository.getTask(second.id)?.status).toBe("RUNNING");
+    runner.succeedNext();
+    await waitForTaskStatus(repository, first.id, "REVIEW");
+    expect(worker.pullNextTask()).toBe(false);
+    expect(repository.getTask(third.id)?.status).toBe("READY");
+
+    worker.setConcurrency(2);
+    await waitFor(() => runner.inputs.length === 3);
+    expect(runner.inputs[2]?.taskId).toBe(third.id);
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, second.id, "REVIEW");
+    runner.succeedNext();
+    await waitForTaskStatus(repository, third.id, "REVIEW");
+    expect(repository.getWorkerState().activeRunIds).toHaveLength(0);
+  });
+
   it("暂停状态下不领取待执行任务", () => {
     const repository = createRepository();
     const project = repository.createProject({
@@ -636,7 +682,7 @@ describe("AgentWorker", () => {
     },
   );
 
-  it("服务恢复时终止持久化的遗留进程组", async () => {
+  it("服务恢复时终止并标记全部持久化遗留执行", async () => {
     const repository = createRepository();
     const project = repository.createProject({
       name: "进程组恢复测试项目",
@@ -645,14 +691,26 @@ describe("AgentWorker", () => {
       defaultBaseRef: "main",
       headCommit: "base-commit",
     }).value;
-    const task = createReadyTask(repository, project.id, "恢复遗留执行", 100);
-    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
-    expect(claimed).not.toBeNull();
-    const processGroupId = 515_151;
+    const firstTask = createReadyTask(repository, project.id, "恢复遗留执行一", 100);
+    const secondTask = createReadyTask(repository, project.id, "恢复遗留执行二", 90);
+    const firstClaim = repository.claimNextTask({
+      readyBefore: "9999-12-31T23:59:59.999Z",
+    });
+    const secondClaim = repository.claimNextTask({
+      readyBefore: "9999-12-31T23:59:59.999Z",
+    });
+    expect(firstClaim).not.toBeNull();
+    expect(secondClaim).not.toBeNull();
+    const processGroupIds = [515_151, 515_152];
     repository.setRunProcessGroupId(
-      claimed!.value.run.id,
-      claimed!.value.run.executionToken,
-      processGroupId,
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      processGroupIds[0]!,
+    );
+    repository.setRunProcessGroupId(
+      secondClaim!.value.run.id,
+      secondClaim!.value.run.executionToken,
+      processGroupIds[1]!,
     );
     const terminatedProcessGroups: number[] = [];
     const worker = new AgentWorker(
@@ -667,9 +725,13 @@ describe("AgentWorker", () => {
     );
 
     worker.start();
-    expect(terminatedProcessGroups).toEqual([processGroupId]);
-    expect(repository.getTask(task.id)?.status).toBe("FAILED");
-    expect(repository.getRunProcessGroupId(claimed!.value.run.id)).toBeNull();
+    expect(terminatedProcessGroups).toHaveLength(2);
+    expect(terminatedProcessGroups).toEqual(expect.arrayContaining(processGroupIds));
+    expect(repository.getTask(firstTask.id)?.status).toBe("FAILED");
+    expect(repository.getTask(secondTask.id)?.status).toBe("FAILED");
+    expect(repository.getRunProcessGroupId(firstClaim!.value.run.id)).toBeNull();
+    expect(repository.getRunProcessGroupId(secondClaim!.value.run.id)).toBeNull();
+    expect(repository.getWorkerState().activeRunIds).toHaveLength(0);
 
     await worker.stop();
   });
