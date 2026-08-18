@@ -33,18 +33,53 @@ pnpm dev
 DEVLOOP_RUNNER=fake pnpm dev:web
 ```
 
-常用环境变量：
+服务端环境变量如下。`pnpm dev` 不会自动加载项目根目录的 `.env`，需要在命令前设置、从 shell 导出，或通过进程管理器注入。
 
-```text
-DEVLOOP_RUNNER=codex                        # 项目未显式指定 runner 时的兜底默认
-DEVLOOP_CODEX_EXECUTABLE=/absolute/path/to/codex
-DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
-DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
-DEVLOOP_CLAUDE_CODE_EXECUTABLE=/absolute/path/to/claude
-DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
-DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+```bash
+# 解析数据库迁移、Web 静态资源和输出 Schema 的仓库根目录；源码运行时默认是当前仓库。
+DEVLOOP_REPOSITORY_ROOT=/absolute/path/to/devloop
+
+# 服务监听地址；默认仅允许本机访问。
+DEVLOOP_HOST=127.0.0.1
+
+# 服务监听端口。
+DEVLOOP_PORT=4317
+
+# 是否允许监听非回环地址；DEVLOOP_HOST 不是本机地址时必须设为 true。
+DEVLOOP_ALLOW_LAN=false
+
+# 数据库、Git 仓库镜像、Worktree 和 Skill 的存储目录；相对路径基于仓库根目录。
 DEVLOOP_DATA_DIR=.devloop-data
+
+# 服务日志级别，传给 Fastify/Pino，例如 trace、debug、info、warn、error。
+DEVLOOP_LOG_LEVEL=info
+
+# 项目未显式指定执行器时的兜底值；可选 codex 或 fake。
+DEVLOOP_RUNNER=codex
+
+# Codex CLI 的命令名或绝对路径。
+DEVLOOP_CODEX_EXECUTABLE=codex
+
+# 是否让 Codex CLI 忽略用户 config.toml 和规则文件。
+DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
+
+# Codex 连续无输出多久后判定为卡住并终止，单位毫秒；不是任务总执行时限。
+DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
+
+# Claude Code CLI 的命令名或绝对路径。
+DEVLOOP_CLAUDE_CODE_EXECUTABLE=claude
+
+# Claude Code 连续无输出多久后判定为卡住并终止，单位毫秒；不是任务总执行时限。
+DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
+
+# 任务进入待执行状态后，Worker 至少等待多久再领取，单位毫秒。
+DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+
+# Fake Runner 模拟一次执行所等待的时间，单位毫秒。
+DEVLOOP_FAKE_RUNNER_DELAY_MS=850
 ```
+
+`DEVLOOP_CODEX_TIMEOUT_MS` 仅作为旧版本兼容别名保留；新配置应使用 `DEVLOOP_CODEX_STALL_TIMEOUT_MS`。
 
 ### 打包桌面客户端
 
@@ -54,10 +89,21 @@ DEVLOOP_DATA_DIR=.devloop-data
 pnpm --filter @devloop/desktop make
 ```
 
-产物落在 `apps/desktop/out/make/`。启动时可用两个环境变量诊断问题：
+产物落在 `apps/desktop/out/make/`。桌面主进程支持以下环境变量：
 
-- `DEVLOOP_OPEN_DEVTOOLS=1` 强制打开 DevTools。
-- `DEVLOOP_LOG_RENDERER=1` 把 renderer console/崩溃信息转发到主进程 stderr。
+```bash
+# 改用外部 DevLoop Server；设置后，打包客户端不会启动内置服务。
+DEVLOOP_SERVICE_URL=http://127.0.0.1:4317
+
+# 覆盖界面加载地址；开发模式默认 http://127.0.0.1:5173，打包后默认使用服务地址。
+DEVLOOP_WEB_URL=http://127.0.0.1:5173
+
+# 启动时自动打开 Chromium DevTools；只有值为 1 时启用。
+DEVLOOP_OPEN_DEVTOOLS=1
+
+# 把 renderer console、加载失败和崩溃信息转发到主进程 stderr；只有值为 1 时启用。
+DEVLOOP_LOG_RENDERER=1
+```
 
 ### 可选：多人共享部署
 
@@ -83,11 +129,11 @@ Electron 客户端 / 本机浏览器
 
 DevLoop 在服务端维护一张 runner 注册表，`AgentWorker` 拉取任务时按 `project.runner` 挑选实例：
 
-| Runner | ID | 说明 |
-| --- | --- | --- |
-| Codex CLI | `codex` | 默认执行器，需要本机已登录 `codex` |
+| Runner          | ID            | 说明                                                                                                        |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| Codex CLI       | `codex`       | 默认执行器，需要本机已登录 `codex`                                                                          |
 | Claude Code CLI | `claude-code` | 与 Codex 契约完全一致（AgentResult schema、stall watchdog、JSON 修复、进程组管理），需要本机已登录 `claude` |
-| Fake | `fake` | 内置模拟执行器，用于验证 UI 与状态流转，不做真实修改 |
+| Fake            | `fake`        | 内置模拟执行器，用于验证 UI 与状态流转，不做真实修改                                                        |
 
 - 在项目卡片上直接下拉切换。fake 只作为环境兜底，不在项目选项中出现。
 - 若项目指向的 runner 未注册（例如未来卸载了某个 CLI），worker 会回退到默认 runner 并 emit `runner.fallback` 事件写入运行日志。

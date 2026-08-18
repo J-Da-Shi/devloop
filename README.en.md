@@ -33,18 +33,53 @@ By default the server talks to the Codex CLI already installed and logged in on 
 DEVLOOP_RUNNER=fake pnpm dev:web
 ```
 
-Common environment variables:
+The server supports the following environment variables. `pnpm dev` does not automatically load a root `.env` file; set them before the command, export them from your shell, or inject them through a process manager.
 
-```text
-DEVLOOP_RUNNER=codex                        # Fallback default when a project doesn't specify a runner
-DEVLOOP_CODEX_EXECUTABLE=/absolute/path/to/codex
-DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
-DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
-DEVLOOP_CLAUDE_CODE_EXECUTABLE=/absolute/path/to/claude
-DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
-DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+```bash
+# Repository root used to resolve migrations, web assets, and the output schema; defaults to this repository in source runs.
+DEVLOOP_REPOSITORY_ROOT=/absolute/path/to/devloop
+
+# Server bind address; defaults to loopback-only access.
+DEVLOOP_HOST=127.0.0.1
+
+# Server bind port.
+DEVLOOP_PORT=4317
+
+# Permit binding to a non-loopback address; required when DEVLOOP_HOST is not local-only.
+DEVLOOP_ALLOW_LAN=false
+
+# Storage for the database, Git mirrors, worktrees, and skills; relative paths are resolved from the repository root.
 DEVLOOP_DATA_DIR=.devloop-data
+
+# Server log level passed to Fastify/Pino, such as trace, debug, info, warn, or error.
+DEVLOOP_LOG_LEVEL=info
+
+# Fallback runner when a project does not specify one; accepts codex or fake.
+DEVLOOP_RUNNER=codex
+
+# Codex CLI command name or absolute path.
+DEVLOOP_CODEX_EXECUTABLE=codex
+
+# Make Codex CLI ignore the user's config.toml and rule files.
+DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
+
+# Continuous Codex inactivity before termination, in milliseconds; this is not a total run limit.
+DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
+
+# Claude Code CLI command name or absolute path.
+DEVLOOP_CLAUDE_CODE_EXECUTABLE=claude
+
+# Continuous Claude Code inactivity before termination, in milliseconds; this is not a total run limit.
+DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
+
+# Minimum delay before the worker claims a newly ready task, in milliseconds.
+DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+
+# Simulated execution delay for the fake runner, in milliseconds.
+DEVLOOP_FAKE_RUNNER_DELAY_MS=850
 ```
+
+`DEVLOOP_CODEX_TIMEOUT_MS` remains only as a compatibility alias for older releases. New configurations should use `DEVLOOP_CODEX_STALL_TIMEOUT_MS`.
 
 ### Packaging the desktop client
 
@@ -54,10 +89,21 @@ On macOS, produce a dmg / zip:
 pnpm --filter @devloop/desktop make
 ```
 
-Artifacts land in `apps/desktop/out/make/`. Two environment flags help when diagnosing issues:
+Artifacts land in `apps/desktop/out/make/`. The desktop main process supports these environment variables:
 
-- `DEVLOOP_OPEN_DEVTOOLS=1` forces DevTools to open on launch.
-- `DEVLOOP_LOG_RENDERER=1` forwards renderer console messages and crashes to the main process stderr.
+```bash
+# Use an external DevLoop Server; packaged clients do not start the bundled server when this is set.
+DEVLOOP_SERVICE_URL=http://127.0.0.1:4317
+
+# Override the renderer URL; development defaults to http://127.0.0.1:5173 and packaged builds default to the service URL.
+DEVLOOP_WEB_URL=http://127.0.0.1:5173
+
+# Open Chromium DevTools at startup; enabled only when the value is 1.
+DEVLOOP_OPEN_DEVTOOLS=1
+
+# Forward renderer console messages, load failures, and crashes to main-process stderr; enabled only when the value is 1.
+DEVLOOP_LOG_RENDERER=1
+```
 
 ### Optional: shared deployment
 
@@ -83,11 +129,11 @@ In development, data lives in `.devloop-data` inside the repo. The packaged Elec
 
 The server keeps a runner registry. When `AgentWorker` claims a task, it picks a runner instance based on `project.runner`:
 
-| Runner | ID | Notes |
-| --- | --- | --- |
-| Codex CLI | `codex` | Default runner. Requires `codex` to be installed and logged in on the host. |
+| Runner          | ID            | Notes                                                                                                                                                                      |
+| --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex CLI       | `codex`       | Default runner. Requires `codex` to be installed and logged in on the host.                                                                                                |
 | Claude Code CLI | `claude-code` | Contract-identical to Codex (same AgentResult schema, stall watchdog, JSON repair, process-group management). Requires `claude` to be installed and logged in on the host. |
-| Fake | `fake` | Built-in mock runner for verifying UI and state flow. Never touches your working tree. |
+| Fake            | `fake`        | Built-in mock runner for verifying UI and state flow. Never touches your working tree.                                                                                     |
 
 - Switch the runner inline on the project card. `fake` is a system-level fallback and is not offered as a project choice.
 - If a project points to a runner that isn't registered (for example, a CLI has been uninstalled), the worker falls back to the default runner and emits a `runner.fallback` event into the run log.
