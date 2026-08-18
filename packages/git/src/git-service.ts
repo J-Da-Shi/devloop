@@ -780,6 +780,10 @@ export class GitService {
     );
     if (status.trim()) {
       await this.executeForRun(["-C", worktreePath, "add", "--all"], input);
+      // 用 core.hooksPath=/dev/null 屏蔽目标仓库的所有 Git 钩子。DevLoop 在 Worktree 中提交的
+      // 是 agent 执行结果，目标仓库的钩子（例如 simple-git-hooks 触发的 pnpm install）在
+      // Worktree 环境下常常无法正确工作（.git 是文件而不是目录），且这些校验已经在开发者
+      // 本地 / CI 层执行过，DevLoop 不需要再拦一次。
       await this.executeForRun(
         [
           "-c",
@@ -788,9 +792,12 @@ export class GitService {
           "user.email=devloop@local",
           "-c",
           "commit.gpgSign=false",
+          "-c",
+          "core.hooksPath=/dev/null",
           "-C",
           worktreePath,
           "commit",
+          "--no-verify",
           "-m",
           input.message,
         ],

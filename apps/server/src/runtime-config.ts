@@ -17,6 +17,8 @@ export interface RuntimeConfig {
   codexExecutable: string;
   codexIgnoreUserConfig: boolean;
   codexStallTimeoutMs: number;
+  claudeCodeExecutable: string;
+  claudeCodeStallTimeoutMs: number;
   agentClaimDelayMs: number;
   fakeRunnerDelayMs: number;
 }
@@ -74,6 +76,12 @@ export function loadRuntimeConfig(): RuntimeConfig {
       process.env.DEVLOOP_CODEX_STALL_TIMEOUT_MS ?? process.env.DEVLOOP_CODEX_TIMEOUT_MS,
       30 * 60 * 1_000,
       "DEVLOOP_CODEX_STALL_TIMEOUT_MS",
+    ),
+    claudeCodeExecutable: process.env.DEVLOOP_CLAUDE_CODE_EXECUTABLE ?? "claude",
+    claudeCodeStallTimeoutMs: parseInteger(
+      process.env.DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS,
+      30 * 60 * 1_000,
+      "DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS",
     ),
     agentClaimDelayMs: parseInteger(
       process.env.DEVLOOP_AGENT_CLAIM_DELAY_MS,

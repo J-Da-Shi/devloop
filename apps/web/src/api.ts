@@ -27,6 +27,7 @@ import type {
   TaskRevision,
   TaskRun,
   RunPublishResult,
+  UpdateProjectRunnerInput,
   UpdateSkillInput,
   UpdateTaskInput,
 } from "@devloop/shared";
@@ -124,6 +125,11 @@ export const api = {
     }),
   syncProject: (projectId: string) =>
     request<{ project: Project }>(`/api/projects/${projectId}/sync`, { method: "POST" }),
+  updateProjectRunner: (projectId: string, input: UpdateProjectRunnerInput) =>
+    request<{ project: Project; replayed: boolean }>(`/api/projects/${projectId}/runner`, {
+      method: "PATCH",
+      body: json(input),
+    }),
   skills: () => request<{ skills: Skill[] }>("/api/skills"),
   skill: (skillId: string) => request<SkillDetails>(`/api/skills/${skillId}`),
   validateSkill: (input: CreateSkillInput) =>

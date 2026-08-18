@@ -86,8 +86,17 @@ createRoot(root).render(
   </StrictMode>,
 );
 
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+// Service Worker 曾经被用来做离线缓存，但打包升级后 SW 里的旧 index.html 会引用
+// 已消失的 asset hash，让页面白屏。桌面版本身在本机运行、不需要离线兜底，因此主动
+// 注销任何遗留的 SW 并清空其缓存，避免旧版本的用户升级后卡住。
+if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js");
+    void navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      }
+    });
   });
 }

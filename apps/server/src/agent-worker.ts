@@ -7,7 +7,7 @@ import {
   type ReconcileCommitInput,
   type ReconcileCommitResult,
 } from "@devloop/git";
-import type { DomainEvent, RunStatus, WorkerStatus } from "@devloop/shared";
+import type { DomainEvent, RunnerCapabilities, RunStatus, WorkerStatus } from "@devloop/shared";
 import {
   terminateProcessGroup as terminateRunnerProcessGroup,
   type AgentRunner,
@@ -26,11 +26,15 @@ const phaseByEvent: Record<string, RunStatus> = {
   "runner.review": "PREPARING_REVIEW",
 };
 
+const runnersRequiringWorktree = new Set(["codex", "claude-code"]);
+const runnerRequiresWorktree = (runnerId: string): boolean =>
+  runnersRequiringWorktree.has(runnerId);
+
 export interface AgentWorkerOptions {
   claimDelayMs?: number;
   now?: () => number;
-  available?: boolean;
-  runnerVersion?: string | null;
+  defaultRunnerId?: string;
+  runnerCapabilities?: RunnerCapabilities[];
   gitService?: Pick<
     GitService,
     | "fetchRepository"
@@ -88,14 +92,64 @@ export class AgentWorker {
   private pulling = false;
   private execution: Promise<void> | null = null;
   private activeExecution: ActiveExecution | null = null;
+  private readonly runners: Map<string, AgentRunner>;
+  private readonly defaultRunnerId: string;
+  private readonly runnerCapabilitiesById: Map<string, RunnerCapabilities>;
 
   public constructor(
     private readonly repository: DevLoopRepository,
-    private readonly runner: AgentRunner,
+    runners: AgentRunner | Map<string, AgentRunner>,
     private readonly eventBus: DomainEventBus,
     private readonly outputSchemaPath: string,
     private readonly options: AgentWorkerOptions = {},
-  ) {}
+  ) {
+    if (runners instanceof Map) {
+      this.runners = runners;
+    } else {
+      this.runners = new Map([[runners.id, runners]]);
+    }
+    if (this.runners.size === 0) {
+      throw new Error("AgentWorker 需要至少注册一个 runner");
+    }
+    const defaultId = options.defaultRunnerId ?? this.runners.keys().next().value!;
+    if (!this.runners.has(defaultId)) {
+      throw new Error(`默认 runner ${defaultId} 未在注册表中`);
+    }
+    this.defaultRunnerId = defaultId;
+    this.runnerCapabilitiesById = new Map(
+      (options.runnerCapabilities ?? []).map((capability) => [capability.id, capability]),
+    );
+  }
+
+  private get defaultRunner(): AgentRunner {
+    return this.runners.get(this.defaultRunnerId)!;
+  }
+
+  private resolveRunnerForProject(projectRunnerId: string): {
+    runner: AgentRunner;
+    fellBack: boolean;
+    requestedId: string;
+  } {
+    const requested = this.runners.get(projectRunnerId);
+    if (requested) {
+      return { runner: requested, fellBack: false, requestedId: projectRunnerId };
+    }
+    // 只注册了一个 runner 时不算 fallback：单 runner 场景本就是覆盖全部项目
+    const fellBack = this.runners.size > 1;
+    return { runner: this.defaultRunner, fellBack, requestedId: projectRunnerId };
+  }
+
+  private isWorkerAvailable(): boolean {
+    if (this.runnerCapabilitiesById.size === 0) {
+      return true;
+    }
+    for (const capability of this.runnerCapabilitiesById.values()) {
+      if (capability.available) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   start(): void {
     if (this.timer) {
@@ -124,7 +178,7 @@ export class AgentWorker {
         // 恢复动作失败时仍允许服务启动，后续诊断页会暴露持久化状态。
       }
     }
-    const targetStatus = this.options.available === false ? "DEGRADED" : "RUNNING";
+    const targetStatus = this.isWorkerAvailable() ? "RUNNING" : "DEGRADED";
     if (this.repository.getWorkerState().status !== targetStatus) {
       this.publish(this.repository.setWorkerStatus(targetStatus));
     }
@@ -150,7 +204,7 @@ export class AgentWorker {
 
   setStatus(status: Extract<WorkerStatus, "RUNNING" | "PAUSED">): void {
     const nextStatus =
-      status === "RUNNING" && this.options.available === false ? "DEGRADED" : status;
+      status === "RUNNING" && !this.isWorkerAvailable() ? "DEGRADED" : status;
     const current = this.repository.getWorkerState();
     if (current.status !== nextStatus) {
       this.publish(this.repository.setWorkerStatus(nextStatus));
@@ -190,11 +244,16 @@ export class AgentWorker {
       const claimDelayMs = this.options.claimDelayMs ?? 5_000;
       const currentTime = this.options.now?.() ?? Date.now();
       const readyBefore = new Date(currentTime - claimDelayMs).toISOString();
-      const claimed = this.repository.claimNextTask(
-        this.runner.id,
+      const claimed = this.repository.claimNextTask({
         readyBefore,
-        this.options.runnerVersion ?? null,
-      );
+        resolveRunnerVersion: (runnerId) => {
+          const { runner } = this.resolveRunnerForProject(runnerId);
+          return (
+            this.runnerCapabilitiesById.get(runner.id)?.version ??
+            (runner.id === "fake" ? "built-in" : null)
+          );
+        },
+      });
       if (!claimed) {
         return false;
       }
@@ -239,6 +298,22 @@ export class AgentWorker {
     const onProcessGroupId = (processGroupId: number | null) =>
       this.handleProcessGroupChange(active, processGroupId);
 
+    const resolvedRunner = this.resolveRunnerForProject(claimed.projectRunner);
+    const runner = resolvedRunner.runner;
+    if (resolvedRunner.fellBack) {
+      try {
+        this.publish(
+          this.repository.recordRunEvent(
+            claimed.run.id,
+            "runner.fallback",
+            `项目请求的执行器 ${resolvedRunner.requestedId} 未注册，本次改用 ${runner.id}`,
+            { requestedRunner: resolvedRunner.requestedId, actualRunner: runner.id },
+          ),
+        );
+      } catch {
+        // 事件记录失败不阻断执行。
+      }
+    }
     try {
       const skills = await this.loadEnabledSkills(controller.signal);
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -255,14 +330,13 @@ export class AgentWorker {
           })),
         ),
       );
-      const workspace =
-        this.runner.id === "codex"
-          ? await this.prepareWorkspace(claimed, skills, controller.signal, onProcessGroupId)
-          : { path: null, baseCommit: claimed.run.baseCommit };
+      const workspace = runnerRequiresWorktree(runner.id)
+        ? await this.prepareWorkspace(claimed, runner, skills, controller.signal, onProcessGroupId)
+        : { path: null, baseCommit: claimed.run.baseCommit };
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
-      active.handle = this.runner.start(
+      active.handle = runner.start(
         {
           runId: claimed.run.id,
           taskId: claimed.task.id,
@@ -297,6 +371,7 @@ export class AgentWorker {
         }
         const preparedResult = await this.prepareResultForReview(
           claimed,
+          runner,
           skills,
           workspace.path,
           workspace.baseCommit,
@@ -389,12 +464,13 @@ export class AgentWorker {
 
   private async prepareWorkspace(
     claimed: ClaimedTask,
+    runner: AgentRunner,
     skills: RunnerSkill[],
     signal: AbortSignal,
     onProcessGroupId: (processGroupId: number | null) => void,
   ): Promise<{ path: string; baseCommit: string }> {
-    if (this.runner.id !== "codex") {
-      throw new Error("只有 Codex 执行器需要准备 Git Worktree");
+    if (!runnerRequiresWorktree(runner.id)) {
+      throw new Error("当前执行器不需要 Git Worktree");
     }
     if (!this.options.gitService || !this.options.worktreesPath) {
       throw new Error("真实执行器缺少 Git Worktree 配置");
@@ -437,6 +513,7 @@ export class AgentWorker {
       } else {
         const { reconciled, agentSummary } = await this.reconcileRunCommit(
           claimed,
+          runner,
           skills,
           {
             repositoryPath: claimed.projectPath,
@@ -535,6 +612,7 @@ export class AgentWorker {
 
   private async prepareResultForReview(
     claimed: ClaimedTask,
+    runner: AgentRunner,
     skills: RunnerSkill[],
     worktreePath: string | null,
     baseCommit: string | null,
@@ -545,7 +623,7 @@ export class AgentWorker {
   ): Promise<{ resultCommit: string | null; summary: string }> {
     if (
       !claimed.autoResolveConflicts ||
-      this.runner.id !== "codex" ||
+      !runnerRequiresWorktree(runner.id) ||
       !worktreePath ||
       !baseCommit ||
       !resultCommit ||
@@ -578,6 +656,7 @@ export class AgentWorker {
 
     const { reconciled, agentSummary } = await this.reconcileRunCommit(
       claimed,
+      runner,
       skills,
       {
         repositoryPath: claimed.projectPath,
@@ -648,6 +727,7 @@ export class AgentWorker {
 
   private async reconcileRunCommit(
     claimed: ClaimedTask,
+    runner: AgentRunner,
     skills: RunnerSkill[],
     input: ReconcileCommitInput,
     signal: AbortSignal,
@@ -677,8 +757,8 @@ export class AgentWorker {
               "REPAIRING",
               "run.conflict_resolution.started",
               continuation
-                ? `上一轮结果与最新目标分支存在 ${files.length} 个冲突文件，正在交给 Codex 自动解决`
-                : `检测到 ${files.length} 个冲突文件，正在交给 Codex 自动解决`,
+                ? `上一轮结果与最新目标分支存在 ${files.length} 个冲突文件，正在交给执行器自动解决`
+                : `检测到 ${files.length} 个冲突文件，正在交给执行器自动解决`,
               {
                 stage,
                 targetCommit: input.targetCommit,
@@ -686,7 +766,7 @@ export class AgentWorker {
               },
             ),
           );
-          const handle = this.runner.start(
+          const handle = runner.start(
             {
               runId: `conflict-${randomUUID()}`,
               taskId: claimed.task.id,
@@ -701,7 +781,8 @@ export class AgentWorker {
               signal,
               onProcessGroupId,
             },
-            (event) => this.handleConflictRunnerEvent(claimed, input.targetCommit, event, stage),
+            (event: RunnerEvent) =>
+              this.handleConflictRunnerEvent(claimed, input.targetCommit, event, stage),
           );
           if (this.activeExecution?.runId === claimed.run.id) {
             this.activeExecution.handle = handle;

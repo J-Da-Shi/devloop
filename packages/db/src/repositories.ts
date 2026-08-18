@@ -164,6 +164,7 @@ const mapProject = (row: ProjectRow): Project => ({
   defaultBaseRef: row.defaultBaseRef,
   integrationRef: row.integrationRef,
   integrationCommit: row.integrationCommit,
+  runner: (row.runner as Project["runner"]) ?? "codex",
   lastFetchedAt: row.lastFetchedAt,
   version: row.version,
   createdAt: row.createdAt,
@@ -305,6 +306,7 @@ export interface RegisteredProjectInput {
   defaultBaseRef: string;
   headCommit: string;
   lastFetchedAt?: string | null;
+  runner?: string;
 }
 
 export interface ProjectExecutionContext {
@@ -318,6 +320,7 @@ export interface ClaimedTask {
   projectPath: string;
   projectDefaultBaseRef: string;
   projectRepositoryUrl: string | null;
+  projectRunner: string;
   autoResolveConflicts: boolean;
   title: string;
   goal: string;
@@ -394,6 +397,7 @@ export class DevLoopRepository {
           defaultBaseRef: input.defaultBaseRef,
           integrationRef,
           integrationCommit: input.headCommit,
+          runner: input.runner ?? "codex",
           version: 0,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -426,6 +430,44 @@ export class DevLoopRepository {
   getProjectExecutionContext(projectId: string): ProjectExecutionContext | null {
     const row = this.handle.db.select().from(projects).where(eq(projects.id, projectId)).get();
     return row ? { project: mapProject(row), repositoryPath: row.path } : null;
+  }
+
+  updateProjectRunner(
+    projectId: string,
+    runner: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): EventfulResult<Project> {
+    return this.executeIdempotent(
+      deviceId,
+      idempotencyKey,
+      "project.update_runner",
+      expectedVersion,
+      () => {
+        const current = this.requireProjectRow(projectId);
+        this.assertVersion(current.version, expectedVersion);
+        const timestamp = now();
+        const row = this.handle.db
+          .update(projects)
+          .set({
+            runner,
+            version: current.version + 1,
+            updatedAt: timestamp,
+          })
+          .where(and(eq(projects.id, projectId), eq(projects.version, expectedVersion)))
+          .returning()
+          .get();
+        if (!row) {
+          throw new Error("Version conflict: 项目已被其他请求更新");
+        }
+        const event = this.insertDomainEvent("project", projectId, "project.runner_changed", {
+          projectId,
+          runner,
+        });
+        return { value: mapProject(row), events: [event] };
+      },
+    );
   }
 
   recordProjectFetch(projectId: string, headCommit?: string): EventfulResult<Project> {
@@ -929,10 +971,12 @@ export class DevLoopRepository {
   }
 
   claimNextTask(
-    runner: string,
-    readyBefore = now(),
-    runnerVersion: string | null = null,
+    options: {
+      readyBefore?: string;
+      resolveRunnerVersion?: (runnerId: string) => string | null;
+    } = {},
   ): EventfulResult<ClaimedTask> | null {
+    const readyBefore = options.readyBefore ?? now();
     return this.handle.sqlite.transaction(() => {
       const selected = this.handle.db
         .select({ task: tasks })
@@ -962,6 +1006,8 @@ export class DevLoopRepository {
       }
       const revisionSpec = parseTaskRevisionSpec(revision.specJson);
       const project = this.requireProjectRow(current.projectId);
+      const runner = project.runner;
+      const runnerVersion = options.resolveRunnerVersion?.(runner) ?? null;
       assertTaskTransition(current.status, "RUNNING");
       const baseCommit =
         revision.baseStrategy === "LATEST_ACCEPTED"
@@ -1042,6 +1088,7 @@ export class DevLoopRepository {
           projectPath: project.path,
           projectDefaultBaseRef: project.defaultBaseRef,
           projectRepositoryUrl: project.repositoryUrl,
+          projectRunner: runner,
           autoResolveConflicts: revisionSpec.autoResolveConflicts,
           title: revisionSpec.title,
           goal: revisionSpec.goal,

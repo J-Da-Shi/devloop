@@ -158,6 +158,8 @@ const config: RuntimeConfig = {
   codexExecutable: "codex",
   codexIgnoreUserConfig: true,
   codexStallTimeoutMs: 60_000,
+  claudeCodeExecutable: "claude",
+  claudeCodeStallTimeoutMs: 60_000,
   agentClaimDelayMs: 1_000,
   fakeRunnerDelayMs: 1,
 };
@@ -188,7 +190,7 @@ describe("冲突解决接口", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     const completed = repository.completeRun(
       claimed!.value.run.id,
       claimed!.value.run.executionToken,

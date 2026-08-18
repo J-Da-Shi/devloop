@@ -29,6 +29,7 @@ export const projects = sqliteTable(
     defaultBaseRef: text("default_base_ref").notNull(),
     integrationRef: text("integration_ref").notNull(),
     integrationCommit: text("integration_commit"),
+    runner: text("runner").notNull().default("codex"),
     version: integer("version").notNull().default(0),
     ...timestamps(),
   },

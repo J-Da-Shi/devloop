@@ -58,7 +58,7 @@ describe("DevLoopRepository 自动入队", () => {
       reviewFeedback: null,
     });
 
-    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(firstClaim?.value.autoResolveConflicts).toBe(false);
     const completed = repository.completeRun(
       firstClaim!.value.run.id,
@@ -79,8 +79,73 @@ describe("DevLoopRepository 自动入队", () => {
       reviewFeedback: "请调整实现",
     });
     expect(
-      repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z")?.value.autoResolveConflicts,
+      repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })?.value.autoResolveConflicts,
     ).toBe(false);
+  });
+
+  it("项目 runner 默认 codex，claim 时按项目 runner 写入 taskRuns.runner", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "多 runner 项目",
+      repositoryUrl: "git@example.com:team/multi-runner.git",
+      repositoryPath: "/tmp/devloop-multi-runner-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+      runner: "claude-code",
+    }).value;
+    expect(project.runner).toBe("claude-code");
+
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "验证按项目选 runner",
+      goal: "确认 run 记录里的 runner 与项目一致",
+      acceptanceCriteria: ["taskRuns.runner === 'claude-code'"],
+      priority: 90,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask({
+      resolveRunnerVersion: (runnerId) => (runnerId === "claude-code" ? "claude-cli test" : null),
+    });
+    expect(claimed?.value.projectRunner).toBe("claude-code");
+    expect(claimed?.value.run.runner).toBe("claude-code");
+    expect(claimed?.value.run.runnerVersion).toBe("claude-cli test");
+  });
+
+  it("updateProjectRunner 幂等重放不会再次写入", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "runner 切换项目",
+      repositoryUrl: "git@example.com:team/runner-switch.git",
+      repositoryPath: "/tmp/devloop-runner-switch-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const idempotencyKey = randomUUID();
+    const first = repository.updateProjectRunner(
+      project.id,
+      "claude-code",
+      "instance-owner",
+      project.version,
+      idempotencyKey,
+    );
+    expect(first.value.runner).toBe("claude-code");
+    expect(first.replayed).toBe(false);
+
+    const second = repository.updateProjectRunner(
+      project.id,
+      "claude-code",
+      "instance-owner",
+      project.version,
+      idempotencyKey,
+    );
+    expect(second.replayed).toBe(true);
+    expect(second.value.runner).toBe("claude-code");
   });
 
   it("公开项目不包含服务器托管路径", () => {
@@ -125,7 +190,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseRef: "main",
     });
 
-    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
 
     expect(repository.findProjectByPath("/tmp/devloop-local-project")?.id).toBe(project.id);
     expect(project.lastFetchedAt).toBeNull();
@@ -193,7 +258,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("codex");
+    const claimed = repository.claimNextTask();
     expect(claimed).not.toBeNull();
     expect(claimed!.value.run.targetBranch).toBe("feature/result-apply");
     const completed = repository.completeRun(
@@ -266,7 +331,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     const completed = repository.completeRun(
       claimed!.value.run.id,
       claimed!.value.run.executionToken,
@@ -330,7 +395,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("codex");
+    const claimed = repository.claimNextTask();
     expect(claimed).not.toBeNull();
     const completed = repository.completeRun(
       claimed!.value.run.id,
@@ -390,7 +455,7 @@ describe("DevLoopRepository 自动入队", () => {
     expect(repository.getTask(ready.id)).toBeNull();
     expect(repository.getTaskIncludingDeleted(ready.id)?.title).toBe("待删除任务");
     expect(repository.listTasks()).toHaveLength(0);
-    expect(repository.claimNextTask("fake")).toBeNull();
+    expect(repository.claimNextTask()).toBeNull();
     expect(deleted.events.map((event) => event.type)).toContain("task.deleted");
   });
 
@@ -417,7 +482,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("fake");
+    const claimed = repository.claimNextTask();
     expect(claimed).not.toBeNull();
 
     expect(() =>
@@ -483,7 +548,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(firstClaim).not.toBeNull();
     const firstCompleted = repository.completeRun(
       firstClaim!.value.run.id,
@@ -514,7 +579,7 @@ describe("DevLoopRepository 自动入队", () => {
       reviewFeedback: feedback,
     });
 
-    const retryClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const retryClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(retryClaim?.value).toMatchObject({
       title: "处理审核反馈",
       goal: "按审核意见完善实现",
@@ -535,7 +600,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     }).value;
-    const directRetryClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const directRetryClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(directRetryClaim?.value).toMatchObject({
       reviewFeedback: feedback,
       continuationBaseCommit: "base-commit",
@@ -577,7 +642,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     });
-    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(claimed).not.toBeNull();
 
     repository.setRunPhase(
@@ -711,7 +776,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseRef: "main",
     }).value;
     const firstRevisionId = ready.activeRevisionId;
-    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(firstClaim).not.toBeNull();
     const blocked = repository.blockRun(
       firstClaim!.value.run.id,
@@ -728,7 +793,7 @@ describe("DevLoopRepository 自动入队", () => {
     expect(directRetry.status).toBe("READY");
     expect(directRetry.activeRevisionId).not.toBe(firstRevisionId);
 
-    const secondClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const secondClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(secondClaim?.value.run.taskRevisionId).toBe(directRetry.activeRevisionId);
     const failed = repository.failRun(
       secondClaim!.value.run.id,
@@ -755,7 +820,7 @@ describe("DevLoopRepository 自动入队", () => {
       baseStrategy: "LATEST_ACCEPTED",
       baseRef: "main",
     }).value;
-    const thirdClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const thirdClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
 
     expect(revisedRetry.status).toBe("READY");
     expect(thirdClaim?.value).toMatchObject({

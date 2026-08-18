@@ -1,6 +1,6 @@
 import { DevLoopRepository, openDatabase } from "@devloop/db";
 import { GitService } from "@devloop/git";
-import { CodexRunner, FakeRunner } from "@devloop/runners";
+import { ClaudeCodeRunner, CodexRunner, FakeRunner, type AgentRunner } from "@devloop/runners";
 import { AgentWorker } from "./agent-worker.js";
 import { createApp } from "./app.js";
 import { DomainEventBus } from "./event-bus.js";
@@ -24,13 +24,25 @@ async function main(): Promise<void> {
     ignoreUserConfig: config.codexIgnoreUserConfig,
     stallTimeoutMs: config.codexStallTimeoutMs,
   });
-  const runner = config.runner === "codex" ? codexRunner : fakeRunner;
-  const runnerCapabilities = await runner.detectCapabilities();
-  const runners = config.runner === "codex" ? [codexRunner, fakeRunner] : [fakeRunner, codexRunner];
-  const worker = new AgentWorker(repository, runner, eventBus, config.outputSchemaPath, {
+  const claudeCodeRunner = new ClaudeCodeRunner({
+    executable: config.claudeCodeExecutable,
+    enabled: true,
+    stallTimeoutMs: config.claudeCodeStallTimeoutMs,
+  });
+  const runnerRegistry = new Map<string, AgentRunner>([
+    [codexRunner.id, codexRunner],
+    [claudeCodeRunner.id, claudeCodeRunner],
+    [fakeRunner.id, fakeRunner],
+  ]);
+  const defaultRunnerId = config.runner === "codex" ? codexRunner.id : fakeRunner.id;
+  const runnerCapabilities = await Promise.all(
+    [...runnerRegistry.values()].map((runner) => runner.detectCapabilities()),
+  );
+  const runners = [codexRunner, claudeCodeRunner, fakeRunner];
+  const worker = new AgentWorker(repository, runnerRegistry, eventBus, config.outputSchemaPath, {
     claimDelayMs: config.agentClaimDelayMs,
-    available: runnerCapabilities.available,
-    runnerVersion: runnerCapabilities.version,
+    defaultRunnerId,
+    runnerCapabilities,
     gitService,
     worktreesPath: config.worktreesPath,
     skillService,

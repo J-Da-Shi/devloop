@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `runner` text DEFAULT 'codex' NOT NULL;

@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Flex, Form, Input, Segmented } from "antd";
+import { Button, Flex, Form, Input, Segmented, Select } from "antd";
 import { FolderOpen, GitBranch, HardDrive, Plus, RefreshCw, Server, X } from "lucide-react";
 import { useState } from "react";
-import type { Project } from "@devloop/shared";
+import type { Project, ProjectRunner } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, InlineNotice, LoadingPanel } from "../components/feedback.js";
 import { IconButton } from "../components/icon-button.js";
@@ -14,9 +14,19 @@ type ProjectSource = "remote" | "local";
 type ProjectRegistration =
   | {
       source: "remote";
-      input: { name: string; repositoryUrl: string; defaultBaseRef: string };
+      input: {
+        name: string;
+        repositoryUrl: string;
+        defaultBaseRef: string;
+        runner: ProjectRunner;
+      };
     }
-  | { source: "local"; input: { name: string; path: string } };
+  | { source: "local"; input: { name: string; path: string; runner: ProjectRunner } };
+
+const runnerLabels: Record<ProjectRunner, string> = {
+  codex: "Codex CLI",
+  "claude-code": "Claude Code CLI",
+};
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -27,12 +37,25 @@ export function ProjectsPage() {
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [baseRef, setBaseRef] = useState("main");
+  const [runner, setRunner] = useState<ProjectRunner>("codex");
   const desktopAvailable = typeof window.devloopDesktop?.selectDirectory === "function";
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects });
+  const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard });
   const session = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
     staleTime: 60_000,
+  });
+  const runnerOptions: { value: ProjectRunner; label: string; disabled?: boolean }[] = (
+    ["codex", "claude-code"] as ProjectRunner[]
+  ).map((id) => {
+    const capability = dashboard.data?.runnerCapabilities.find((cap) => cap.id === id);
+    const available = capability?.available ?? true;
+    return {
+      value: id,
+      label: available ? runnerLabels[id] : `${runnerLabels[id]}（未就绪）`,
+      disabled: capability !== undefined && !available,
+    };
   });
   const refresh = async () => {
     await Promise.all([
@@ -66,6 +89,20 @@ export function ProjectsPage() {
       );
     },
     onError: (error) => notify(error instanceof Error ? error.message : "项目同步失败", "danger"),
+  });
+  const updateRunner = useMutation({
+    mutationFn: (input: { project: Project; runner: ProjectRunner }) =>
+      api.updateProjectRunner(input.project.id, {
+        runner: input.runner,
+        expectedVersion: input.project.version,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    onSuccess: async (data) => {
+      await refresh();
+      notify(`${data.project.name} 执行器已切换为 ${runnerLabels[data.project.runner]}`);
+    },
+    onError: (error) =>
+      notify(error instanceof Error ? error.message : "切换执行器失败", "danger"),
   });
   const chooseDirectory = async () => {
     try {
@@ -120,8 +157,11 @@ export function ProjectsPage() {
           onFinish={() => {
             createProject.mutate(
               source === "local"
-                ? { source, input: { name, path: localPath } }
-                : { source, input: { name, repositoryUrl, defaultBaseRef: baseRef } },
+                ? { source, input: { name, path: localPath, runner } }
+                : {
+                    source,
+                    input: { name, repositoryUrl, defaultBaseRef: baseRef, runner },
+                  },
             );
           }}
         >
@@ -163,6 +203,13 @@ export function ProjectsPage() {
           <div className="form-grid">
             <Form.Item label="项目名称" required>
               <Input value={name} onChange={(event) => setName(event.target.value)} />
+            </Form.Item>
+            <Form.Item label="执行器" required>
+              <Select<ProjectRunner>
+                value={runner}
+                onChange={(value) => setRunner(value)}
+                options={runnerOptions}
+              />
             </Form.Item>
             {source === "remote" ? (
               <>
@@ -244,6 +291,26 @@ export function ProjectsPage() {
                   <div>
                     <dt>{local ? "最近检查" : "最近同步"}</dt>
                     <dd>{formatDateTime(local ? project.updatedAt : project.lastFetchedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>执行器</dt>
+                    <dd>
+                      {canEdit ? (
+                        <Select<ProjectRunner>
+                          size="small"
+                          value={project.runner}
+                          style={{ minWidth: 160 }}
+                          disabled={updateRunner.isPending}
+                          onChange={(value) =>
+                            value !== project.runner &&
+                            updateRunner.mutate({ project, runner: value })
+                          }
+                          options={runnerOptions}
+                        />
+                      ) : (
+                        runnerLabels[project.runner]
+                      )}
+                    </dd>
                   </div>
                 </dl>
                 {canEdit ? (

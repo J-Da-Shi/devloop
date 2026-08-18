@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { baseStrategySchema, taskStatusSchema } from "./domain.js";
+import { baseStrategySchema, projectRunnerSchema, taskStatusSchema } from "./domain.js";
 
 const isSshRepositoryUrl = (value: string): boolean => {
   if (value.startsWith("ssh://")) {
@@ -22,11 +22,19 @@ export const createProjectInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   repositoryUrl: repositoryUrlSchema,
   defaultBaseRef: z.string().trim().min(1).max(200).default("main"),
+  runner: projectRunnerSchema.default("codex"),
 });
 
 export const createLocalProjectInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   path: z.string().trim().min(1, "项目目录不能为空").max(2048),
+  runner: projectRunnerSchema.default("codex"),
+});
+
+export const updateProjectRunnerInputSchema = z.object({
+  runner: projectRunnerSchema,
+  expectedVersion: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
 });
 
 export const targetBranchSchema = z
@@ -165,6 +173,7 @@ export const taskQuerySchema = z.object({
 
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type CreateLocalProjectInput = z.infer<typeof createLocalProjectInputSchema>;
+export type UpdateProjectRunnerInput = z.infer<typeof updateProjectRunnerInputSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;

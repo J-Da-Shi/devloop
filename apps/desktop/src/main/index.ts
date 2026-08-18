@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  session,
   shell,
   utilityProcess,
   type UtilityProcess,
@@ -236,6 +237,20 @@ async function createWindow(): Promise<void> {
   });
 
   mainWindow = window;
+  if (process.env.DEVLOOP_OPEN_DEVTOOLS === "1") {
+    window.webContents.openDevTools({ mode: "detach" });
+  }
+  if (process.env.DEVLOOP_LOG_RENDERER === "1") {
+    window.webContents.on("console-message", (_event, level, message, line, source) => {
+      process.stderr.write(`[renderer ${level}] ${source}:${line} ${message}\n`);
+    });
+    window.webContents.on("render-process-gone", (_event, details) => {
+      process.stderr.write(`[renderer gone] ${JSON.stringify(details)}\n`);
+    });
+    window.webContents.on("did-fail-load", (_event, code, description, url) => {
+      process.stderr.write(`[renderer did-fail-load] ${code} ${description} ${url}\n`);
+    });
+  }
   window.once("ready-to-show", () => window.show());
   const publishFullScreenState = (): void => {
     window.webContents.send("desktop:full-screen-changed", window.isFullScreen());
@@ -286,6 +301,17 @@ if (!hasSingleInstanceLock) {
 
   void app.whenReady().then(async () => {
     try {
+      // 打包升级后 index.html 引用的 assets hash 会变化；旧 Service Worker 缓存或 HTTP 缓存
+      // 里的 index.html 会指向已消失的 hash，让 server 走 SPA fallback 返回 HTML，浏览器把 HTML
+      // 当 JS 解析导致白屏。启动时同时清 HTTP 缓存和存储（含 Service Worker、CacheStorage）。
+      try {
+        await session.defaultSession.clearCache();
+        await session.defaultSession.clearStorageData({
+          storages: ["serviceworkers", "cachestorage"],
+        });
+      } catch {
+        // 清缓存失败不影响启动。
+      }
       registerDesktopBridge();
       installApplicationMenu();
       await startBundledService();

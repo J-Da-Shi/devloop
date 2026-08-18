@@ -28,18 +28,21 @@ export const runStatuses = [
 export const workerStatuses = ["RUNNING", "PAUSED", "STOPPED", "DEGRADED"] as const;
 export const deviceRoles = ["viewer", "operator", "editor"] as const;
 export const baseStrategies = ["LATEST_ACCEPTED", "PINNED"] as const;
+export const projectRunners = ["codex", "claude-code"] as const;
 
 export const taskStatusSchema = z.enum(taskStatuses);
 export const runStatusSchema = z.enum(runStatuses);
 export const workerStatusSchema = z.enum(workerStatuses);
 export const deviceRoleSchema = z.enum(deviceRoles);
 export const baseStrategySchema = z.enum(baseStrategies);
+export const projectRunnerSchema = z.enum(projectRunners);
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type WorkerStatus = z.infer<typeof workerStatusSchema>;
 export type DeviceRole = z.infer<typeof deviceRoleSchema>;
 export type BaseStrategy = z.infer<typeof baseStrategySchema>;
+export type ProjectRunner = z.infer<typeof projectRunnerSchema>;
 
 export interface Project {
   id: string;
@@ -48,6 +51,7 @@ export interface Project {
   defaultBaseRef: string;
   integrationRef: string;
   integrationCommit: string | null;
+  runner: ProjectRunner;
   lastFetchedAt: string | null;
   version: number;
   createdAt: string;

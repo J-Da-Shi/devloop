@@ -646,7 +646,7 @@ describe("AgentWorker", () => {
       headCommit: "base-commit",
     }).value;
     const task = createReadyTask(repository, project.id, "恢复遗留执行", 100);
-    const claimed = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(claimed).not.toBeNull();
     const processGroupId = 515_151;
     repository.setRunProcessGroupId(
@@ -684,7 +684,7 @@ describe("AgentWorker", () => {
       headCommit: "test-base-commit",
     }).value;
     const ready = createReadyTask(repository, project.id, "处理审核反馈", 80);
-    const firstClaim = repository.claimNextTask("controlled", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     expect(firstClaim).not.toBeNull();
     const completed = repository.completeRun(
       firstClaim!.value.run.id,
@@ -729,7 +729,7 @@ describe("AgentWorker", () => {
       lastFetchedAt: null,
     }).value;
     const ready = createReadyTask(repository, project.id, "连续处理审核反馈", 100);
-    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     const firstCompleted = repository.completeRun(
       firstClaim!.value.run.id,
       firstClaim!.value.run.executionToken,
@@ -823,7 +823,7 @@ describe("AgentWorker", () => {
       lastFetchedAt: null,
     }).value;
     const ready = createReadyTask(repository, project.id, "人工处理连续迭代冲突", 100, false);
-    const firstClaim = repository.claimNextTask("codex", "9999-12-31T23:59:59.999Z");
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
     const firstCompleted = repository.completeRun(
       firstClaim!.value.run.id,
       firstClaim!.value.run.executionToken,
@@ -876,7 +876,6 @@ describe("AgentWorker", () => {
     const gitService = new ControlledGitService();
     const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
       claimDelayMs: 0,
-      runnerVersion: "codex-cli test",
       gitService,
       worktreesPath: "/tmp/devloop-worker-worktrees",
     });
@@ -906,7 +905,6 @@ describe("AgentWorker", () => {
     const run = runId ? repository.getRun(runId) : null;
     expect(run).toMatchObject({
       runner: "codex",
-      runnerVersion: "codex-cli test",
       targetBranch: "main",
       baseCommit: "base-commit",
       resultCommit: "result-commit",
@@ -933,7 +931,6 @@ describe("AgentWorker", () => {
     const gitService = new ControlledGitService();
     const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
       claimDelayMs: 0,
-      runnerVersion: "codex-cli test",
       gitService,
       worktreesPath: "/tmp/devloop-worker-worktrees",
     });

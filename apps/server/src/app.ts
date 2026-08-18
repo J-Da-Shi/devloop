@@ -16,6 +16,7 @@ import {
   resolveRunConflictsInputSchema,
   runConflictAgentResolutionSchema,
   taskCommandInputSchema,
+  updateProjectRunnerInputSchema,
   updateSkillInputSchema,
   updateTaskInputSchema,
   validateSkillInputSchema,
@@ -259,6 +260,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         repositoryPath: git.path,
         defaultBaseRef: git.defaultBranch,
         headCommit: git.headCommit,
+        runner: input.runner,
       });
       publish(eventBus, result);
       return reply.code(201).send({ project: result.value });
@@ -285,9 +287,29 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       defaultBaseRef: git.branch,
       headCommit: git.headCommit,
       lastFetchedAt: null,
+      runner: input.runner,
     });
     publish(eventBus, result);
     return reply.code(201).send({ project: result.value });
+  });
+
+  app.patch("/api/projects/:projectId/runner", async (request) => {
+    const identity = requireRequestRole(request, "editor");
+    const { projectId } = projectParamSchema.parse(request.params);
+    const input = updateProjectRunnerInputSchema.parse(request.body);
+    const context = repository.getProjectExecutionContext(projectId);
+    if (!context) {
+      throw new HttpError(404, "项目不存在", "NOT_FOUND");
+    }
+    const result = repository.updateProjectRunner(
+      projectId,
+      input.runner,
+      identity.id,
+      input.expectedVersion,
+      input.idempotencyKey,
+    );
+    publish(eventBus, result);
+    return { project: result.value, replayed: result.replayed };
   });
 
   app.post("/api/projects/:projectId/sync", async (request) => {
@@ -826,8 +848,23 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         error: { code: "NOT_FOUND", message: "接口不存在" },
       });
     }
+    // 静态资源目录未命中时不要走 SPA fallback，避免旧缓存的 index.html 引用到已消失的 assets 时
+    // 返回 index.html 让浏览器把 HTML 当 JS 解析，导致白屏。
+    if (
+      request.url.startsWith("/assets/") ||
+      /\.(?:js|mjs|css|map|json|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf|otf|txt)$/i.test(
+        request.url.split("?")[0] ?? "",
+      )
+    ) {
+      return reply.code(404).send({
+        error: { code: "ASSET_NOT_FOUND", message: "静态资源不存在，可能是浏览器缓存过期，请强制刷新" },
+      });
+    }
     if (hasBuiltWeb) {
-      return reply.sendFile("index.html");
+      return reply
+        .header("Cache-Control", "no-store")
+        .type("text/html")
+        .sendFile("index.html");
     }
     return reply.code(404).send({
       error: { code: "WEB_NOT_BUILT", message: "Web 应用尚未构建，请使用 Vite 开发服务" },
