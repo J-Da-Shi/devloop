@@ -285,3 +285,92 @@ describe("冲突解决接口", () => {
     }
   });
 });
+
+describe("完成任务继续迭代接口", () => {
+  it("把已完成任务转为可编辑草稿，并支持幂等重放", async () => {
+    const database = openDatabase({ filePath: ":memory:", migrationsFolder });
+    const repository = new DevLoopRepository(database);
+    const project = repository.createProject({
+      name: "继续迭代项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-continue-completed-test",
+      defaultBaseRef: "main",
+      headCommit: "b".repeat(40),
+      lastFetchedAt: null,
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "已完成需求",
+      goal: "完成后继续增加需求",
+      acceptanceCriteria: ["可以开启下一轮草稿"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const completed = repository.completeRun(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "等待审核",
+      "c".repeat(40),
+    ).value;
+    const approved = repository.approveAppliedRun(
+      claimed!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      {
+        status: "applied",
+        branch: "main",
+        previousCommit: "b".repeat(40),
+        currentCommit: "c".repeat(40),
+        branchCreated: false,
+        workingTreeUpdated: true,
+      },
+    ).value;
+    const app = await createApp({
+      config,
+      repository,
+      gitService: new ConflictGitService() as unknown as GitService,
+      skillService: new SkillService(repository, config.skillsPath),
+      runners: [new ConflictRunner()],
+      eventBus: new DomainEventBus(),
+      worker: { wake: () => undefined } as unknown as AgentWorker,
+    });
+    const payload = {
+      expectedVersion: approved.task.version,
+      idempotencyKey: randomUUID(),
+    };
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/tasks/${draft.id}/continue`,
+        remoteAddress: "127.0.0.1",
+        payload,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        replayed: false,
+        task: { id: draft.id, status: "DRAFT", version: approved.task.version + 1 },
+      });
+
+      const replay = await app.inject({
+        method: "POST",
+        url: `/api/tasks/${draft.id}/continue`,
+        remoteAddress: "127.0.0.1",
+        payload,
+      });
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({ replayed: true, task: { status: "DRAFT" } });
+    } finally {
+      await app.close();
+      database.close();
+    }
+  });
+});

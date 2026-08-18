@@ -167,6 +167,11 @@ export const api = {
       method: "POST",
       body: json(input),
     }),
+  continueTask: (taskId: string, input: TaskCommandInput) =>
+    request<{ task: Task; replayed: boolean }>(`/api/tasks/${taskId}/continue`, {
+      method: "POST",
+      body: json(input),
+    }),
   cancelTask: (taskId: string, input: TaskCommandInput) =>
     request<{ task: Task; run: TaskRun; replayed: boolean }>(`/api/tasks/${taskId}/cancel`, {
       method: "POST",

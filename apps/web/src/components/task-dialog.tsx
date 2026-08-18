@@ -37,7 +37,16 @@ const taskFormSchema = z.object({
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
 type ConfirmAction =
-  "confirm" | "unconfirm" | "retry" | "revise" | "cancel" | "delete" | "approve" | "reject" | null;
+  | "confirm"
+  | "unconfirm"
+  | "continue"
+  | "retry"
+  | "revise"
+  | "cancel"
+  | "delete"
+  | "approve"
+  | "reject"
+  | null;
 
 interface TaskDialogProps {
   open: boolean;
@@ -161,6 +170,9 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       if (action === "unconfirm" || action === "revise") {
         return api.unconfirmTask(task.id, { expectedVersion: task.version, idempotencyKey });
       }
+      if (action === "continue") {
+        return api.continueTask(task.id, { expectedVersion: task.version, idempotencyKey });
+      }
       if (action === "cancel") {
         return api.cancelTask(task.id, { expectedVersion: task.version, idempotencyKey });
       }
@@ -204,6 +216,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       const messages: Record<Exclude<ConfirmAction, null>, string> = {
         confirm: "任务已确认并加入队列",
         unconfirm: "任务已撤回为草稿",
+        continue: "已进入新一轮草稿，请补充需求后确认排队",
         retry: "任务已创建新 Revision 并重新加入队列",
         revise: "任务已退回草稿，可修改后重新排队",
         cancel: "执行已取消，Worktree 和日志已保留",
@@ -220,7 +233,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       };
       notify(messages[action]);
       setConfirmAction(null);
-      if (action !== "approve") {
+      if (action !== "approve" && action !== "continue") {
         onOpenChange(false);
       }
     },
@@ -259,6 +272,13 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       title: "撤回为草稿？",
       description: "任务会离开待执行队列，修改后需要重新确认。",
       label: "撤回任务",
+      danger: false,
+    },
+    continue: {
+      title: "基于当前完成结果继续迭代？",
+      description:
+        "任务会转为可编辑草稿，已有 Revision、执行记录和审核结果全部保留。补充新需求并确认后，下一轮会以目标分支最新接受的代码为基础。",
+      label: "继续迭代",
       danger: false,
     },
     retry: {
@@ -641,6 +661,18 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                               : ""
                           }。`}
                     </InlineNotice>
+                    {canEdit ? (
+                      <div className="dialog-actions">
+                        <Button
+                          type="primary"
+                          icon={<Pencil size={17} />}
+                          onClick={() => setConfirmAction("continue")}
+                          disabled={pending}
+                        >
+                          继续迭代
+                        </Button>
+                      </div>
+                    ) : null}
                   </section>
                 ) : null}
               </div>

@@ -455,6 +455,20 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return { task: result.value, replayed: result.replayed };
   });
 
+  app.post("/api/tasks/:taskId/continue", async (request) => {
+    const identity = requireRequestRole(request, "editor");
+    const { taskId } = taskParamSchema.parse(request.params);
+    const input = taskCommandInputSchema.parse(request.body);
+    const result = repository.continueCompletedTask(
+      taskId,
+      identity.id,
+      input.expectedVersion,
+      input.idempotencyKey,
+    );
+    publish(eventBus, result);
+    return { task: result.value, replayed: result.replayed };
+  });
+
   app.post("/api/tasks/:taskId/cancel", async (request) => {
     const identity = requireRequestRole(request, "operator");
     const { taskId } = taskParamSchema.parse(request.params);

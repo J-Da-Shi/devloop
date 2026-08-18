@@ -829,4 +829,116 @@ describe("DevLoopRepository 自动入队", () => {
       reviewFeedback: null,
     });
   });
+
+  it("已完成任务可以继续迭代，并以最新已接受结果为下一轮基础", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "完成任务迭代项目",
+      repositoryUrl: "git@example.com:team/completed-continuation.git",
+      repositoryPath: "/tmp/devloop-completed-continuation-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "第一轮需求",
+      goal: "完成初始功能",
+      acceptanceCriteria: ["初始验收通过"],
+      priority: 50,
+    }).value;
+    const firstReady = repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const firstCompleted = repository.completeRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "第一轮完成",
+      "first-result-commit",
+    ).value;
+    const rejected = repository.rejectRun(
+      firstClaim!.value.run.id,
+      "instance-owner",
+      firstCompleted.task.version,
+      randomUUID(),
+      "请补充边界处理",
+    ).value;
+    const secondClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const secondCompleted = repository.completeRun(
+      secondClaim!.value.run.id,
+      secondClaim!.value.run.executionToken,
+      "第二轮完成",
+      "second-result-commit",
+    ).value;
+    const approved = repository.approvePublishedRun(
+      secondClaim!.value.run.id,
+      "instance-owner",
+      secondCompleted.task.version,
+      randomUUID(),
+      {
+        status: "pushed",
+        branch: "main",
+        previousCommit: "first-result-commit",
+        currentCommit: "second-result-commit",
+        branchCreated: false,
+      },
+    ).value;
+
+    const continueKey = randomUUID();
+    const continued = repository.continueCompletedTask(
+      approved.task.id,
+      "instance-owner",
+      approved.task.version,
+      continueKey,
+    ).value;
+    expect(continued.status).toBe("DRAFT");
+    expect(continued.activeRevisionId).toBe(secondClaim!.value.run.taskRevisionId);
+    expect(
+      repository.continueCompletedTask(
+        approved.task.id,
+        "instance-owner",
+        approved.task.version,
+        continueKey,
+      ).replayed,
+    ).toBe(true);
+
+    const edited = repository.updateDraftTask(continued.id, "instance-owner", {
+      goal: "在初始功能上继续完善边界处理",
+      acceptanceCriteria: ["初始验收通过", "边界处理有回归测试"],
+      expectedVersion: continued.version,
+      idempotencyKey: randomUUID(),
+    }).value;
+    const nextReady = repository.confirmTask(edited.id, "instance-owner", {
+      expectedVersion: edited.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const nextRevision = repository.getTaskRevision(nextReady.activeRevisionId!);
+    expect(nextRevision).toMatchObject({
+      revision: 3,
+      createdFrom: secondClaim!.value.run.taskRevisionId,
+      goal: "在初始功能上继续完善边界处理",
+      acceptanceCriteria: ["初始验收通过", "边界处理有回归测试"],
+      reviewFeedback: null,
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+      confirmedBaseCommit: "second-result-commit",
+    });
+
+    const nextClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(nextClaim?.value).toMatchObject({
+      goal: "在初始功能上继续完善边界处理",
+      continuationBaseCommit: null,
+      continuationResultCommit: null,
+      reviewFeedback: null,
+      run: { baseCommit: "second-result-commit" },
+    });
+    expect(firstReady.activeRevisionId).not.toBe(nextReady.activeRevisionId);
+    expect(rejected.activeRevisionId).not.toBe(nextReady.activeRevisionId);
+  });
 });

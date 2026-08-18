@@ -831,15 +831,36 @@ export class DevLoopRepository {
         const previousSpec = previousRevision
           ? parseTaskRevisionSpec(previousRevision.specJson)
           : null;
-        const continuationBaseCommit = previousSpec?.continuationBaseCommit ?? null;
-        const continuationResultCommit = previousSpec?.continuationResultCommit ?? null;
+        const latestRun = current.latestRunId
+          ? this.handle.db.select().from(taskRuns).where(eq(taskRuns.id, current.latestRunId)).get()
+          : null;
+        const latestReviewDecision = latestRun
+          ? this.handle.db
+              .select()
+              .from(reviewDecisions)
+              .where(eq(reviewDecisions.runId, latestRun.id))
+              .orderBy(desc(reviewDecisions.createdAt))
+              .get()
+          : null;
+        const continuesAcceptedRevision = Boolean(
+          latestRun &&
+          latestRun.status === "SUCCEEDED" &&
+          latestRun.taskRevisionId === current.activeRevisionId &&
+          latestReviewDecision?.decision === "APPROVED",
+        );
+        const continuationBaseCommit = continuesAcceptedRevision
+          ? null
+          : (previousSpec?.continuationBaseCommit ?? null);
+        const continuationResultCommit = continuesAcceptedRevision
+          ? null
+          : (previousSpec?.continuationResultCommit ?? null);
         const baseStrategy = continuationResultCommit ? "PINNED" : input.baseStrategy;
         const baseRef = continuationResultCommit ?? current.targetBranch;
         const spec = {
           title: current.title,
           goal: current.goal,
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
-          reviewFeedback: previousSpec?.reviewFeedback ?? null,
+          reviewFeedback: continuesAcceptedRevision ? null : (previousSpec?.reviewFeedback ?? null),
           autoResolveConflicts: current.autoResolveConflicts,
           continuationBaseCommit,
           continuationResultCommit,
@@ -925,6 +946,71 @@ export class DevLoopRepository {
           taskId,
           from: current.status,
           to: "DRAFT",
+        });
+        return { value: mapTask(row, project.name), events: [event] };
+      },
+    );
+  }
+
+  continueCompletedTask(
+    taskId: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): EventfulResult<Task> {
+    return this.executeIdempotent(
+      deviceId,
+      idempotencyKey,
+      "task.continue",
+      expectedVersion,
+      () => {
+        const current = this.requireTaskRow(taskId);
+        if (current.status !== "COMPLETED") {
+          throw new Error("只有已完成任务可以继续迭代");
+        }
+        assertTaskTransition(current.status, "DRAFT");
+        this.assertVersion(current.version, expectedVersion);
+        if (!current.latestRunId || !current.activeRevisionId) {
+          throw new Error("已完成任务缺少最近执行或 Revision");
+        }
+        const latestRun = this.requireRunRow(current.latestRunId);
+        const reviewDecision = this.handle.db
+          .select()
+          .from(reviewDecisions)
+          .where(eq(reviewDecisions.runId, latestRun.id))
+          .orderBy(desc(reviewDecisions.createdAt))
+          .get();
+        if (
+          latestRun.status !== "SUCCEEDED" ||
+          latestRun.taskRevisionId !== current.activeRevisionId ||
+          reviewDecision?.decision !== "APPROVED"
+        ) {
+          throw new Error("已完成任务缺少可继续迭代的审核结果");
+        }
+        const project = this.requireProjectRow(current.projectId);
+        const timestamp = now();
+        const row = this.handle.db
+          .update(tasks)
+          .set({ status: "DRAFT", version: current.version + 1, updatedAt: timestamp })
+          .where(
+            and(
+              eq(tasks.id, taskId),
+              eq(tasks.version, expectedVersion),
+              eq(tasks.status, "COMPLETED"),
+              isNull(tasks.deletedAt),
+            ),
+          )
+          .returning()
+          .get();
+        if (!row) {
+          throw new Error("Version conflict: 已完成任务状态已发生变化");
+        }
+        const event = this.insertDomainEvent("task", taskId, "task.status_changed", {
+          taskId,
+          from: "COMPLETED",
+          to: "DRAFT",
+          continuedFromRunId: latestRun.id,
+          continuedFromRevisionId: latestRun.taskRevisionId,
         });
         return { value: mapTask(row, project.name), events: [event] };
       },
