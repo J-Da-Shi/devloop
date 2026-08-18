@@ -27,6 +27,7 @@ import {
   resolveConflictBlock,
   type ConflictChoice,
 } from "../conflict-resolution.js";
+import { parseUnifiedDiff } from "../unified-diff.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "./feedback.js";
 import { useNotice } from "./notice-provider.js";
 
@@ -718,45 +719,22 @@ function UnifiedDiffView({ patch }: { patch: string }) {
   if (!patch) {
     return <p className="diff-binary-message">无 diff 内容。</p>;
   }
-  const lines = patch.split("\n");
+  const lines = parseUnifiedDiff(patch);
   return (
-    <pre className="diff-patch">
-      {lines.map((line, index) => {
-        const kind = classifyLine(line);
-        return (
-          <span key={index} className={`diff-line diff-line-${kind}`}>
-            {line}
-            {"\n"}
-          </span>
-        );
-      })}
-    </pre>
+    <table className="diff-patch" aria-label="代码 diff，左侧依次显示旧行号和新行号">
+      <tbody>
+        {lines.map((line, index) => (
+          <tr key={index} className={"diff-line diff-line-" + line.kind}>
+            <td className="diff-line-number diff-line-number-old" aria-hidden="true">
+              {line.oldLineNumber ?? ""}
+            </td>
+            <td className="diff-line-number diff-line-number-new" aria-hidden="true">
+              {line.newLineNumber ?? ""}
+            </td>
+            <td className="diff-line-content">{line.text || " "}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
-}
-
-function classifyLine(line: string): "add" | "del" | "hunk" | "meta" | "conflict" | "context" {
-  const conflictContent = line.replace(/^[ +\-]{0,2}/, "");
-  if (
-    conflictContent.startsWith("<<<<<<<") ||
-    conflictContent.startsWith("=======") ||
-    conflictContent.startsWith(">>>>>>>")
-  ) {
-    return "conflict";
-  }
-  if (line.startsWith("+++") || line.startsWith("---")) return "meta";
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "del";
-  if (
-    line.startsWith("diff ") ||
-    line.startsWith("index ") ||
-    line.startsWith("new file") ||
-    line.startsWith("deleted file") ||
-    line.startsWith("rename ") ||
-    line.startsWith("similarity ") ||
-    line.startsWith("Binary files")
-  ) {
-    return "meta";
-  }
-  return "context";
 }
