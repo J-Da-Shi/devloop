@@ -30,6 +30,7 @@ import type {
   TaskRun,
   RunPublishResult,
   RunPreview,
+  RunPreviewConfig,
   UpdateProjectRunnerInput,
   UpdateProjectPreviewInput,
   UpdateSkillInput,
@@ -54,6 +55,7 @@ export interface RunDetails {
     report: PlaywrightValidationReport | null;
     artifacts: RunArtifact[];
   };
+  previewConfiguration: RunPreviewConfig | null;
 }
 
 export interface RunApprovalResponse {

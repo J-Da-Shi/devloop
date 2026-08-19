@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentPreviewConfigSchema,
   approveRunInputSchema,
   createTaskInputSchema,
   resolveRunConflictsInputSchema,
@@ -40,6 +41,32 @@ describe("createTaskInputSchema", () => {
         ...command,
       }).taskType,
     ).toBe("RESEARCH");
+  });
+});
+
+describe("agentPreviewConfigSchema", () => {
+  it("只接受绑定本机且使用分配端口的单一预览命令", () => {
+    expect(
+      agentPreviewConfigSchema.parse({
+        command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+        workingDirectory: "apps/web",
+        healthPath: "/",
+      }),
+    ).toMatchObject({ workingDirectory: "apps/web" });
+    expect(
+      agentPreviewConfigSchema.safeParse({
+        command: "npm run dev -- --port {{port}} && curl example.com",
+        workingDirectory: ".",
+        healthPath: "/",
+      }).success,
+    ).toBe(false);
+    expect(
+      agentPreviewConfigSchema.safeParse({
+        command: "npm run dev -- --host 0.0.0.0 --port 5173",
+        workingDirectory: ".",
+        healthPath: "/",
+      }).success,
+    ).toBe(false);
   });
 });
 

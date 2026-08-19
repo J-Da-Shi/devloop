@@ -57,6 +57,7 @@ export function ProjectsPage() {
   const [runner, setRunner] = useState<ProjectRunner>("codex");
   const [previewProject, setPreviewProject] = useState<Project | null>(null);
   const [previewForm] = Form.useForm<PreviewFormValues>();
+  const previewCommand = Form.useWatch("previewCommand", previewForm) ?? "";
   const desktopAvailable = typeof window.devloopDesktop?.selectDirectory === "function";
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects });
   const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard });
@@ -341,7 +342,7 @@ export function ProjectsPage() {
                     <dd>
                       {canEdit ? (
                         <Select<ProjectRunner>
-                          size="small"
+                          size="middle"
                           value={project.runner}
                           style={{ minWidth: 160 }}
                           disabled={updateRunner.isPending}
@@ -404,32 +405,38 @@ export function ProjectsPage() {
             if (previewProject) updatePreview.mutate({ project: previewProject, values });
           }}
         >
-          <Form.Item label="预览命令" name="previewCommand">
+          <Form.Item
+            label="Web 预览启动命令（高级覆盖，可选）"
+            name="previewCommand"
+            extra="默认由 Agent 和项目脚本自动识别。仅在识别错误时填写；依赖会按锁文件自动安装，命令只应启动 Web 服务并使用 {{port}}。"
+          >
             <Input.TextArea
               rows={2}
-              placeholder="pnpm dev -- --host 127.0.0.1 --port {{port}}"
+              placeholder="npm run dev -- --host 127.0.0.1 --port {{port}}"
               spellCheck={false}
             />
           </Form.Item>
-          <div className="form-grid">
-            <Form.Item
-              label="工作目录"
-              name="previewWorkingDirectory"
-              rules={[{ required: true, message: "请输入工作目录" }]}
-            >
-              <Input placeholder="." spellCheck={false} />
-            </Form.Item>
-            <Form.Item
-              label="健康检查路径"
-              name="previewHealthPath"
-              rules={[
-                { required: true, message: "请输入健康检查路径" },
-                { pattern: /^\/(?!\/)/, message: "请输入以 / 开头的站内路径" },
-              ]}
-            >
-              <Input placeholder="/" spellCheck={false} />
-            </Form.Item>
-          </div>
+          {previewCommand.trim() ? (
+            <div className="form-grid">
+              <Form.Item
+                label="工作目录"
+                name="previewWorkingDirectory"
+                rules={[{ required: true, message: "请输入工作目录" }]}
+              >
+                <Input placeholder="." spellCheck={false} />
+              </Form.Item>
+              <Form.Item
+                label="健康检查路径"
+                name="previewHealthPath"
+                rules={[
+                  { required: true, message: "请输入健康检查路径" },
+                  { pattern: /^\/(?!\/)/, message: "请输入以 / 开头的站内路径" },
+                ]}
+              >
+                <Input placeholder="/" spellCheck={false} />
+              </Form.Item>
+            </div>
+          ) : null}
           <Form.Item
             label="任务完成后自动运行 Playwright"
             name="playwrightEnabled"

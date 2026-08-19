@@ -15,6 +15,7 @@ import {
   rejectRunInputSchema,
   resolveRunConflictsInputSchema,
   runConflictAgentResolutionSchema,
+  runPreviewConfigSchema,
   taskCommandInputSchema,
   updateProjectRunnerInputSchema,
   updateProjectPreviewInputSchema,
@@ -25,6 +26,7 @@ import {
   workerStatusSchema,
   type DomainEvent,
   type RunConflictAgentResolution,
+  type RunPreviewConfig,
   type Task,
 } from "@devloop/shared";
 import fastifyStatic from "@fastify/static";
@@ -36,7 +38,11 @@ import { HttpError, requireLocalRole, requireRole } from "./http.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillValidationError, type SkillService } from "./skill-service.js";
 import type { ArtifactService } from "./artifact-service.js";
-import { PreviewStartError, type PreviewService } from "./preview-service.js";
+import {
+  PreviewNotDetectedError,
+  PreviewStartError,
+  type PreviewService,
+} from "./preview-service.js";
 
 export interface CreateAppOptions {
   config: RuntimeConfig;
@@ -188,6 +194,44 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     publish(eventBus, result);
     return result.value;
   };
+  const getStoredPreviewConfiguration = (runId: string): RunPreviewConfig | null => {
+    const events = repository.getRunEvents(runId);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.type !== "run.preview.configuration.selected") continue;
+      const parsed = runPreviewConfigSchema.safeParse(event.payload);
+      if (parsed.success) return parsed.data;
+    }
+    return null;
+  };
+  const getRunPreviewConfiguration = (
+    runId: string,
+    project: {
+      previewCommand: string | null;
+      previewWorkingDirectory: string;
+      previewHealthPath: string;
+    },
+  ): RunPreviewConfig | null => {
+    const stored = getStoredPreviewConfiguration(runId);
+    if (stored) return stored;
+    if (project.previewCommand) {
+      return {
+        source: "project",
+        command: project.previewCommand,
+        workingDirectory: project.previewWorkingDirectory,
+        healthPath: project.previewHealthPath,
+      };
+    }
+    return null;
+  };
+  const previewConfigurationEquals = (
+    left: RunPreviewConfig | null,
+    right: RunPreviewConfig | null,
+  ): boolean =>
+    left?.source === right?.source &&
+    left?.command === right?.command &&
+    left?.workingDirectory === right?.workingDirectory &&
+    left?.healthPath === right?.healthPath;
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
@@ -544,15 +588,21 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (!revision) {
       throw new HttpError(500, "执行记录关联的 Revision 不存在", "DATA_INTEGRITY_ERROR");
     }
+    const task = repository.getTaskIncludingDeleted(run.taskId);
+    const project = task ? repository.getProjectExecutionContext(task.projectId)?.project : null;
+    const previewConfiguration = project
+      ? getRunPreviewConfiguration(runId, project)
+      : getStoredPreviewConfiguration(runId);
     return {
       run,
-      task: repository.getTaskIncludingDeleted(run.taskId),
+      task,
       revision,
       reviewDecision: repository.getRunReviewDecision(runId),
       events: repository.getRunEvents(runId),
       validation: artifactService
         ? await artifactService.getValidationArtifacts(runId)
         : { report: null, artifacts: [] },
+      previewConfiguration,
     };
   });
 
@@ -670,20 +720,32 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (run.status !== "SUCCEEDED" || !run.resultCommit) {
       throw new HttpError(409, "只有已经生成结果 Commit 的成功执行可以预览", "RUN_NOT_PREVIEWABLE");
     }
-    if (!project.previewCommand) {
-      throw new HttpError(409, "请先在项目中配置预览命令", "PREVIEW_NOT_CONFIGURED");
-    }
+    const previewConfiguration = getRunPreviewConfiguration(runId, project);
     try {
       const preview = await previewService.start({
         runId,
         repositoryPath,
         resultCommit: run.resultCommit,
-        command: project.previewCommand,
-        workingDirectory: project.previewWorkingDirectory,
-        healthPath: project.previewHealthPath,
+        command: previewConfiguration?.command ?? null,
+        workingDirectory: previewConfiguration?.workingDirectory ?? ".",
+        healthPath: previewConfiguration?.healthPath ?? "/",
+        ...(previewConfiguration ? { source: previewConfiguration.source } : {}),
       });
+      const storedConfiguration = getStoredPreviewConfiguration(runId);
+      if (!previewConfigurationEquals(storedConfiguration, preview.configuration)) {
+        const event = repository.recordRunEvent(
+          runId,
+          "run.preview.configuration.selected",
+          `预览配置已用于手动预览（来源：${preview.configuration.source}）`,
+          { ...preview.configuration },
+        );
+        publish(eventBus, event);
+      }
       return { preview };
     } catch (error) {
+      if (error instanceof PreviewNotDetectedError) {
+        throw new HttpError(409, error.message, "PREVIEW_NOT_DETECTED");
+      }
       if (error instanceof PreviewStartError) {
         throw new HttpError(422, error.message, "PREVIEW_START_FAILED");
       }

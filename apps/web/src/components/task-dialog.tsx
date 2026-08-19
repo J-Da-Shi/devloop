@@ -658,12 +658,9 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     runId={task.latestRunId}
                     report={runDetails.data.validation.report}
                     artifacts={runDetails.data.validation.artifacts}
+                    previewConfiguration={runDetails.data.previewConfiguration}
                     previewTitle={task.title}
-                    canPreview={
-                      canOperate &&
-                      runDetails.data.run.status === "SUCCEEDED" &&
-                      Boolean(taskProject?.previewCommand)
-                    }
+                    canPreview={canOperate && runDetails.data.run.status === "SUCCEEDED"}
                   />
                 ) : null}
                 {task?.status === "REVIEW" && canEdit ? (

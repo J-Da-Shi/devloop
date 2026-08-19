@@ -80,11 +80,12 @@ class ControlledRunner implements AgentRunner {
     };
   }
 
-  succeedNext(): void {
+  succeedNext(result: Partial<RunnerResult> = {}): void {
     this.pending.shift()?.resolve({
       outcome: "succeeded",
       summary: "测试任务执行完成",
       risks: [],
+      ...result,
     });
   }
 
@@ -415,6 +416,12 @@ describe("AgentWorker", () => {
             checks: [{ name: "页面加载", status: "passed", message: "HTTP 200" }],
             pageErrors: [],
             consoleErrors: [],
+            previewConfiguration: {
+              source: "project",
+              command: "pnpm dev -- --port {{port}}",
+              workingDirectory: "apps/web",
+              healthPath: "/health",
+            },
             screenshotArtifactId: randomUUID(),
             customTestOutput: null,
           };
@@ -429,9 +436,12 @@ describe("AgentWorker", () => {
 
     expect(validationInputs).toEqual([
       expect.objectContaining({
-        previewCommand: "pnpm dev -- --port {{port}}",
-        previewWorkingDirectory: "apps/web",
-        previewHealthPath: "/health",
+        previewConfiguration: {
+          source: "project",
+          command: "pnpm dev -- --port {{port}}",
+          workingDirectory: "apps/web",
+          healthPath: "/health",
+        },
         playwrightEnabled: true,
         playwrightTestCommand: "pnpm playwright test",
         resultCommit: "base-commit",
@@ -446,6 +456,59 @@ describe("AgentWorker", () => {
         "run.finished",
       ]),
     );
+  });
+
+  it("没有人工覆盖时将 Agent 返回的预览建议用于自动验证", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "Agent 预览项目",
+      repositoryUrl: "git@example.com:team/agent-preview.git",
+      repositoryPath: "/tmp/devloop-agent-preview",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const task = createReadyTask(repository, project.id, "自动识别页面预览", 100);
+    const runner = new ControlledRunner();
+    const validationInputs: ValidateRunInput[] = [];
+    const preview = {
+      command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+      workingDirectory: "apps/web",
+      healthPath: "/",
+    };
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      playwrightValidationService: {
+        validate: async (input) => {
+          validationInputs.push(input);
+          return {
+            status: "skipped",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            previewConfiguration: { source: "agent", ...preview },
+            checks: [{ name: "启动预览", status: "skipped", message: "浏览器不可用" }],
+            pageErrors: [],
+            consoleErrors: [],
+            screenshotArtifactId: null,
+            customTestOutput: null,
+          };
+        },
+      },
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    runner.succeedNext({ preview });
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+
+    expect(validationInputs).toEqual([
+      expect.objectContaining({ previewConfiguration: { source: "agent", ...preview } }),
+    ]);
+    expect(
+      repository
+        .getRunEvents(repository.getTask(task.id)!.latestRunId!)
+        .filter((event) => event.type === "run.preview.configuration.selected")
+        .map((event) => event.payload),
+    ).toEqual([{ source: "agent", ...preview }]);
   });
 
   it("研究任务在隔离工作区执行，但不提交代码、不拉取仓库也不运行 Playwright", async () => {

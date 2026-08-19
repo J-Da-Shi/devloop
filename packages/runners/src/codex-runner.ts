@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import type { RunnerCapabilities } from "@devloop/shared";
+import { agentPreviewConfigSchema, type RunnerCapabilities } from "@devloop/shared";
 import { execa } from "execa";
 import { terminateProcessGroup } from "./process-group.js";
 import { buildSkillsPrompt } from "./skill-prompt.js";
@@ -132,6 +132,7 @@ const agentResultKeys = new Set([
   "acceptanceCriteria",
   "risks",
   "blockedReason",
+  "preview",
 ]);
 
 const acceptanceCriterionKeys = new Set(["criterion", "status", "evidence"]);
@@ -195,6 +196,18 @@ const parseAgentResult = (value: string): RunnerResult => {
   ) {
     throw new Error("Codex 返回了无效的阻塞原因");
   }
+  const previewValue = parsed.preview;
+  const preview =
+    previewValue === undefined
+      ? undefined
+      : previewValue === null
+        ? null
+        : agentPreviewConfigSchema.safeParse(previewValue);
+  if (preview !== undefined && preview !== null && !preview.success) {
+    throw new Error(
+      `Codex 返回了无效的预览配置：${preview.error.issues[0]?.message ?? "格式错误"}`,
+    );
+  }
 
   return {
     outcome: outcome as RunnerResult["outcome"],
@@ -202,6 +215,7 @@ const parseAgentResult = (value: string): RunnerResult => {
     risks: risksValue,
     acceptanceCriteria,
     blockedReason: blockedReasonValue ?? null,
+    ...(preview === undefined ? {} : { preview: preview === null ? null : preview.data }),
   };
 };
 
@@ -293,6 +307,8 @@ export const buildCodexPrompt = (input: RunnerInput, outputSchema: string): stri
     "- 直接修改当前 Worktree 中的文件，并运行与改动风险相匹配的检查。",
     "- 不要创建 Git commit，结果提交由 DevLoop 控制器统一生成。",
     "- 不要修改 .devloop-runtime 目录。",
+    "- 若项目存在可在浏览器中访问的 Web 界面，完成开发后识别其实际启动入口，并在最终 JSON 的 preview 中返回 command、workingDirectory、healthPath。command 只启动 Web 服务，必须使用 {{port}} 作为端口并监听 127.0.0.1；不要把依赖安装、后端、桌面端或多个并发进程放进 command。",
+    "- 若项目没有适合浏览器预览的界面，或无法可靠判断启动方式，在最终 JSON 的 preview 中返回 null；不要猜测，也不要为此修改项目文件。",
     "- 不要等待交互确认；缺少权限、网络、凭据或关键输入时返回 blocked。",
     "- 最终回复只能包含一个 JSON 对象，不要使用 Markdown 代码块或附加说明。",
     "- 最终 JSON 必须严格满足下面的 AgentResult Schema，结果会由 DevLoop 在本地校验。",

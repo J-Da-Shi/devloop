@@ -1760,6 +1760,13 @@ code {
   justify-content: flex-end;
 }
 
+.run-validation-config {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .run-validation-checks {
   display: grid;
   gap: 6px;

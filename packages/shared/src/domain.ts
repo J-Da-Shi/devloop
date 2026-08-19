@@ -49,6 +49,20 @@ export type BaseStrategy = z.infer<typeof baseStrategySchema>;
 export type ProjectRunner = z.infer<typeof projectRunnerSchema>;
 export type TaskType = z.infer<typeof taskTypeSchema>;
 
+export const previewConfigSources = ["project", "agent", "detected"] as const;
+export const previewConfigSourceSchema = z.enum(previewConfigSources);
+export type PreviewConfigSource = z.infer<typeof previewConfigSourceSchema>;
+
+export interface PreviewConfig {
+  command: string;
+  workingDirectory: string;
+  healthPath: string;
+}
+
+export interface RunPreviewConfig extends PreviewConfig {
+  source: PreviewConfigSource;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -80,6 +94,8 @@ export interface PlaywrightValidationReport {
   status: PlaywrightCheckStatus;
   startedAt: string;
   finishedAt: string;
+  /** The configuration that actually started the isolated preview, if one was found. */
+  previewConfiguration: RunPreviewConfig | null;
   checks: PlaywrightValidationCheck[];
   pageErrors: string[];
   consoleErrors: string[];

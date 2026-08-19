@@ -7,7 +7,13 @@ import {
   type ReconcileCommitInput,
   type ReconcileCommitResult,
 } from "@devloop/git";
-import type { DomainEvent, RunnerCapabilities, RunStatus, WorkerStatus } from "@devloop/shared";
+import type {
+  DomainEvent,
+  RunPreviewConfig,
+  RunnerCapabilities,
+  RunStatus,
+  WorkerStatus,
+} from "@devloop/shared";
 import {
   terminateProcessGroup as terminateRunnerProcessGroup,
   type AgentRunner,
@@ -30,6 +36,21 @@ const phaseByEvent: Record<string, RunStatus> = {
 const runnersRequiringWorktree = new Set(["codex", "claude-code"]);
 const runnerRequiresWorktree = (runnerId: string): boolean =>
   runnersRequiringWorktree.has(runnerId);
+
+const previewConfigurationEquals = (
+  left: RunPreviewConfig | null,
+  right: RunPreviewConfig | null,
+): boolean =>
+  left?.source === right?.source &&
+  left?.command === right?.command &&
+  left?.workingDirectory === right?.workingDirectory &&
+  left?.healthPath === right?.healthPath;
+
+const previewSourceLabel: Record<RunPreviewConfig["source"], string> = {
+  project: "项目高级覆盖",
+  agent: "Agent 识别",
+  detected: "自动识别",
+};
 
 export interface AgentWorkerOptions {
   claimDelayMs?: number;
@@ -200,8 +221,7 @@ export class AgentWorker {
   }
 
   setStatus(status: Extract<WorkerStatus, "RUNNING" | "PAUSED">): void {
-    const nextStatus =
-      status === "RUNNING" && !this.isWorkerAvailable() ? "DEGRADED" : status;
+    const nextStatus = status === "RUNNING" && !this.isWorkerAvailable() ? "DEGRADED" : status;
     const current = this.repository.getWorkerState();
     if (current.status !== nextStatus) {
       this.publish(this.repository.setWorkerStatus(nextStatus));
@@ -421,6 +441,7 @@ export class AgentWorker {
           await this.validateResultForReview(
             claimed,
             preparedResult.resultCommit,
+            this.selectPreviewConfiguration(claimed, result),
             controller.signal,
           );
           if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -475,10 +496,21 @@ export class AgentWorker {
   private async validateResultForReview(
     claimed: ClaimedTask,
     resultCommit: string,
+    selectedPreviewConfiguration: RunPreviewConfig | null,
     signal: AbortSignal,
   ): Promise<void> {
     const validationService = this.options.playwrightValidationService;
     if (!validationService) return;
+    if (selectedPreviewConfiguration) {
+      this.publish(
+        this.repository.recordRunEvent(
+          claimed.run.id,
+          "run.preview.configuration.selected",
+          `预览配置来源：${previewSourceLabel[selectedPreviewConfiguration.source]}`,
+          { ...selectedPreviewConfiguration },
+        ),
+      );
+    }
     this.publish(
       this.repository.recordRunEvent(
         claimed.run.id,
@@ -492,13 +524,23 @@ export class AgentWorker {
         runId: claimed.run.id,
         repositoryPath: claimed.projectPath,
         resultCommit,
-        previewCommand: claimed.previewCommand,
-        previewWorkingDirectory: claimed.previewWorkingDirectory,
-        previewHealthPath: claimed.previewHealthPath,
+        previewConfiguration: selectedPreviewConfiguration,
         playwrightEnabled: claimed.playwrightEnabled,
         playwrightTestCommand: claimed.playwrightTestCommand,
         signal,
       });
+      if (!previewConfigurationEquals(report.previewConfiguration, selectedPreviewConfiguration)) {
+        if (report.previewConfiguration) {
+          this.publish(
+            this.repository.recordRunEvent(
+              claimed.run.id,
+              "run.preview.configuration.selected",
+              `预览配置来源：${previewSourceLabel[report.previewConfiguration.source]}`,
+              { ...report.previewConfiguration },
+            ),
+          );
+        }
+      }
       this.publish(
         this.repository.recordRunEvent(
           claimed.run.id,
@@ -508,7 +550,11 @@ export class AgentWorker {
             : report.status === "failed"
               ? "Playwright 自动验证发现问题，请在审核页检查结果"
               : "Playwright 自动验证已跳过，请在审核页查看原因",
-          { status: report.status, checks: report.checks },
+          {
+            status: report.status,
+            checks: report.checks,
+            previewConfiguration: report.previewConfiguration,
+          },
         ),
       );
     } catch (error) {
@@ -522,6 +568,24 @@ export class AgentWorker {
         ),
       );
     }
+  }
+
+  private selectPreviewConfiguration(
+    claimed: ClaimedTask,
+    result: RunnerResult,
+  ): RunPreviewConfig | null {
+    if (claimed.previewCommand) {
+      return {
+        source: "project",
+        command: claimed.previewCommand,
+        workingDirectory: claimed.previewWorkingDirectory,
+        healthPath: claimed.previewHealthPath,
+      };
+    }
+    if (result.preview) {
+      return { source: "agent", ...result.preview };
+    }
+    return null;
   }
 
   private handleRunnerEvent(runId: string, executionToken: string, event: RunnerEvent): void {

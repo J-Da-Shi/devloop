@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   baseStrategySchema,
+  previewConfigSourceSchema,
   type PlaywrightValidationReport,
   projectRunnerSchema,
   taskTypeSchema,
@@ -9,10 +10,48 @@ import {
   workerConcurrencyMin,
 } from "./domain.js";
 
+const previewCommandSchema = z.string().trim().min(1).max(4_000);
+
+export const previewConfigSchema = z.object({
+  command: previewCommandSchema,
+  workingDirectory: z
+    .string()
+    .trim()
+    .min(1)
+    .max(1_024)
+    .refine((value) => !value.startsWith("/") && value !== ".." && !value.startsWith("../"), {
+      message: "预览工作目录必须位于结果 Worktree 内",
+    }),
+  healthPath: z
+    .string()
+    .trim()
+    .min(1)
+    .max(1_024)
+    .refine((value) => value.startsWith("/") && !value.startsWith("//"), {
+      message: "健康检查路径必须是以 / 开头的站内路径",
+    }),
+});
+
+export const agentPreviewConfigSchema = previewConfigSchema.extend({
+  command: previewCommandSchema.refine(
+    (value) =>
+      !/[\r\n;&|`<>]|\$\(|\$\{/.test(value) &&
+      value.includes("{{port}}") &&
+      value.includes("127.0.0.1"),
+    "Agent 预览命令必须监听 127.0.0.1、使用 {{port}}，且不能包含命令串联、重定向或命令替换",
+  ),
+});
+
+export const runPreviewConfigSchema = previewConfigSchema.extend({
+  source: previewConfigSourceSchema,
+});
+
 export const playwrightValidationReportSchema: z.ZodType<PlaywrightValidationReport> = z.object({
   status: z.enum(["passed", "failed", "skipped"]),
   startedAt: z.string().datetime(),
   finishedAt: z.string().datetime(),
+  // Reports written before automatic preview detection did not contain this field.
+  previewConfiguration: runPreviewConfigSchema.nullable().default(null),
   checks: z.array(
     z.object({
       name: z.string(),

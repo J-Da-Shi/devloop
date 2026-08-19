@@ -1,4 +1,4 @@
-import type { RunnerCapabilities, TaskType } from "@devloop/shared";
+import type { PreviewConfig, RunnerCapabilities, TaskType } from "@devloop/shared";
 
 export interface RunnerSkill {
   id: string;
@@ -42,6 +42,7 @@ export interface RunnerResult {
     evidence: string;
   }>;
   blockedReason?: string | null;
+  preview?: PreviewConfig | null;
 }
 
 export interface RunnerHandle {

@@ -37,6 +37,22 @@ describe("ClaudeCodeRunner", () => {
     expect(args).toContain("acceptEdits");
     expect(args).toContain("--add-dir");
     expect(args).toContain("/tmp/worktree");
+    expect(
+      buildClaudeCodePrompt(
+        {
+          runId: "run",
+          taskId: "task",
+          title: "Task",
+          goal: "Goal",
+          acceptanceCriteria: ["Done"],
+          skills: [],
+          worktreePath: "/tmp/worktree",
+          outputSchemaPath: "/tmp/schema.json",
+          signal: controller.signal,
+        },
+        "{}",
+      ),
+    ).toContain("最终 JSON 的 preview");
 
     const researchPrompt = buildClaudeCodePrompt(
       {
@@ -119,7 +135,12 @@ const finalResult = !isRepair && message.includes("模拟格式错误")
         summary: isRepair ? "格式修复完成" : "实现完成",
         acceptanceCriteria: [{ criterion: "完成开发", status: "passed", evidence: "测试通过" }],
         risks: [],
-        blockedReason: null
+        blockedReason: null,
+        preview: isRepair ? null : {
+          command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+          workingDirectory: "apps/web",
+          healthPath: "/"
+        }
       });
 process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: finalResult }) + "\\n");
 `,
@@ -167,6 +188,7 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result
     await expect(handle.result).resolves.toMatchObject({
       outcome: "succeeded",
       summary: "实现完成",
+      preview: { workingDirectory: "apps/web" },
     });
     expect(events).toContain("Claude Code 会话已启动");
     expect(events).toContain("Claude Code 正在执行：pnpm test");

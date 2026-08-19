@@ -21,6 +21,7 @@ import type { AgentWorker } from "./agent-worker.js";
 import { DomainEventBus } from "./event-bus.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillService } from "./skill-service.js";
+import type { PreviewService, StartPreviewInput } from "./preview-service.js";
 
 const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", import.meta.url));
 const targetCommit = "a".repeat(40);
@@ -165,6 +166,7 @@ const config: RuntimeConfig = {
   agentClaimDelayMs: 1_000,
   fakeRunnerDelayMs: 1,
   previewStartupTimeoutMs: 1_000,
+  previewDependencyInstallTimeoutMs: 1_000,
   playwrightTimeoutMs: 1_000,
   playwrightTestTimeoutMs: 1_000,
   playwrightExecutable: null,
@@ -285,6 +287,129 @@ describe("冲突解决接口", () => {
         "run.conflict_resolution.progress",
         "run.conflict_resolution.completed",
       ]);
+    } finally {
+      await app.close();
+      database.close();
+    }
+  });
+});
+
+describe("自动预览配置接口", () => {
+  it("没有历史配置时让预览服务自动识别，并把实际配置保存到 Run", async () => {
+    const database = openDatabase({ filePath: ":memory:", migrationsFolder });
+    const repository = new DevLoopRepository(database);
+    const project = repository.createProject({
+      name: "自动预览项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-auto-preview-test",
+      defaultBaseRef: "main",
+      headCommit: "b".repeat(40),
+      lastFetchedAt: null,
+    }).value;
+    const task = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "预览页面",
+      goal: "自动识别 Web 入口",
+      acceptanceCriteria: ["可以启动预览"],
+      priority: 50,
+    }).value;
+    repository.confirmTask(task.id, "instance-owner", {
+      expectedVersion: task.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const run = repository.completeRun(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "等待审核",
+      "c".repeat(40),
+    ).value.run;
+    const starts: StartPreviewInput[] = [];
+    const detectedConfiguration = {
+      source: "detected" as const,
+      command: "pnpm run dev -- --host 127.0.0.1 --port {{port}}",
+      workingDirectory: "apps/web",
+      healthPath: "/",
+    };
+    const previewService = {
+      start: async (input: StartPreviewInput) => {
+        starts.push(input);
+        return {
+          id: randomUUID(),
+          runId: input.runId,
+          url: "http://127.0.0.1:45678",
+          status: "running" as const,
+          startedAt: new Date().toISOString(),
+          workingDirectory: "/tmp/devloop-auto-preview-test/apps/web",
+          configuration: detectedConfiguration,
+        };
+      },
+      stop: async () => true,
+      get: () => null,
+      close: async () => undefined,
+    } as unknown as PreviewService;
+    const app = await createApp({
+      config,
+      repository,
+      gitService: new ConflictGitService() as unknown as GitService,
+      skillService: new SkillService(repository, config.skillsPath),
+      runners: [new ConflictRunner()],
+      eventBus: new DomainEventBus(),
+      worker: { wake: () => undefined } as unknown as AgentWorker,
+      previewService,
+    });
+
+    try {
+      const before = await app.inject({
+        method: "GET",
+        url: `/api/runs/${run.id}`,
+      });
+      expect(before.statusCode).toBe(200);
+      expect(before.json()).toMatchObject({ previewConfiguration: null });
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/runs/${run.id}/preview`,
+        remoteAddress: "127.0.0.1",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toMatchObject({
+        command: null,
+        workingDirectory: ".",
+        healthPath: "/",
+      });
+
+      const after = await app.inject({
+        method: "GET",
+        url: `/api/runs/${run.id}`,
+      });
+      expect(after.json()).toMatchObject({ previewConfiguration: detectedConfiguration });
+
+      const currentProject = repository.getProjectExecutionContext(project.id)!.project;
+      repository.updateProjectPreview(
+        project.id,
+        {
+          previewCommand: "npm run different-preview -- --host 127.0.0.1 --port {{port}}",
+          previewWorkingDirectory: ".",
+          previewHealthPath: "/",
+          playwrightEnabled: true,
+          playwrightTestCommand: null,
+          expectedVersion: currentProject.version,
+          idempotencyKey: randomUUID(),
+        },
+        "instance-owner",
+      );
+      const repeat = await app.inject({
+        method: "POST",
+        url: `/api/runs/${run.id}/preview`,
+        remoteAddress: "127.0.0.1",
+      });
+      expect(repeat.statusCode).toBe(200);
+      expect(starts[1]).toMatchObject(detectedConfiguration);
     } finally {
       await app.close();
       database.close();
