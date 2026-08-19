@@ -10,10 +10,12 @@ import type {
   DeviceRole,
   DomainEvent,
   Project,
+  PlaywrightValidationReport,
   RejectRunInput,
   ResolveRunConflictsInput,
   ReviewDecision,
   RunChangedFile,
+  RunArtifact,
   RunApplicationResult,
   RunConflictPreview,
   RunConflictAgentResolution,
@@ -27,7 +29,9 @@ import type {
   TaskRevision,
   TaskRun,
   RunPublishResult,
+  RunPreview,
   UpdateProjectRunnerInput,
+  UpdateProjectPreviewInput,
   UpdateSkillInput,
   UpdateTaskInput,
   UpdateWorkerConcurrencyInput,
@@ -46,6 +50,10 @@ export interface RunDetails {
   revision: TaskRevision;
   reviewDecision: ReviewDecision | null;
   events: RunEvent[];
+  validation: {
+    report: PlaywrightValidationReport | null;
+    artifacts: RunArtifact[];
+  };
 }
 
 export interface RunApprovalResponse {
@@ -131,6 +139,11 @@ export const api = {
       method: "PATCH",
       body: json(input),
     }),
+  updateProjectPreview: (projectId: string, input: UpdateProjectPreviewInput) =>
+    request<{ project: Project; replayed: boolean }>(`/api/projects/${projectId}/preview`, {
+      method: "PATCH",
+      body: json(input),
+    }),
   skills: () => request<{ skills: Skill[] }>("/api/skills"),
   skill: (skillId: string) => request<SkillDetails>(`/api/skills/${skillId}`),
   validateSkill: (input: CreateSkillInput) =>
@@ -189,6 +202,12 @@ export const api = {
     request<RunChangedFilesResponse>(`/api/runs/${runId}/changed-files`),
   runFilePatch: (runId: string, path: string) =>
     request<RunFilePatch>(`/api/runs/${runId}/patch?path=${encodeURIComponent(path)}`),
+  runArtifactUrl: (runId: string, artifactId: string) =>
+    `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  startRunPreview: (runId: string) =>
+    request<{ preview: RunPreview }>(`/api/runs/${runId}/preview`, { method: "POST" }),
+  stopPreview: (previewId: string) =>
+    request<{ stopped: true }>(`/api/previews/${previewId}`, { method: "DELETE" }),
   approveRun: (runId: string, input: ApproveRunInput) =>
     request<RunApprovalResponse>(`/api/runs/${runId}/approve`, {
       method: "POST",
@@ -219,6 +238,7 @@ export const api = {
 export const eventNames: DomainEvent["type"][] = [
   "project.created",
   "project.synced",
+  "project.preview_changed",
   "skill.created",
   "skill.version_created",
   "skill.updated",

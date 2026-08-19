@@ -30,6 +30,13 @@ export const projects = sqliteTable(
     integrationRef: text("integration_ref").notNull(),
     integrationCommit: text("integration_commit"),
     runner: text("runner").notNull().default("codex"),
+    previewCommand: text("preview_command"),
+    previewWorkingDirectory: text("preview_working_directory").notNull().default("."),
+    previewHealthPath: text("preview_health_path").notNull().default("/"),
+    playwrightEnabled: integer("playwright_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    playwrightTestCommand: text("playwright_test_command"),
     version: integer("version").notNull().default(0),
     ...timestamps(),
   },
@@ -298,6 +305,7 @@ export type TaskRow = typeof tasks.$inferSelect;
 export type TaskRevisionRow = typeof taskRevisions.$inferSelect;
 export type TaskRunRow = typeof taskRuns.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
+export type ArtifactRow = typeof artifacts.$inferSelect;
 export type ReviewDecisionRow = typeof reviewDecisions.$inferSelect;
 export type DomainEventRow = typeof domainEvents.$inferSelect;
 export type PairedDeviceRow = typeof pairedDevices.$inferSelect;

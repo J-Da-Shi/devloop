@@ -23,6 +23,7 @@ import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
 import { useNotice } from "./notice-provider.js";
 import { RunDiffPanel, type RunDiffApprovalState } from "./run-diff-panel.js";
 import { RunEventList } from "./run-event-list.js";
+import { RunValidationPanel } from "./run-validation-panel.js";
 import { StatusBadge } from "./status-badge.js";
 
 const taskFormSchema = z.object({
@@ -573,7 +574,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     ) : null}
                   </section>
                 ) : null}
-                {task?.latestRunId ? (
+                {task?.latestRunId && runDetails.data?.run.resultCommit ? (
                   <section>
                     <h3>代码变更</h3>
                     <RunDiffPanel
@@ -588,6 +589,24 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                       }
                     />
                   </section>
+                ) : null}
+                {task?.latestRunId &&
+                runDetails.data &&
+                (runDetails.data.run.status === "SUCCEEDED" ||
+                  runDetails.data.events.some((event) =>
+                    event.type.startsWith("run.playwright."),
+                  )) ? (
+                  <RunValidationPanel
+                    runId={task.latestRunId}
+                    report={runDetails.data.validation.report}
+                    artifacts={runDetails.data.validation.artifacts}
+                    previewTitle={task.title}
+                    canPreview={
+                      canOperate &&
+                      runDetails.data.run.status === "SUCCEEDED" &&
+                      Boolean(taskProject?.previewCommand)
+                    }
+                  />
                 ) : null}
                 {task?.status === "REVIEW" && canEdit ? (
                   <section className="review-actions">

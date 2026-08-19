@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import type {
   RunApplicationResult,
@@ -63,6 +63,18 @@ export interface CreateWorktreeInput extends GitExecutionOptions {
   worktreePath: string;
   branchName: string;
   baseCommit: string;
+}
+
+export interface CreateDetachedWorktreeInput extends GitExecutionOptions {
+  repositoryPath: string;
+  worktreePath: string;
+  commit: string;
+}
+
+export interface RemoveManagedWorktreeInput {
+  repositoryPath: string;
+  worktreePath: string;
+  managedRoot: string;
 }
 
 export interface CommitWorktreeInput extends GitExecutionOptions {
@@ -769,6 +781,39 @@ export class GitService {
       ],
       input,
     );
+  }
+
+  async createDetachedWorktree(input: CreateDetachedWorktreeInput): Promise<void> {
+    input.signal?.throwIfAborted();
+    const repositoryPath = await realpath(input.repositoryPath);
+    await mkdir(dirname(input.worktreePath), { recursive: true });
+    input.signal?.throwIfAborted();
+    if (await pathExists(input.worktreePath)) {
+      throw new Error("目标 Worktree 路径已经存在");
+    }
+    await this.executeForRun(
+      ["-C", repositoryPath, "worktree", "add", "--detach", input.worktreePath, input.commit],
+      input,
+    );
+  }
+
+  async removeManagedWorktree(input: RemoveManagedWorktreeInput): Promise<void> {
+    const managedRoot = resolve(input.managedRoot);
+    const worktreePath = resolve(input.worktreePath);
+    const relativePath = relative(managedRoot, worktreePath);
+    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new Error("拒绝清理受管预览目录之外的 Worktree");
+    }
+    const repositoryPath = await realpath(input.repositoryPath);
+    await execa(
+      this.executable,
+      ["-C", repositoryPath, "worktree", "remove", "--force", worktreePath],
+      { reject: false },
+    );
+    await rm(worktreePath, { recursive: true, force: true });
+    await execa(this.executable, ["-C", repositoryPath, "worktree", "prune"], {
+      reject: false,
+    });
   }
 
   async commitWorktree(input: CommitWorktreeInput): Promise<string> {

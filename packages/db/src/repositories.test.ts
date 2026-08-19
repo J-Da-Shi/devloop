@@ -170,6 +170,91 @@ describe("DevLoopRepository 自动入队", () => {
     expect(second.value.runner).toBe("claude-code");
   });
 
+  it("持久化项目预览配置，并在领取任务时固定到执行上下文", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "预览项目",
+      repositoryUrl: "git@example.com:team/preview.git",
+      repositoryPath: "/tmp/devloop-preview-project",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const idempotencyKey = randomUUID();
+    const configured = repository.updateProjectPreview(
+      project.id,
+      {
+        previewCommand: "pnpm dev -- --port {{port}}",
+        previewWorkingDirectory: "apps/web",
+        previewHealthPath: "/health",
+        playwrightEnabled: true,
+        playwrightTestCommand: "pnpm playwright test",
+        expectedVersion: project.version,
+        idempotencyKey,
+      },
+      "instance-owner",
+    );
+    expect(configured.replayed).toBe(false);
+    expect(configured.value).toMatchObject({
+      previewWorkingDirectory: "apps/web",
+      previewHealthPath: "/health",
+      playwrightEnabled: true,
+    });
+    expect(
+      repository.updateProjectPreview(
+        project.id,
+        {
+          previewCommand: "pnpm dev -- --port {{port}}",
+          previewWorkingDirectory: "apps/web",
+          previewHealthPath: "/health",
+          playwrightEnabled: true,
+          playwrightTestCommand: "pnpm playwright test",
+          expectedVersion: project.version,
+          idempotencyKey,
+        },
+        "instance-owner",
+      ).replayed,
+    ).toBe(true);
+
+    const ready = createReadyTask(repository, project.id, "验证预览配置", 70);
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(claimed?.value).toMatchObject({
+      task: { id: ready.id },
+      previewCommand: "pnpm dev -- --port {{port}}",
+      previewWorkingDirectory: "apps/web",
+      previewHealthPath: "/health",
+      playwrightEnabled: true,
+      playwrightTestCommand: "pnpm playwright test",
+    });
+  });
+
+  it("记录 Run 产物元数据但不在公开列表暴露存储路径", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "产物项目",
+      repositoryUrl: "git@example.com:team/artifacts.git",
+      repositoryPath: "/tmp/devloop-artifact-project",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    createReadyTask(repository, project.id, "验证运行产物", 70);
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    const runId = claimed!.value.run.id;
+    const artifact = repository.createRunArtifact({
+      runId,
+      kind: "playwright-screenshot",
+      storagePath: "/private/devloop/artifacts/screenshot.png",
+      size: 42,
+      checksum: "checksum",
+    });
+
+    expect(repository.listRunArtifacts(runId)).toEqual([artifact]);
+    expect("path" in artifact).toBe(false);
+    expect(repository.getRunArtifact(runId, artifact.id)).toEqual({
+      artifact,
+      storagePath: "/private/devloop/artifacts/screenshot.png",
+    });
+  });
+
   it("公开项目不包含服务器托管路径", () => {
     const repository = createRepository();
     const project = repository.createProject({

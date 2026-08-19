@@ -18,6 +18,7 @@ import {
 } from "@devloop/runners";
 import type { DomainEventBus } from "./event-bus.js";
 import type { SkillService } from "./skill-service.js";
+import type { PlaywrightValidationService } from "./playwright-validation-service.js";
 
 const phaseByEvent: Record<string, RunStatus> = {
   "runner.preparing": "PREPARING",
@@ -48,6 +49,7 @@ export interface AgentWorkerOptions {
   worktreesPath?: string;
   terminateProcessGroup?: (processGroupId: number) => void;
   skillService?: Pick<SkillService, "listEnabledForExecution">;
+  playwrightValidationService?: Pick<PlaywrightValidationService, "validate">;
 }
 
 class AutoConflictResolutionError extends Error {
@@ -400,6 +402,14 @@ export class AgentWorker {
               `审核结果 Commit 已准备完成：${preparedResult.resultCommit.slice(0, 12)}`,
             ),
           );
+          await this.validateResultForReview(
+            claimed,
+            preparedResult.resultCommit,
+            controller.signal,
+          );
+          if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
+            return;
+          }
         }
         this.publish(
           this.repository.completeRun(
@@ -443,6 +453,58 @@ export class AgentWorker {
           throw failureError;
         }
       }
+    }
+  }
+
+  private async validateResultForReview(
+    claimed: ClaimedTask,
+    resultCommit: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const validationService = this.options.playwrightValidationService;
+    if (!validationService) return;
+    this.publish(
+      this.repository.recordRunEvent(
+        claimed.run.id,
+        "run.playwright.started",
+        "正在启动任务结果预览并执行 Playwright 自动验证",
+        {},
+      ),
+    );
+    try {
+      const report = await validationService.validate({
+        runId: claimed.run.id,
+        repositoryPath: claimed.projectPath,
+        resultCommit,
+        previewCommand: claimed.previewCommand,
+        previewWorkingDirectory: claimed.previewWorkingDirectory,
+        previewHealthPath: claimed.previewHealthPath,
+        playwrightEnabled: claimed.playwrightEnabled,
+        playwrightTestCommand: claimed.playwrightTestCommand,
+        signal,
+      });
+      this.publish(
+        this.repository.recordRunEvent(
+          claimed.run.id,
+          "run.playwright.completed",
+          report.status === "passed"
+            ? "Playwright 自动验证通过，截图与交互结果已附在审核页"
+            : report.status === "failed"
+              ? "Playwright 自动验证发现问题，请在审核页检查结果"
+              : "Playwright 自动验证已跳过，请在审核页查看原因",
+          { status: report.status, checks: report.checks },
+        ),
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      this.publish(
+        this.repository.recordRunEvent(
+          claimed.run.id,
+          "run.playwright.failed",
+          "Playwright 自动验证未能生成完整报告，但任务结果仍可人工审核",
+          { error: error instanceof Error ? error.message : String(error) },
+        ),
+      );
     }
   }
 

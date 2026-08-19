@@ -1,11 +1,29 @@
 import { z } from "zod";
 import {
   baseStrategySchema,
+  type PlaywrightValidationReport,
   projectRunnerSchema,
   taskStatusSchema,
   workerConcurrencyMax,
   workerConcurrencyMin,
 } from "./domain.js";
+
+export const playwrightValidationReportSchema: z.ZodType<PlaywrightValidationReport> = z.object({
+  status: z.enum(["passed", "failed", "skipped"]),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime(),
+  checks: z.array(
+    z.object({
+      name: z.string(),
+      status: z.enum(["passed", "failed", "skipped"]),
+      message: z.string(),
+    }),
+  ),
+  pageErrors: z.array(z.string()),
+  consoleErrors: z.array(z.string()),
+  screenshotArtifactId: z.string().uuid().nullable(),
+  customTestOutput: z.string().nullable(),
+});
 
 const isSshRepositoryUrl = (value: string): boolean => {
   if (value.startsWith("ssh://")) {
@@ -39,6 +57,30 @@ export const createLocalProjectInputSchema = z.object({
 
 export const updateProjectRunnerInputSchema = z.object({
   runner: projectRunnerSchema,
+  expectedVersion: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
+});
+
+const optionalCommandSchema = z
+  .string()
+  .trim()
+  .max(4000)
+  .transform((value) => value || null)
+  .nullable();
+
+export const updateProjectPreviewInputSchema = z.object({
+  previewCommand: optionalCommandSchema,
+  previewWorkingDirectory: z.string().trim().min(1).max(1024).default("."),
+  previewHealthPath: z
+    .string()
+    .trim()
+    .min(1)
+    .max(1024)
+    .refine((value) => value.startsWith("/") && !value.startsWith("//"), {
+      message: "健康检查路径必须是以 / 开头的站内路径",
+    }),
+  playwrightEnabled: z.boolean().default(true),
+  playwrightTestCommand: optionalCommandSchema,
   expectedVersion: z.number().int().nonnegative(),
   idempotencyKey: z.string().uuid(),
 });
@@ -184,6 +226,7 @@ export const taskQuerySchema = z.object({
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type CreateLocalProjectInput = z.infer<typeof createLocalProjectInputSchema>;
 export type UpdateProjectRunnerInput = z.infer<typeof updateProjectRunnerInputSchema>;
+export type UpdateProjectPreviewInput = z.infer<typeof updateProjectPreviewInputSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;

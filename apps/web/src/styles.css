@@ -1720,6 +1720,117 @@ code {
   color: var(--muted);
 }
 
+.object-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-validation-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.run-validation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.run-validation-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.run-validation-heading span {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.run-validation-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.run-validation-checks {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-validation-checks li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.run-validation-checks li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.run-validation-screenshots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.run-validation-screenshots .ant-image {
+  width: min(100%, 280px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.run-validation-screenshots .ant-image-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+}
+
+.run-validation-output-details {
+  border: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.run-validation-output-details summary {
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.run-validation-output {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font: 11px/1.5 "SFMono-Regular", Consolas, monospace;
+}
+
 .object-facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(90px, 1fr));
@@ -2850,6 +2961,16 @@ code {
   .skill-validation-panel {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 760px) {
+  .run-validation-checks li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .run-validation-checks li span {
+    grid-column: 2;
   }
 }
 

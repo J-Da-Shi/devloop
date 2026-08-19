@@ -77,9 +77,25 @@ DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
 
 # Fake Runner 模拟一次执行所等待的时间，单位毫秒。
 DEVLOOP_FAKE_RUNNER_DELAY_MS=850
+
+# 自动预览启动后等待健康检查通过的最长时间，单位毫秒。
+DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
+
+# Playwright 页面加载、截图和基础检查的超时时间，单位毫秒。
+DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
+
+# 项目自定义 Playwright 命令的最长执行时间，单位毫秒。
+DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
+
+# 可选：指定已有的 Chromium/Chrome/Edge 可执行文件。未设置时按 Playwright、Chrome、Edge 顺序探测。
+DEVLOOP_PLAYWRIGHT_EXECUTABLE=
 ```
 
 `DEVLOOP_CODEX_TIMEOUT_MS` 仅作为旧版本兼容别名保留；新配置应使用 `DEVLOOP_CODEX_STALL_TIMEOUT_MS`。
+
+项目页可以为每个项目配置预览命令，例如 `pnpm dev -- --host 127.0.0.1 --port {{port}}`。任务完成后，DevLoop 会在结果 Commit 的隔离 Worktree 中启动该命令，运行基础 Playwright 检查并把截图、检查项和自定义交互测试输出附到审核页。预览命令留空时自动验证会明确记录为“已跳过”。预览与测试进程不会继承 DevLoop 的 API Key、Git Token 等敏感环境变量，只保留必要的系统路径以及 `VITE_`、`NEXT_PUBLIC_`、`PUBLIC_` 开头的公开变量。
+
+Playwright 不会默认把 Chromium 打进桌面安装包。需要自动截图时，在运行环境执行 `pnpm exec playwright install chromium`，或通过 `DEVLOOP_PLAYWRIGHT_EXECUTABLE` 指向本机已有的兼容浏览器；没有浏览器时任务仍会进入审核，页面会显示跳过原因。
 
 ### 打包桌面客户端
 
@@ -175,6 +191,10 @@ Worker 会在每次领取任务时读取所有已启用 Skill 的当前版本，
 - [技术选型](./TECH_SELECTION.md)
 - [项目目录说明](./PROJECT_STRUCTURE.md)
 - [可选：多人共享部署说明](./DEPLOYMENT.md)
+
+## 开源协议
+
+本项目采用 [MIT License](./LICENSE) 开源。
 
 ## 验证命令
 

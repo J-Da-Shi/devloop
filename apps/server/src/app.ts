@@ -17,6 +17,7 @@ import {
   runConflictAgentResolutionSchema,
   taskCommandInputSchema,
   updateProjectRunnerInputSchema,
+  updateProjectPreviewInputSchema,
   updateSkillInputSchema,
   updateTaskInputSchema,
   updateWorkerConcurrencyInputSchema,
@@ -34,6 +35,8 @@ import type { AgentWorker } from "./agent-worker.js";
 import { HttpError, requireLocalRole, requireRole } from "./http.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillValidationError, type SkillService } from "./skill-service.js";
+import type { ArtifactService } from "./artifact-service.js";
+import { PreviewStartError, type PreviewService } from "./preview-service.js";
 
 export interface CreateAppOptions {
   config: RuntimeConfig;
@@ -43,11 +46,15 @@ export interface CreateAppOptions {
   runners: AgentRunner[];
   eventBus: DomainEventBus;
   worker: AgentWorker;
+  previewService?: PreviewService;
+  artifactService?: ArtifactService;
 }
 
 const taskParamSchema = z.object({ taskId: z.string().uuid() });
 const runParamSchema = z.object({ runId: z.string().uuid() });
 const projectParamSchema = z.object({ projectId: z.string().uuid() });
+const previewParamSchema = z.object({ previewId: z.string().uuid() });
+const artifactParamSchema = z.object({ runId: z.string().uuid(), artifactId: z.string().uuid() });
 const skillParamSchema = z.object({ skillId: z.string().uuid() });
 const runQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 
@@ -105,7 +112,17 @@ const formatConflictRunnerResult = (result: RunnerResult): string =>
     .slice(0, 16_000);
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
-  const { config, repository, gitService, skillService, runners, eventBus, worker } = options;
+  const {
+    config,
+    repository,
+    gitService,
+    skillService,
+    runners,
+    eventBus,
+    worker,
+    previewService,
+    artifactService,
+  } = options;
   const requireRequestRole = (
     request: Parameters<typeof requireRole>[0],
     role: Parameters<typeof requireRole>[1],
@@ -311,6 +328,15 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       input.expectedVersion,
       input.idempotencyKey,
     );
+    publish(eventBus, result);
+    return { project: result.value, replayed: result.replayed };
+  });
+
+  app.patch("/api/projects/:projectId/preview", async (request) => {
+    const identity = requireRequestRole(request, "editor");
+    const { projectId } = projectParamSchema.parse(request.params);
+    const input = updateProjectPreviewInputSchema.parse(request.body);
+    const result = repository.updateProjectPreview(projectId, input, identity.id);
     publish(eventBus, result);
     return { project: result.value, replayed: result.replayed };
   });
@@ -524,6 +550,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       revision,
       reviewDecision: repository.getRunReviewDecision(runId),
       events: repository.getRunEvents(runId),
+      validation: artifactService
+        ? await artifactService.getValidationArtifacts(runId)
+        : { report: null, artifacts: [] },
     };
   });
 
@@ -606,6 +635,83 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       path,
     });
     return result;
+  });
+
+  app.get("/api/runs/:runId/artifacts/:artifactId", async (request, reply) => {
+    requireRequestRole(request, "viewer");
+    if (!artifactService) {
+      throw new HttpError(503, "产物服务未启用", "ARTIFACT_SERVICE_UNAVAILABLE");
+    }
+    const { runId, artifactId } = artifactParamSchema.parse(request.params);
+    const stored = await artifactService.read(runId, artifactId);
+    if (!stored) {
+      throw new HttpError(404, "运行产物不存在", "NOT_FOUND");
+    }
+    const contentType =
+      stored.artifact.kind === "playwright-screenshot" ? "image/png" : "application/json";
+    return reply
+      .header("Cache-Control", "private, no-store")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("ETag", `\"${stored.artifact.checksum}\"`)
+      .type(contentType)
+      .send(stored.content);
+  });
+
+  app.post("/api/runs/:runId/preview", async (request) => {
+    requireLocalRole(request, "operator");
+    if (!previewService) {
+      throw new HttpError(503, "预览服务未启用", "PREVIEW_SERVICE_UNAVAILABLE");
+    }
+    const { runId } = runParamSchema.parse(request.params);
+    const { run, project, repositoryPath } = resolveRunRepositoryPath(runId);
+    if (run.status !== "SUCCEEDED" || !run.resultCommit) {
+      throw new HttpError(409, "只有已经生成结果 Commit 的成功执行可以预览", "RUN_NOT_PREVIEWABLE");
+    }
+    if (!project.previewCommand) {
+      throw new HttpError(409, "请先在项目中配置预览命令", "PREVIEW_NOT_CONFIGURED");
+    }
+    try {
+      const preview = await previewService.start({
+        runId,
+        repositoryPath,
+        resultCommit: run.resultCommit,
+        command: project.previewCommand,
+        workingDirectory: project.previewWorkingDirectory,
+        healthPath: project.previewHealthPath,
+      });
+      return { preview };
+    } catch (error) {
+      if (error instanceof PreviewStartError) {
+        throw new HttpError(422, error.message, "PREVIEW_START_FAILED");
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/previews/:previewId", async (request) => {
+    requireLocalRole(request, "operator");
+    if (!previewService) {
+      throw new HttpError(503, "预览服务未启用", "PREVIEW_SERVICE_UNAVAILABLE");
+    }
+    const { previewId } = previewParamSchema.parse(request.params);
+    const stopped = await previewService.stop(previewId);
+    if (!stopped) {
+      throw new HttpError(404, "预览不存在或已经停止", "NOT_FOUND");
+    }
+    return { stopped: true };
+  });
+
+  app.get("/api/previews/:previewId", async (request) => {
+    requireRequestRole(request, "viewer");
+    if (!previewService) {
+      throw new HttpError(503, "预览服务未启用", "PREVIEW_SERVICE_UNAVAILABLE");
+    }
+    const { previewId } = previewParamSchema.parse(request.params);
+    const preview = previewService.get(previewId);
+    if (!preview) {
+      throw new HttpError(404, "预览不存在或已经停止", "NOT_FOUND");
+    }
+    return { preview };
   });
 
   app.post("/api/runs/:runId/resolve-conflicts", async (request) => {
@@ -881,14 +987,14 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       )
     ) {
       return reply.code(404).send({
-        error: { code: "ASSET_NOT_FOUND", message: "静态资源不存在，可能是浏览器缓存过期，请强制刷新" },
+        error: {
+          code: "ASSET_NOT_FOUND",
+          message: "静态资源不存在，可能是浏览器缓存过期，请强制刷新",
+        },
       });
     }
     if (hasBuiltWeb) {
-      return reply
-        .header("Cache-Control", "no-store")
-        .type("text/html")
-        .sendFile("index.html");
+      return reply.header("Cache-Control", "no-store").type("text/html").sendFile("index.html");
     }
     return reply.code(404).send({
       error: { code: "WEB_NOT_BUILT", message: "Web 应用尚未构建，请使用 Vite 开发服务" },
@@ -899,6 +1005,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     const jobs = Array.from(activeConflictJobs.values());
     for (const job of jobs) job.controller.abort();
     await Promise.allSettled(jobs.map((job) => job.promise));
+    await previewService?.close();
   });
 
   return app;

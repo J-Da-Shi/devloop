@@ -8,6 +8,7 @@ import {
   type PairedDevice,
   type Project,
   type ReviewDecision,
+  type RunArtifact,
   type RunApplicationResult,
   type RunPublishResult,
   type RunEvent,
@@ -19,6 +20,7 @@ import {
   type TaskRevision,
   type TaskRun,
   type TaskStatus,
+  type UpdateProjectPreviewInput,
   type WorkerState,
   workerConcurrencyMax,
   workerConcurrencyMin,
@@ -26,6 +28,7 @@ import {
 import { and, desc, eq, gt, isNull, lte, max } from "drizzle-orm";
 import type { DatabaseHandle } from "./client.js";
 import {
+  artifacts,
   domainEvents,
   pairedDevices,
   pairingSessions,
@@ -40,6 +43,7 @@ import {
   tasks,
   workerState,
   type DomainEventRow,
+  type ArtifactRow,
   type PairedDeviceRow,
   type ProjectRow,
   type ReviewDecisionRow,
@@ -167,10 +171,24 @@ const mapProject = (row: ProjectRow): Project => ({
   integrationRef: row.integrationRef,
   integrationCommit: row.integrationCommit,
   runner: (row.runner as Project["runner"]) ?? "codex",
+  previewCommand: row.previewCommand,
+  previewWorkingDirectory: row.previewWorkingDirectory,
+  previewHealthPath: row.previewHealthPath,
+  playwrightEnabled: row.playwrightEnabled,
+  playwrightTestCommand: row.playwrightTestCommand,
   lastFetchedAt: row.lastFetchedAt,
   version: row.version,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
+});
+
+const mapArtifact = (row: ArtifactRow): RunArtifact => ({
+  id: row.id,
+  runId: row.runId,
+  kind: row.kind,
+  size: row.size,
+  checksum: row.checksum,
+  createdAt: row.createdAt,
 });
 
 const mapTask = (row: TaskRow, projectName: string): Task => ({
@@ -323,6 +341,11 @@ export interface ClaimedTask {
   projectDefaultBaseRef: string;
   projectRepositoryUrl: string | null;
   projectRunner: string;
+  previewCommand: string | null;
+  previewWorkingDirectory: string;
+  previewHealthPath: string;
+  playwrightEnabled: boolean;
+  playwrightTestCommand: string | null;
   autoResolveConflicts: boolean;
   title: string;
   goal: string;
@@ -372,6 +395,11 @@ export interface StoredSkillVersionInput {
 export interface StoredSkillDetails {
   skill: Skill;
   versions: SkillVersion[];
+  storagePath: string;
+}
+
+export interface StoredRunArtifact {
+  artifact: RunArtifact;
   storagePath: string;
 }
 
@@ -466,6 +494,47 @@ export class DevLoopRepository {
         const event = this.insertDomainEvent("project", projectId, "project.runner_changed", {
           projectId,
           runner,
+        });
+        return { value: mapProject(row), events: [event] };
+      },
+    );
+  }
+
+  updateProjectPreview(
+    projectId: string,
+    input: UpdateProjectPreviewInput,
+    deviceId: string,
+  ): EventfulResult<Project> {
+    return this.executeIdempotent(
+      deviceId,
+      input.idempotencyKey,
+      "project.update_preview",
+      input.expectedVersion,
+      () => {
+        const current = this.requireProjectRow(projectId);
+        this.assertVersion(current.version, input.expectedVersion);
+        const timestamp = now();
+        const row = this.handle.db
+          .update(projects)
+          .set({
+            previewCommand: input.previewCommand,
+            previewWorkingDirectory: input.previewWorkingDirectory,
+            previewHealthPath: input.previewHealthPath,
+            playwrightEnabled: input.playwrightEnabled,
+            playwrightTestCommand: input.playwrightTestCommand,
+            version: current.version + 1,
+            updatedAt: timestamp,
+          })
+          .where(and(eq(projects.id, projectId), eq(projects.version, input.expectedVersion)))
+          .returning()
+          .get();
+        if (!row) {
+          throw new Error("Version conflict: 项目已被其他请求更新");
+        }
+        const event = this.insertDomainEvent("project", projectId, "project.preview_changed", {
+          projectId,
+          playwrightEnabled: input.playwrightEnabled,
+          configured: input.previewCommand !== null,
         });
         return { value: mapProject(row), events: [event] };
       },
@@ -1168,6 +1237,11 @@ export class DevLoopRepository {
           projectDefaultBaseRef: project.defaultBaseRef,
           projectRepositoryUrl: project.repositoryUrl,
           projectRunner: runner,
+          previewCommand: project.previewCommand,
+          previewWorkingDirectory: project.previewWorkingDirectory,
+          previewHealthPath: project.previewHealthPath,
+          playwrightEnabled: project.playwrightEnabled,
+          playwrightTestCommand: project.playwrightTestCommand,
           autoResolveConflicts: revisionSpec.autoResolveConflicts,
           title: revisionSpec.title,
           goal: revisionSpec.goal,
@@ -2169,6 +2243,49 @@ export class DevLoopRepository {
       .orderBy(runEvents.sequence)
       .all()
       .map(mapRunEvent);
+  }
+
+  createRunArtifact(input: {
+    runId: string;
+    kind: string;
+    storagePath: string;
+    size: number;
+    checksum: string;
+  }): RunArtifact {
+    this.requireRunRow(input.runId);
+    const row = this.handle.db
+      .insert(artifacts)
+      .values({
+        id: randomUUID(),
+        runId: input.runId,
+        kind: input.kind,
+        path: input.storagePath,
+        size: input.size,
+        checksum: input.checksum,
+        createdAt: now(),
+      })
+      .returning()
+      .get();
+    return mapArtifact(row);
+  }
+
+  listRunArtifacts(runId: string): RunArtifact[] {
+    return this.handle.db
+      .select()
+      .from(artifacts)
+      .where(eq(artifacts.runId, runId))
+      .orderBy(artifacts.createdAt)
+      .all()
+      .map(mapArtifact);
+  }
+
+  getRunArtifact(runId: string, artifactId: string): StoredRunArtifact | null {
+    const row = this.handle.db
+      .select()
+      .from(artifacts)
+      .where(and(eq(artifacts.id, artifactId), eq(artifacts.runId, runId)))
+      .get();
+    return row ? { artifact: mapArtifact(row), storagePath: row.path } : null;
   }
 
   recordRunEvent(

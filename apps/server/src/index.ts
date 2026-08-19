@@ -6,6 +6,9 @@ import { createApp } from "./app.js";
 import { DomainEventBus } from "./event-bus.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { SkillService } from "./skill-service.js";
+import { ArtifactService } from "./artifact-service.js";
+import { PlaywrightValidationService } from "./playwright-validation-service.js";
+import { PreviewService } from "./preview-service.js";
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
@@ -17,6 +20,19 @@ async function main(): Promise<void> {
   const gitService = new GitService();
   const skillService = new SkillService(repository, config.skillsPath);
   const eventBus = new DomainEventBus();
+  const artifactService = new ArtifactService(repository, config.artifactsPath);
+  const previewService = new PreviewService(
+    gitService,
+    config.previewsPath,
+    config.previewStartupTimeoutMs,
+  );
+  const playwrightValidationService = new PlaywrightValidationService(
+    previewService,
+    artifactService,
+    config.playwrightExecutable,
+    config.playwrightTimeoutMs,
+    config.playwrightTestTimeoutMs,
+  );
   const fakeRunner = new FakeRunner(config.fakeRunnerDelayMs);
   const codexRunner = new CodexRunner({
     executable: config.codexExecutable,
@@ -46,6 +62,7 @@ async function main(): Promise<void> {
     gitService,
     worktreesPath: config.worktreesPath,
     skillService,
+    playwrightValidationService,
   });
 
   const app = await createApp({
@@ -56,6 +73,8 @@ async function main(): Promise<void> {
     runners,
     eventBus,
     worker,
+    previewService,
+    artifactService,
   });
 
   app.addHook("onClose", async () => {

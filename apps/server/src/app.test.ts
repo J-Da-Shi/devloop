@@ -149,6 +149,8 @@ const config: RuntimeConfig = {
   databasePath: ":memory:",
   repositoriesPath: "/tmp/devloop-app-test/repositories",
   worktreesPath: "/tmp/devloop-app-test/worktrees",
+  previewsPath: "/tmp/devloop-app-test/previews",
+  artifactsPath: "/tmp/devloop-app-test/artifacts",
   skillsPath: "/tmp/devloop-app-test/skills",
   migrationsFolder,
   webDistPath: "/tmp/devloop-app-test/web-dist-not-built",
@@ -162,6 +164,10 @@ const config: RuntimeConfig = {
   claudeCodeStallTimeoutMs: 60_000,
   agentClaimDelayMs: 1_000,
   fakeRunnerDelayMs: 1,
+  previewStartupTimeoutMs: 1_000,
+  playwrightTimeoutMs: 1_000,
+  playwrightTestTimeoutMs: 1_000,
+  playwrightExecutable: null,
 };
 
 describe("冲突解决接口", () => {

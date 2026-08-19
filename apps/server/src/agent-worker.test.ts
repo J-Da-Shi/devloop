@@ -20,6 +20,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentWorker } from "./agent-worker.js";
 import { DomainEventBus } from "./event-bus.js";
+import type { ValidateRunInput } from "./playwright-validation-service.js";
 
 const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", import.meta.url));
 
@@ -377,6 +378,76 @@ afterEach(() => {
 });
 
 describe("AgentWorker", () => {
+  it("代码结果准备完成后自动运行 Playwright 验证再进入待审核", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "自动验证项目",
+      repositoryUrl: "git@example.com:team/playwright-worker.git",
+      repositoryPath: "/tmp/devloop-playwright-worker",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    repository.updateProjectPreview(
+      project.id,
+      {
+        previewCommand: "pnpm dev -- --port {{port}}",
+        previewWorkingDirectory: "apps/web",
+        previewHealthPath: "/health",
+        playwrightEnabled: true,
+        playwrightTestCommand: "pnpm playwright test",
+        expectedVersion: project.version,
+        idempotencyKey: randomUUID(),
+      },
+      "instance-owner",
+    );
+    const task = createReadyTask(repository, project.id, "自动执行页面验证", 100);
+    const runner = new ControlledRunner();
+    const validationInputs: ValidateRunInput[] = [];
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      playwrightValidationService: {
+        validate: async (input) => {
+          validationInputs.push(input);
+          return {
+            status: "passed",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            checks: [{ name: "页面加载", status: "passed", message: "HTTP 200" }],
+            pageErrors: [],
+            consoleErrors: [],
+            screenshotArtifactId: randomUUID(),
+            customTestOutput: null,
+          };
+        },
+      },
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+
+    expect(validationInputs).toEqual([
+      expect.objectContaining({
+        previewCommand: "pnpm dev -- --port {{port}}",
+        previewWorkingDirectory: "apps/web",
+        previewHealthPath: "/health",
+        playwrightEnabled: true,
+        playwrightTestCommand: "pnpm playwright test",
+        resultCommit: "base-commit",
+      }),
+    ]);
+    expect(
+      repository.getRunEvents(repository.getTask(task.id)!.latestRunId!).map((event) => event.type),
+    ).toEqual(
+      expect.arrayContaining([
+        "run.playwright.started",
+        "run.playwright.completed",
+        "run.finished",
+      ]),
+    );
+  });
+
   it("把已启用 Skill 快照传给 Runner", async () => {
     const repository = createRepository();
     const project = repository.createProject({

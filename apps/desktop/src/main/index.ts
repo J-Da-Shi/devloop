@@ -25,6 +25,7 @@ let bundledService: UtilityProcess | null = null;
 let bundledServiceExitCode: number | null = null;
 let bundledServiceLog = "";
 let isQuitting = false;
+const previewWindows = new Map<string, BrowserWindow>();
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -126,6 +127,123 @@ function assertTrustedSender(value: string): void {
   }
 }
 
+function assertPreviewUrl(value: string): URL {
+  const url = new URL(value);
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
+  if (url.protocol !== "http:" || !loopbackHosts.has(url.hostname)) {
+    throw new Error("预览窗口只允许打开本机 HTTP 地址");
+  }
+  return url;
+}
+
+async function stopPreviewService(previewId: string): Promise<void> {
+  try {
+    await fetch(new URL(`/api/previews/${encodeURIComponent(previewId)}`, serviceUrl), {
+      method: "DELETE",
+    });
+  } catch {
+    // 服务退出时预览进程会由服务端统一清理。
+  }
+}
+
+async function openPreviewWindow(input: {
+  previewId: string;
+  runId: string;
+  url: string;
+  title: string;
+}): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(input.previewId)) {
+    throw new Error("预览 ID 无效");
+  }
+  const previewUrl = assertPreviewUrl(input.url);
+  const previewResponse = await fetch(
+    new URL(`/api/previews/${encodeURIComponent(input.previewId)}`, serviceUrl),
+  );
+  if (!previewResponse.ok) {
+    throw new Error("预览已经停止或不存在");
+  }
+  const payload = (await previewResponse.json()) as {
+    preview?: { runId?: string; url?: string };
+  };
+  if (payload.preview?.runId !== input.runId || payload.preview.url !== previewUrl.toString()) {
+    throw new Error("预览地址校验失败");
+  }
+  const existing = previewWindows.get(input.previewId);
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const previewOrigin = previewUrl.origin;
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 720,
+    minHeight: 560,
+    show: false,
+    title: `${input.title.slice(0, 120)} - DevLoop 预览`,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      partition: `devloop-preview-${input.previewId}`,
+    },
+  });
+  previewWindows.set(input.previewId, window);
+  window.webContents.session.webRequest.onBeforeRequest(
+    { urls: ["<all_urls>"] },
+    (details, callback) => {
+      try {
+        const requestUrl = new URL(details.url);
+        callback({
+          cancel:
+            (requestUrl.protocol === "http:" || requestUrl.protocol === "https:") &&
+            requestUrl.origin !== previewOrigin,
+        });
+      } catch {
+        callback({ cancel: false });
+      }
+    },
+  );
+  window.once("ready-to-show", () => window.show());
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (new URL(url).origin === previewOrigin) {
+        void window.loadURL(url);
+      } else if (url.startsWith("https://") || url.startsWith("http://")) {
+        void shell.openExternal(url);
+      }
+    } catch {
+      // 无效 URL 不执行任何导航。
+    }
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    try {
+      if (new URL(url).origin === previewOrigin) return;
+    } catch {
+      // 无效 URL 会在下面被拦截。
+    }
+    event.preventDefault();
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      void shell.openExternal(url);
+    }
+  });
+  window.on("closed", () => {
+    previewWindows.delete(input.previewId);
+    mainWindow?.webContents.send("desktop:preview-closed", input.previewId);
+    void stopPreviewService(input.previewId);
+  });
+  try {
+    await window.loadURL(previewUrl.toString());
+  } catch (error) {
+    if (!window.isDestroyed()) window.close();
+    throw error;
+  }
+}
+
 function registerDesktopBridge(): void {
   ipcMain.handle("desktop:select-directory", async (event) => {
     assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
@@ -148,6 +266,34 @@ function registerDesktopBridge(): void {
   ipcMain.handle("desktop:is-full-screen", (event) => {
     assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
     return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
+  });
+
+  ipcMain.handle("desktop:open-preview", async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error("预览窗口参数无效");
+    }
+    const record = input as Record<string, unknown>;
+    if (
+      typeof record.previewId !== "string" ||
+      typeof record.runId !== "string" ||
+      typeof record.url !== "string" ||
+      typeof record.title !== "string"
+    ) {
+      throw new Error("预览窗口参数无效");
+    }
+    await openPreviewWindow({
+      previewId: record.previewId,
+      runId: record.runId,
+      url: record.url,
+      title: record.title,
+    });
+  });
+
+  ipcMain.handle("desktop:close-preview", (event, previewId: unknown) => {
+    assertTrustedSender(event.senderFrame?.url ?? event.sender.getURL());
+    if (typeof previewId !== "string") throw new Error("预览 ID 无效");
+    previewWindows.get(previewId)?.close();
   });
 }
 

@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Flex, Form, Input, Segmented, Select } from "antd";
-import { FolderOpen, GitBranch, HardDrive, Plus, RefreshCw, Server, X } from "lucide-react";
+import { Button, Flex, Form, Input, Modal, Segmented, Select, Switch } from "antd";
+import {
+  FolderOpen,
+  GitBranch,
+  HardDrive,
+  Plus,
+  RefreshCw,
+  Server,
+  Settings2,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 import type { Project, ProjectRunner } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
@@ -23,6 +32,14 @@ type ProjectRegistration =
     }
   | { source: "local"; input: { name: string; path: string; runner: ProjectRunner } };
 
+interface PreviewFormValues {
+  previewCommand: string;
+  previewWorkingDirectory: string;
+  previewHealthPath: string;
+  playwrightEnabled: boolean;
+  playwrightTestCommand: string;
+}
+
 const runnerLabels: Record<ProjectRunner, string> = {
   codex: "Codex CLI",
   "claude-code": "Claude Code CLI",
@@ -38,6 +55,8 @@ export function ProjectsPage() {
   const [localPath, setLocalPath] = useState("");
   const [baseRef, setBaseRef] = useState("main");
   const [runner, setRunner] = useState<ProjectRunner>("codex");
+  const [previewProject, setPreviewProject] = useState<Project | null>(null);
+  const [previewForm] = Form.useForm<PreviewFormValues>();
   const desktopAvailable = typeof window.devloopDesktop?.selectDirectory === "function";
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects });
   const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard });
@@ -101,9 +120,37 @@ export function ProjectsPage() {
       await refresh();
       notify(`${data.project.name} 执行器已切换为 ${runnerLabels[data.project.runner]}`);
     },
-    onError: (error) =>
-      notify(error instanceof Error ? error.message : "切换执行器失败", "danger"),
+    onError: (error) => notify(error instanceof Error ? error.message : "切换执行器失败", "danger"),
   });
+  const updatePreview = useMutation({
+    mutationFn: (input: { project: Project; values: PreviewFormValues }) =>
+      api.updateProjectPreview(input.project.id, {
+        previewCommand: input.values.previewCommand.trim() || null,
+        previewWorkingDirectory: input.values.previewWorkingDirectory.trim(),
+        previewHealthPath: input.values.previewHealthPath.trim(),
+        playwrightEnabled: input.values.playwrightEnabled,
+        playwrightTestCommand: input.values.playwrightTestCommand.trim() || null,
+        expectedVersion: input.project.version,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    onSuccess: async (data) => {
+      await refresh();
+      setPreviewProject(null);
+      notify(`${data.project.name} 的预览配置已保存`);
+    },
+    onError: (error) =>
+      notify(error instanceof Error ? error.message : "保存预览配置失败", "danger"),
+  });
+  const openPreviewSettings = (project: Project) => {
+    setPreviewProject(project);
+    previewForm.setFieldsValue({
+      previewCommand: project.previewCommand ?? "",
+      previewWorkingDirectory: project.previewWorkingDirectory,
+      previewHealthPath: project.previewHealthPath,
+      playwrightEnabled: project.playwrightEnabled,
+      playwrightTestCommand: project.playwrightTestCommand ?? "",
+    });
+  };
   const chooseDirectory = async () => {
     try {
       const selectDirectory = window.devloopDesktop?.selectDirectory;
@@ -233,10 +280,7 @@ export function ProjectsPage() {
               <Form.Item label="项目根目录" required className="field-wide">
                 <span className="input-action-row">
                   <Input value={localPath} placeholder="选择 Git 仓库根目录" readOnly />
-                  <Button
-                    icon={<FolderOpen size={17} />}
-                    onClick={() => void chooseDirectory()}
-                  >
+                  <Button icon={<FolderOpen size={17} />} onClick={() => void chooseDirectory()}>
                     选择目录
                   </Button>
                 </span>
@@ -314,19 +358,90 @@ export function ProjectsPage() {
                   </div>
                 </dl>
                 {canEdit ? (
-                  <IconButton
-                    label={`${local ? "检查" : "同步"} ${project.name}`}
-                    disabled={syncProject.isPending}
-                    onClick={() => syncProject.mutate(project)}
-                  >
-                    <RefreshCw size={17} className={syncProject.isPending ? "spin" : undefined} />
-                  </IconButton>
+                  <div className="object-actions">
+                    <IconButton
+                      label={`配置 ${project.name} 的预览`}
+                      onClick={() => openPreviewSettings(project)}
+                    >
+                      <Settings2 size={17} />
+                    </IconButton>
+                    <IconButton
+                      label={`${local ? "检查" : "同步"} ${project.name}`}
+                      disabled={syncProject.isPending}
+                      onClick={() => syncProject.mutate(project)}
+                    >
+                      <RefreshCw size={17} className={syncProject.isPending ? "spin" : undefined} />
+                    </IconButton>
+                  </div>
                 ) : null}
               </div>
             );
           })}
         </Flex>
       )}
+
+      <Modal
+        open={Boolean(previewProject)}
+        title={
+          <span className="task-dialog-title">
+            <strong>预览与自动验证</strong>
+            <small>{previewProject?.name}</small>
+          </span>
+        }
+        okText="保存配置"
+        cancelText="取消"
+        confirmLoading={updatePreview.isPending}
+        mask={{ closable: !updatePreview.isPending }}
+        closable={!updatePreview.isPending}
+        onCancel={() => !updatePreview.isPending && setPreviewProject(null)}
+        onOk={() => previewForm.submit()}
+      >
+        <Form<PreviewFormValues>
+          form={previewForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={(values) => {
+            if (previewProject) updatePreview.mutate({ project: previewProject, values });
+          }}
+        >
+          <Form.Item label="预览命令" name="previewCommand">
+            <Input.TextArea
+              rows={2}
+              placeholder="pnpm dev -- --host 127.0.0.1 --port {{port}}"
+              spellCheck={false}
+            />
+          </Form.Item>
+          <div className="form-grid">
+            <Form.Item
+              label="工作目录"
+              name="previewWorkingDirectory"
+              rules={[{ required: true, message: "请输入工作目录" }]}
+            >
+              <Input placeholder="." spellCheck={false} />
+            </Form.Item>
+            <Form.Item
+              label="健康检查路径"
+              name="previewHealthPath"
+              rules={[
+                { required: true, message: "请输入健康检查路径" },
+                { pattern: /^\/(?!\/)/, message: "请输入以 / 开头的站内路径" },
+              ]}
+            >
+              <Input placeholder="/" spellCheck={false} />
+            </Form.Item>
+          </div>
+          <Form.Item
+            label="任务完成后自动运行 Playwright"
+            name="playwrightEnabled"
+            valuePropName="checked"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+          <Form.Item label="自定义交互测试命令" name="playwrightTestCommand">
+            <Input.TextArea rows={2} placeholder="pnpm playwright test" spellCheck={false} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

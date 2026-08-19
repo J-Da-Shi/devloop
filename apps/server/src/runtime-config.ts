@@ -8,6 +8,8 @@ export interface RuntimeConfig {
   databasePath: string;
   repositoriesPath: string;
   worktreesPath: string;
+  previewsPath: string;
+  artifactsPath: string;
   skillsPath: string;
   migrationsFolder: string;
   webDistPath: string;
@@ -21,6 +23,10 @@ export interface RuntimeConfig {
   claudeCodeStallTimeoutMs: number;
   agentClaimDelayMs: number;
   fakeRunnerDelayMs: number;
+  previewStartupTimeoutMs: number;
+  playwrightTimeoutMs: number;
+  playwrightTestTimeoutMs: number;
+  playwrightExecutable: string | null;
 }
 
 const parseInteger = (value: string | undefined, fallback: number, name: string): number => {
@@ -64,6 +70,8 @@ export function loadRuntimeConfig(): RuntimeConfig {
     databasePath: resolve(dataDirectory, "devloop.db"),
     repositoriesPath: resolve(dataDirectory, "repositories"),
     worktreesPath: resolve(dataDirectory, "worktrees"),
+    previewsPath: resolve(dataDirectory, "previews"),
+    artifactsPath: resolve(dataDirectory, "artifacts"),
     skillsPath: resolve(dataDirectory, "skills"),
     migrationsFolder: resolve(repositoryRoot, "packages/db/drizzle"),
     webDistPath: resolve(repositoryRoot, "apps/web/dist"),
@@ -93,5 +101,21 @@ export function loadRuntimeConfig(): RuntimeConfig {
       850,
       "DEVLOOP_FAKE_RUNNER_DELAY_MS",
     ),
+    previewStartupTimeoutMs: parseInteger(
+      process.env.DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS,
+      90_000,
+      "DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS",
+    ),
+    playwrightTimeoutMs: parseInteger(
+      process.env.DEVLOOP_PLAYWRIGHT_TIMEOUT_MS,
+      60_000,
+      "DEVLOOP_PLAYWRIGHT_TIMEOUT_MS",
+    ),
+    playwrightTestTimeoutMs: parseInteger(
+      process.env.DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS,
+      10 * 60_000,
+      "DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS",
+    ),
+    playwrightExecutable: process.env.DEVLOOP_PLAYWRIGHT_EXECUTABLE?.trim() || null,
   };
 }

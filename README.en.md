@@ -176,6 +176,10 @@ The worker validates the CLI's final JSON and produces the result commit, but th
 - [Project structure](./PROJECT_STRUCTURE.md)
 - [Optional: shared deployment](./DEPLOYMENT.md)
 
+## License
+
+This project is released under the [MIT License](./LICENSE).
+
 ## Verification commands
 
 ```bash

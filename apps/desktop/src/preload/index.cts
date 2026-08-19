@@ -10,6 +10,21 @@ const desktopApi = Object.freeze({
       listener(isFullScreen);
     });
   },
+  openPreview: (input: {
+    previewId: string;
+    runId: string;
+    url: string;
+    title: string;
+  }): Promise<void> => ipcRenderer.invoke("desktop:open-preview", input),
+  closePreview: (previewId: string): Promise<void> =>
+    ipcRenderer.invoke("desktop:close-preview", previewId),
+  onPreviewClosed: (listener: (previewId: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, previewId: string): void => {
+      listener(previewId);
+    };
+    ipcRenderer.on("desktop:preview-closed", handler);
+    return () => ipcRenderer.removeListener("desktop:preview-closed", handler);
+  },
 });
 
 contextBridge.exposeInMainWorld("devloopDesktop", desktopApi);

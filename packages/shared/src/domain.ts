@@ -54,10 +54,51 @@ export interface Project {
   integrationRef: string;
   integrationCommit: string | null;
   runner: ProjectRunner;
+  previewCommand: string | null;
+  previewWorkingDirectory: string;
+  previewHealthPath: string;
+  playwrightEnabled: boolean;
+  playwrightTestCommand: string | null;
   lastFetchedAt: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type PlaywrightCheckStatus = "passed" | "failed" | "skipped";
+
+export interface PlaywrightValidationCheck {
+  name: string;
+  status: PlaywrightCheckStatus;
+  message: string;
+}
+
+export interface PlaywrightValidationReport {
+  status: PlaywrightCheckStatus;
+  startedAt: string;
+  finishedAt: string;
+  checks: PlaywrightValidationCheck[];
+  pageErrors: string[];
+  consoleErrors: string[];
+  screenshotArtifactId: string | null;
+  customTestOutput: string | null;
+}
+
+export interface RunArtifact {
+  id: string;
+  runId: string;
+  kind: "playwright-report" | "playwright-screenshot" | string;
+  size: number;
+  checksum: string;
+  createdAt: string;
+}
+
+export interface RunPreview {
+  id: string;
+  runId: string;
+  url: string;
+  status: "starting" | "running";
+  startedAt: string;
 }
 
 export interface Task {
