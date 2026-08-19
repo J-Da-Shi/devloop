@@ -93,7 +93,7 @@ export function RunValidationPanel({
           artifact.kind === "playwright-screenshot" &&
           (!report?.screenshotArtifactId || artifact.id === report.screenshotArtifactId),
       ),
-    [artifacts, report?.screenshotArtifactId],
+    [artifacts, report],
   );
   const status = report?.status ?? null;
   const selectedPreviewConfiguration = report?.previewConfiguration ?? previewConfiguration;

@@ -1,7 +1,6 @@
 import type {
   DeviceRole,
   PlaywrightValidationReport,
-  Project,
   ReviewDecision,
   RunApplicationResult,
   RunArtifact,

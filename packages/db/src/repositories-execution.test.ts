@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { openDatabase, type DatabaseHandle } from "./client.js";
 import { DevLoopRepository } from "./repositories.js";
 

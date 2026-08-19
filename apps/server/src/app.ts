@@ -702,7 +702,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return reply
       .header("Cache-Control", "private, no-store")
       .header("X-Content-Type-Options", "nosniff")
-      .header("ETag", `\"${stored.artifact.checksum}\"`)
+      .header("ETag", `"${stored.artifact.checksum}"`)
       .type(contentType)
       .send(stored.content);
   });

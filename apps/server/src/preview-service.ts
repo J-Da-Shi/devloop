@@ -602,7 +602,6 @@ export class PreviewService {
       });
       let output = "";
       let settled = false;
-      let timeout: NodeJS.Timeout | undefined;
       let terminationTimeout: NodeJS.Timeout | undefined;
       let pendingError: Error | null = null;
 
@@ -653,7 +652,7 @@ export class PreviewService {
       });
       signal?.addEventListener("abort", abort, { once: true });
       if (settled) return;
-      timeout = setTimeout(() => {
+      const timeout = setTimeout(() => {
         stop(
           new PreviewStartError(
             `等待预览依赖安装超时（${this.dependencyInstallTimeoutMs}ms）：${installation.command}${
