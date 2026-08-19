@@ -10,6 +10,8 @@
 
 <p align="center"><strong>把 AI 编程任务变成可审核、可验证的本地交付</strong></p>
 
+<p align="center"><a href="https://j-da-shi.github.io/devloop/">访问 DevLoop 官网展示 →</a></p>
+
 <p align="center">
   <img src="https://img.shields.io/badge/Node.js-24%2B-1B1B1F?style=flat-square&logo=nodedotjs&logoColor=4F8CFF" alt="Node.js 24+" />
   <img src="https://img.shields.io/badge/pnpm-10-1B1B1F?style=flat-square&logo=pnpm&logoColor=F69220" alt="pnpm 10" />
