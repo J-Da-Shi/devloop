@@ -1,49 +1,34 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Form, Input, InputNumber, Modal, Select, Switch } from "antd";
-import {
-  Ban,
-  Check,
-  CornerDownLeft,
-  GitBranch,
-  Pencil,
-  Play,
-  RotateCcw,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { Button, Form, Input, Modal } from "antd";
+import { Ban, Check, CornerDownLeft, GitBranch, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
-import { z } from "zod";
-import type {
-  Project,
-  RunApplicationResult,
-  RunPublishResult,
-  Task,
-  TaskType,
-} from "@devloop/shared";
-import { api, queryKeys } from "../api.js";
-import { formatDateTime, runStatusText, taskStatusText, taskTypeText } from "../utils.js";
-import { ConfirmDialog } from "./confirm-dialog.js";
-import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
-import { useNotice } from "./notice-provider.js";
-import { RunDiffPanel, type RunDiffApprovalState } from "./run-diff-panel.js";
-import { RunEventList } from "./run-event-list.js";
-import { RunValidationPanel } from "./run-validation-panel.js";
-import { StatusBadge } from "./status-badge.js";
-
-const taskFormSchema = z.object({
-  projectId: z.string().uuid("请选择项目"),
-  taskType: z.enum(["DEVELOPMENT", "RESEARCH"]),
-  targetBranch: z.string().trim().min(1, "请输入目标分支").max(200, "分支名过长"),
-  title: z.string().trim().min(1, "请输入任务标题").max(160, "标题不能超过 160 个字符"),
-  goal: z.string().trim().min(1, "请输入任务目标").max(8_000, "目标内容过长"),
-  criteriaText: z.string().trim().min(1, "请至少填写一条验收标准"),
-  priority: z.number().int().min(0).max(100),
-  autoResolveConflicts: z.boolean(),
-});
-
-type TaskFormValues = z.infer<typeof taskFormSchema>;
+import { useForm } from "react-hook-form";
+import type { Project, RunApplicationResult, RunPublishResult, Task } from "@devloop/shared";
+import {
+  api,
+  formatDateTime,
+  queryKeys,
+  runStatusText,
+  taskStatusText,
+  taskTypeText,
+} from "../../../core/index.js";
+import {
+  ConfirmDialog,
+  ErrorPanel,
+  InlineNotice,
+  LoadingPanel,
+  StatusBadge,
+  useNotice,
+} from "../../common/index.js";
+import {
+  RunDiffPanel,
+  RunEventList,
+  RunValidationPanel,
+  type RunDiffApprovalState,
+} from "../runs/index.js";
+import { TaskEditorForm } from "./task-editor-form.js";
+import { splitCriteria, taskFormSchema, type TaskFormValues } from "./task-form.js";
 type ConfirmAction =
   | "confirm"
   | "unconfirm"
@@ -63,17 +48,7 @@ interface TaskDialogProps {
   projects: Project[];
 }
 
-const splitCriteria = (value: string): string[] =>
-  value
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-
 const roleAllowsEdit = (role: "viewer" | "operator" | "editor"): boolean => role === "editor";
-const taskTypeOptions: Array<{ label: string; value: TaskType }> = [
-  { label: "代码开发", value: "DEVELOPMENT" },
-  { label: "互联网研究", value: "RESEARCH" },
-];
 
 export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogProps) {
   const queryClient = useQueryClient();
@@ -399,187 +374,19 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         ) : null}
 
         {editable ? (
-          <div className="task-dialog-scroll-region">
-            <Form
-              className="form-stack"
-              layout="vertical"
-              requiredMark={false}
-              onFinish={() => {
-                void form.handleSubmit((values) => saveMutation.mutate(values))();
-              }}
-            >
-              <Form.Item label="任务类型" htmlFor="task-type" required>
-                <Controller
-                  control={form.control}
-                  name="taskType"
-                  render={({ field }) => (
-                    <Select
-                      {...field}
-                      id="task-type"
-                      disabled={!canEdit}
-                      options={taskTypeOptions}
-                    />
-                  )}
-                />
-              </Form.Item>
-              <Form.Item
-                label="项目"
-                required
-                validateStatus={form.formState.errors.projectId ? "error" : ""}
-                help={form.formState.errors.projectId?.message}
-              >
-                <Controller
-                  control={form.control}
-                  name="projectId"
-                  render={({ field }) => (
-                    <Select
-                      {...field}
-                      disabled={Boolean(task) || !canEdit}
-                      placeholder="选择项目"
-                      options={projects.map((project) => ({
-                        label: `${project.name}${project.repositoryUrl === null ? "（本地）" : ""}`,
-                        value: project.id,
-                      }))}
-                      onChange={(value) => {
-                        field.onChange(value);
-                        const project = projects.find((item) => item.id === value);
-                        form.setValue("targetBranch", project?.defaultBaseRef ?? "HEAD", {
-                          shouldDirty: true,
-                          shouldValidate: true,
-                        });
-                      }}
-                    />
-                  )}
-                />
-              </Form.Item>
-              {selectedTaskType === "DEVELOPMENT" ? (
-                <Form.Item
-                  label="目标分支"
-                  required
-                  validateStatus={form.formState.errors.targetBranch ? "error" : ""}
-                  help={form.formState.errors.targetBranch?.message}
-                >
-                  <Controller
-                    control={form.control}
-                    name="targetBranch"
-                    render={({ field }) => (
-                      <Input
-                        {...field}
-                        disabled={!canEdit}
-                        placeholder="例如 feature/mobile-editor"
-                      />
-                    )}
-                  />
-                </Form.Item>
-              ) : null}
-              <Form.Item
-                label="标题"
-                required
-                validateStatus={form.formState.errors.title ? "error" : ""}
-                help={form.formState.errors.title?.message}
-              >
-                <Controller
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => <Input {...field} disabled={!canEdit} autoFocus={!task} />}
-                />
-              </Form.Item>
-              <Form.Item
-                label="任务目标"
-                required
-                validateStatus={form.formState.errors.goal ? "error" : ""}
-                help={form.formState.errors.goal?.message}
-              >
-                <Controller
-                  control={form.control}
-                  name="goal"
-                  render={({ field }) => <Input.TextArea {...field} disabled={!canEdit} rows={5} />}
-                />
-              </Form.Item>
-              <Form.Item
-                label="验收标准"
-                required
-                validateStatus={form.formState.errors.criteriaText ? "error" : ""}
-                help={form.formState.errors.criteriaText?.message}
-              >
-                <Controller
-                  control={form.control}
-                  name="criteriaText"
-                  render={({ field }) => (
-                    <Input.TextArea
-                      {...field}
-                      disabled={!canEdit}
-                      rows={5}
-                      placeholder="每行一条"
-                    />
-                  )}
-                />
-              </Form.Item>
-              <Form.Item label="分数" className="field-compact">
-                <Controller
-                  control={form.control}
-                  name="priority"
-                  render={({ field }) => (
-                    <InputNumber
-                      ref={field.ref}
-                      name={field.name}
-                      value={field.value}
-                      disabled={!canEdit}
-                      min={0}
-                      max={100}
-                      onBlur={field.onBlur}
-                      onChange={(value) => field.onChange(value ?? 0)}
-                    />
-                  )}
-                />
-              </Form.Item>
-              {selectedTaskType === "DEVELOPMENT" ? (
-                <Form.Item
-                  label="自动解决冲突"
-                  htmlFor="task-auto-resolve-conflicts"
-                  tooltip="Codex 完成开发后会检查目标分支；存在冲突时先自动解决，再进入待审核。"
-                  className="field-compact"
-                >
-                  <Controller
-                    control={form.control}
-                    name="autoResolveConflicts"
-                    render={({ field }) => (
-                      <Switch
-                        id="task-auto-resolve-conflicts"
-                        checked={field.value}
-                        disabled={!canEdit}
-                        checkedChildren="开启"
-                        unCheckedChildren="关闭"
-                        onChange={field.onChange}
-                      />
-                    )}
-                  />
-                </Form.Item>
-              ) : null}
-              <div className="dialog-actions">
-                {task && canEdit ? (
-                  <Button
-                    icon={<Play size={17} />}
-                    onClick={() => setConfirmAction("confirm")}
-                    disabled={pending || form.formState.isDirty}
-                  >
-                    确认并排队
-                  </Button>
-                ) : null}
-                {canEdit ? (
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    icon={<Save size={17} />}
-                    loading={saveMutation.isPending}
-                    disabled={commandMutation.isPending}
-                  >
-                    {task ? "保存草稿" : "创建草稿"}
-                  </Button>
-                ) : null}
-              </div>
-            </Form>
-          </div>
+          <TaskEditorForm
+            form={form}
+            projects={projects}
+            task={task}
+            canEdit={canEdit}
+            selectedTaskType={selectedTaskType}
+            pending={pending}
+            saving={saveMutation.isPending}
+            onSubmit={() => {
+              void form.handleSubmit((values) => saveMutation.mutate(values))();
+            }}
+            onConfirm={() => setConfirmAction("confirm")}
+          />
         ) : (
           <>
             <div className="task-readonly task-readonly-summary" aria-label="任务概要">

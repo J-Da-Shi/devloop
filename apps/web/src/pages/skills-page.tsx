@@ -1,26 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Badge, Button, Flex, Input, Switch, Tag } from "antd";
+import { Alert, Button, Input, Switch } from "antd";
 import type { Skill, SkillValidationResult } from "@devloop/shared";
 import {
-  AlertTriangle,
   CheckCircle2,
   CircleAlert,
-  Clock3,
   FileCode2,
-  History,
   LoaderCircle,
-  Plus,
   RefreshCw,
-  Search,
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, queryKeys } from "../api.js";
-import { ConfirmDialog } from "../components/confirm-dialog.js";
-import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
-import { IconButton } from "../components/icon-button.js";
-import { useNotice } from "../components/notice-provider.js";
-import { formatDateTime } from "../utils.js";
+import { ApiError, api, queryKeys } from "../core/index.js";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorPanel,
+  IconButton,
+  LoadingPanel,
+  useNotice,
+} from "../components/common/index.js";
+import { SkillInspector, SkillRegistry } from "../components/business/skills/index.js";
 
 const newSkillTemplate = `---
 name: new-skill
@@ -73,9 +72,7 @@ export function SkillsPage() {
   const [search, setSearch] = useState("");
   const [pendingTarget, setPendingTarget] = useState<string | "new" | null>(null);
   const [validation, setValidation] = useState<SkillValidationResult | null>(null);
-  const [validationState, setValidationState] = useState<"idle" | "waiting" | "checking">(
-    "idle",
-  );
+  const [validationState, setValidationState] = useState<"idle" | "waiting" | "checking">("idle");
   const validationRequest = useRef(0);
 
   const skills = useQuery({ queryKey: queryKeys.skills, queryFn: api.skills });
@@ -267,9 +264,7 @@ export function SkillsPage() {
       }),
     onSuccess: async ({ skill }) => {
       setEditor((current) =>
-        current.target === skill.id
-          ? { ...current, expectedVersion: skill.version }
-          : current,
+        current.target === skill.id ? { ...current, expectedVersion: skill.version } : current,
       );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.skills }),
@@ -339,66 +334,15 @@ export function SkillsPage() {
 
   return (
     <div className="skills-page">
-      <section className="skill-registry tool-panel" aria-label="Skill 列表">
-        <div className="skill-registry-heading">
-          <div>
-            <span className="skill-section-kicker">REGISTRY</span>
-            <h2>Skill</h2>
-          </div>
-          <Tag variant="filled" className="skill-count">
-            {skills.data.skills.length}
-          </Tag>
-        </div>
-
-        <Input
-          className="skill-search"
-          aria-label="搜索 Skill"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="搜索名称或描述"
-          prefix={<Search size={16} aria-hidden="true" />}
-          allowClear
-        />
-
-        <div className="skill-list">
-          {filteredSkills.length === 0 ? (
-            <div className="skill-list-empty">{search ? "没有匹配结果" : "暂无 Skill"}</div>
-          ) : (
-            filteredSkills.map((skill) => (
-              <Button
-                key={skill.id}
-                type="text"
-                block
-                className={`skill-list-item${selectedSkillId === skill.id ? " active" : ""}`}
-                aria-pressed={selectedSkillId === skill.id}
-                onClick={() => requestTarget(skill.id)}
-              >
-                <Badge
-                  status={skill.enabled ? "success" : "default"}
-                  className="skill-state-dot"
-                />
-                <span className="skill-list-copy">
-                  <strong>{skill.name}</strong>
-                  <small>{skill.description}</small>
-                </span>
-                <code>v{skill.currentVersion}</code>
-              </Button>
-            ))
-          )}
-        </div>
-
-        {canEdit ? (
-          <Button
-            className="skill-create-button"
-            icon={<Plus size={17} aria-hidden="true" />}
-            onClick={() => requestTarget("new")}
-          >
-            新建 Skill
-          </Button>
-        ) : (
-          <div className="skill-readonly-note">当前实例为只读权限</div>
-        )}
-      </section>
+      <SkillRegistry
+        skills={filteredSkills}
+        totalCount={skills.data.skills.length}
+        selectedSkillId={selectedSkillId}
+        search={search}
+        canEdit={canEdit === true}
+        onSearch={setSearch}
+        onSelect={requestTarget}
+      />
 
       <section className="skill-workspace tool-panel" aria-label="Skill 编辑器">
         {selectedSkillId && (details.isPending || editor.target !== selectedSkillId) ? (
@@ -416,7 +360,9 @@ export function SkillsPage() {
                 </span>
                 <span>
                   <span className="skill-section-kicker">SKILL.md</span>
-                  <strong>{isCreating ? validation?.name ?? "未命名 Skill" : selectedSkill?.name}</strong>
+                  <strong>
+                    {isCreating ? (validation?.name ?? "未命名 Skill") : selectedSkill?.name}
+                  </strong>
                 </span>
               </div>
               <div className="skill-editor-actions">
@@ -447,9 +393,7 @@ export function SkillsPage() {
                   <RefreshCw size={17} />
                 </IconButton>
                 <Button
-                  icon={
-                    validationState === "checking" ? undefined : <CheckCircle2 size={16} />
-                  }
+                  icon={validationState === "checking" ? undefined : <CheckCircle2 size={16} />}
                   loading={validationState === "checking"}
                   disabled={!canEdit || validationState === "checking" || !editor.content.trim()}
                   onClick={() => void runValidation(editor.content)}
@@ -494,8 +438,7 @@ export function SkillsPage() {
 
             <div className="skill-editor-meta">
               <span>
-                <strong>{editor.content.split("\n").length}</strong>
-                行
+                <strong>{editor.content.split("\n").length}</strong>行
               </span>
               <span>
                 <strong>{editor.content.length}</strong>
@@ -540,89 +483,14 @@ export function SkillsPage() {
               />
             </div>
 
-            <div className="skill-inspector">
-              <section className="skill-validation-panel">
-                <div className="skill-inspector-heading">
-                  <span>
-                    <CheckCircle2 size={16} aria-hidden="true" />
-                    校验结果
-                  </span>
-                  {effectiveValidation?.contentHash ? (
-                    <code>{effectiveValidation.contentHash.slice(0, 12)}</code>
-                  ) : null}
-                </div>
-                {!canEdit ? (
-                  <div className="skill-inspector-empty">已发布内容</div>
-                ) : validationState !== "idle" ? (
-                  <div className="skill-inspector-empty">
-                    <LoaderCircle className="spin" size={16} /> 正在检查内容
-                  </div>
-                ) : !effectiveValidation ? (
-                  <div className="skill-inspector-empty">等待内容校验</div>
-                ) : effectiveValidation.issues.length === 0 ? (
-                  <div className="skill-validation-ok">
-                    <CheckCircle2 size={17} aria-hidden="true" />
-                    <span>
-                      <strong>{effectiveValidation.name}</strong>
-                      <small>{effectiveValidation.description}</small>
-                    </span>
-                  </div>
-                ) : (
-                  <Flex vertical className="skill-issue-list">
-                    {effectiveValidation.issues.map((issue) => (
-                      <div
-                        key={`${issue.code}-${issue.message}`}
-                        className={issue.severity}
-                      >
-                        {issue.severity === "error" ? (
-                          <CircleAlert size={16} aria-hidden="true" />
-                        ) : (
-                          <AlertTriangle size={16} aria-hidden="true" />
-                        )}
-                        <span>
-                          <strong>{issue.code}</strong>
-                          <small>{issue.message}</small>
-                        </span>
-                      </div>
-                    ))}
-                  </Flex>
-                )}
-              </section>
-
-              <section className="skill-history-panel">
-                <div className="skill-inspector-heading">
-                  <span>
-                    <History size={16} aria-hidden="true" />
-                    版本历史
-                  </span>
-                  <span>{details.data?.versions.length ?? 0}</span>
-                </div>
-                {isCreating ? (
-                  <div className="skill-inspector-empty">创建后生成 v1</div>
-                ) : (
-                  <Flex vertical className="skill-version-list">
-                    {details.data?.versions.map((version) => (
-                      <div
-                        key={version.id}
-                        className={`skill-version-row${
-                          version.id === editor.currentVersionId ? " current" : ""
-                        }`}
-                      >
-                        <span className="skill-version-number">v{version.version}</span>
-                        <span>
-                          <code>{version.contentHash.slice(0, 10)}</code>
-                          <small>
-                            <Clock3 size={12} aria-hidden="true" />
-                            {formatDateTime(version.createdAt)}
-                          </small>
-                        </span>
-                        {version.id === editor.currentVersionId ? <strong>当前</strong> : null}
-                      </div>
-                    ))}
-                  </Flex>
-                )}
-              </section>
-            </div>
+            <SkillInspector
+              canEdit={canEdit === true}
+              isCreating={isCreating}
+              validationState={validationState}
+              validation={effectiveValidation}
+              details={details.data}
+              currentVersionId={editor.currentVersionId}
+            />
           </>
         )}
       </section>

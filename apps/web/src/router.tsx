@@ -1,5 +1,5 @@
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
-import { AppShell } from "./components/app-shell.js";
+import { AppShell } from "./components/layout/index.js";
 import { BoardPage } from "./pages/board-page.js";
 import { ProjectsPage } from "./pages/projects-page.js";
 import { RunsPage } from "./pages/runs-page.js";

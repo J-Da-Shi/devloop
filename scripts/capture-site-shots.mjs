@@ -293,28 +293,28 @@ const reviewDetails = {
 const changedFiles = {
   files: [
     {
-      path: "apps/web/src/components/review-workspace.tsx",
+      path: "apps/web/src/components/business/runs/diff-file-detail.tsx",
       status: "added",
       additions: 126,
       deletions: 0,
       isBinary: false,
     },
     {
-      path: "apps/web/src/components/run-diff-panel.tsx",
+      path: "apps/web/src/components/business/runs/run-diff-panel.tsx",
       status: "modified",
       additions: 48,
       deletions: 21,
       isBinary: false,
     },
     {
-      path: "apps/web/src/styles.css",
+      path: "apps/web/src/styles/_diff.scss",
       status: "modified",
       additions: 39,
       deletions: 14,
       isBinary: false,
     },
     {
-      path: "apps/web/src/review-workspace.test.tsx",
+      path: "apps/web/src/core/unified-diff.test.ts",
       status: "added",
       additions: 74,
       deletions: 0,
@@ -332,11 +332,11 @@ const changedFiles = {
 };
 
 const patches = {
-  "apps/web/src/components/review-workspace.tsx": `diff --git a/apps/web/src/components/review-workspace.tsx b/apps/web/src/components/review-workspace.tsx
+  "apps/web/src/components/business/runs/diff-file-detail.tsx": `diff --git a/apps/web/src/components/business/runs/diff-file-detail.tsx b/apps/web/src/components/business/runs/diff-file-detail.tsx
 new file mode 100644
 index 0000000..54d818e
 --- /dev/null
-+++ b/apps/web/src/components/review-workspace.tsx
++++ b/apps/web/src/components/business/runs/diff-file-detail.tsx
 @@ -0,0 +1,18 @@
 +import { FileDiff, TestTube2 } from "lucide-react";
 +
@@ -356,10 +356,10 @@ index 0000000..54d818e
 +  );
 +}
 `,
-  "apps/web/src/components/run-diff-panel.tsx": `diff --git a/apps/web/src/components/run-diff-panel.tsx b/apps/web/src/components/run-diff-panel.tsx
+  "apps/web/src/components/business/runs/run-diff-panel.tsx": `diff --git a/apps/web/src/components/business/runs/run-diff-panel.tsx b/apps/web/src/components/business/runs/run-diff-panel.tsx
 index 82661b4..bc164cc 100644
---- a/apps/web/src/components/run-diff-panel.tsx
-+++ b/apps/web/src/components/run-diff-panel.tsx
+--- a/apps/web/src/components/business/runs/run-diff-panel.tsx
++++ b/apps/web/src/components/business/runs/run-diff-panel.tsx
 @@ -42,7 +42,12 @@ export function RunDiffPanel({ runId }: RunDiffPanelProps) {
 -  return <pre className="diff-output">{patch}</pre>;
 +  return (
@@ -371,10 +371,10 @@ index 82661b4..bc164cc 100644
 +  );
  }
 `,
-  "apps/web/src/styles.css": `diff --git a/apps/web/src/styles.css b/apps/web/src/styles.css
+  "apps/web/src/styles/_diff.scss": `diff --git a/apps/web/src/styles/_diff.scss b/apps/web/src/styles/_diff.scss
 index 3a9081c..cca395c 100644
---- a/apps/web/src/styles.css
-+++ b/apps/web/src/styles.css
+--- a/apps/web/src/styles/_diff.scss
++++ b/apps/web/src/styles/_diff.scss
 @@ -1180,6 +1180,15 @@
 +.review-workspace {
 +  display: grid;
@@ -389,11 +389,11 @@ index 3a9081c..cca395c 100644
 +  border-right: 1px solid var(--border);
 +}
 `,
-  "apps/web/src/review-workspace.test.tsx": `diff --git a/apps/web/src/review-workspace.test.tsx b/apps/web/src/review-workspace.test.tsx
+  "apps/web/src/core/unified-diff.test.ts": `diff --git a/apps/web/src/core/unified-diff.test.ts b/apps/web/src/core/unified-diff.test.ts
 new file mode 100644
 index 0000000..912eba2
 --- /dev/null
-+++ b/apps/web/src/review-workspace.test.tsx
++++ b/apps/web/src/core/unified-diff.test.ts
 @@ -0,0 +1,9 @@
 +it("switches the selected file without leaving review", async () => {
 +  render(<ReviewWorkspace run={fixtureRun} />);

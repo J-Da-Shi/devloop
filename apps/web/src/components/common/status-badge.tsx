@@ -1,5 +1,5 @@
 import { Tag } from "antd";
-import { statusTone } from "../utils.js";
+import { statusTone } from "../../core/index.js";
 
 interface StatusBadgeProps {
   status: string;

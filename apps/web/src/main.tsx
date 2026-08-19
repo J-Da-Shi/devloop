@@ -4,10 +4,11 @@ import { App as AntdApp, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { NoticeProvider } from "./components/notice-provider.js";
+import { NoticeProvider } from "./components/common/index.js";
 import { router } from "./router.js";
 import "antd/dist/reset.css";
 import "./styles.css";
+import "./styles/index.scss";
 
 const desktopApi = window.devloopDesktop;
 if (desktopApi) {

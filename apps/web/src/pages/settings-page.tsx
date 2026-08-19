@@ -12,11 +12,8 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, queryKeys } from "../api.js";
-import { ErrorPanel, LoadingPanel } from "../components/feedback.js";
-import { useNotice } from "../components/notice-provider.js";
-import { StatusBadge } from "../components/status-badge.js";
-import { useUiStore } from "../store.js";
+import { api, queryKeys, useUiStore } from "../core/index.js";
+import { ErrorPanel, LoadingPanel, StatusBadge, useNotice } from "../components/common/index.js";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -61,11 +58,7 @@ export function SettingsPage() {
             <strong>实时事件</strong>
             <small>SSE 状态同步</small>
           </span>
-          <Switch
-            checked={realtimeEnabled}
-            onChange={setRealtimeEnabled}
-            aria-label="实时事件"
-          />
+          <Switch checked={realtimeEnabled} onChange={setRealtimeEnabled} aria-label="实时事件" />
         </div>
         <div className="setting-row">
           <span>

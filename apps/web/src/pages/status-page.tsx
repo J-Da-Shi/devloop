@@ -1,45 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Statistic, Tabs } from "antd";
-import {
-  Activity,
-  CheckCircle2,
-  Clock3,
-  Cpu,
-  ListChecks,
-  Pause,
-  Play,
-  ShieldAlert,
-} from "lucide-react";
+import { CheckCircle2, Clock3, ListChecks, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Task } from "@devloop/shared";
-import { api, getDashboardRefetchInterval, queryKeys } from "../api.js";
-import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
-import { useNotice } from "../components/notice-provider.js";
-import { RunEventList } from "../components/run-event-list.js";
-import { StatusBadge } from "../components/status-badge.js";
-import { TaskDialog } from "../components/task-dialog.js";
 import {
+  api,
   formatDateTime,
+  getDashboardRefetchInterval,
+  queryKeys,
   runStatusText,
-  taskStatusText,
-  workerStatusText,
-} from "../utils.js";
-
-function ExecutionIdle({ queued }: { queued: boolean }) {
-  return (
-    <div className="execution-idle" role="status">
-      <div className={`signal-monitor${queued ? " queued" : ""}`} aria-hidden="true">
-        {[22, 46, 30, 62, 38, 54, 26, 44, 20].map((height, index) => (
-          <span key={`${height}-${index}`} style={{ height }} />
-        ))}
-        <Activity size={24} />
-      </div>
-      <span className="execution-state">系统已就绪</span>
-      <strong>等待下一个任务</strong>
-      <small>{queued ? "队首任务即将由 Worker 领取" : "当前执行队列为空"}</small>
-    </div>
-  );
-}
+} from "../core/index.js";
+import { ErrorPanel, LoadingPanel, StatusBadge, useNotice } from "../components/common/index.js";
+import {
+  ExecutionIdle,
+  TaskQueuePanel,
+  WorkerStrip,
+} from "../components/business/dashboard/index.js";
+import { RunEventList } from "../components/business/runs/index.js";
+import { TaskDialog } from "../components/business/tasks/index.js";
 
 export function StatusPage() {
   const queryClient = useQueryClient();
@@ -117,38 +95,12 @@ export function StatusPage() {
 
   return (
     <div className="page-stack">
-      <section className="worker-strip" aria-live="polite">
-        <div className="worker-node-mark">
-          <Cpu size={21} aria-hidden="true" />
-          <span>本机</span>
-        </div>
-        <div className="worker-primary">
-          <div>
-            <small>{activeRuns.length > 0 ? "并发执行" : "本机 Worker"}</small>
-            <strong>
-              {activeRuns.length > 0 ? `${activeRuns.length} 个任务正在执行` : "当前空闲"}
-            </strong>
-            <span>
-              {activeRuns.length > 0
-                ? `并发槽位 ${activeRuns.length}/${worker.concurrencyLimit}`
-                : `最近心跳 ${formatDateTime(worker.heartbeatAt)}`}
-            </span>
-          </div>
-        </div>
-        <div className="worker-control">
-          <StatusBadge status={worker.status} pulse={workerRunning}>
-            Worker {workerStatusText[worker.status]}
-          </StatusBadge>
-          <Button
-            type={workerRunning ? "default" : "primary"}
-            icon={workerRunning ? <Pause size={17} /> : <Play size={17} />}
-            loading={workerMutation.isPending}
-            onClick={() => workerMutation.mutate(workerRunning ? "PAUSED" : "RUNNING")}
-          >
-            {workerRunning ? "暂停领取" : "继续运行"}
-          </Button>
-        </div>
-      </section>
+      <WorkerStrip
+        worker={worker}
+        activeRunCount={activeRuns.length}
+        loading={workerMutation.isPending}
+        onToggle={() => workerMutation.mutate(workerRunning ? "PAUSED" : "RUNNING")}
+      />
 
       <section className="metric-grid" aria-label="任务统计">
         {statistics.map((statistic) => {
@@ -158,10 +110,7 @@ export function StatusPage() {
               <span className="metric-icon">
                 <Icon size={18} aria-hidden="true" />
               </span>
-              <Statistic
-                title={statistic.label}
-                value={statistic.value}
-              />
+              <Statistic title={statistic.label} value={statistic.value} />
             </div>
           );
         })}
@@ -234,65 +183,19 @@ export function StatusPage() {
         </section>
 
         <div className="dashboard-side">
-          <section className="tool-panel compact-panel">
-            <div className="section-heading">
-              <div>
-                <h2>待审核</h2>
-              </div>
-              <span>{reviewTasks.length}</span>
-            </div>
-            {reviewTasks.length === 0 ? (
-              <EmptyState title="没有待审核任务" />
-            ) : (
-              <div className="compact-list">
-                {reviewTasks.map((task) => (
-                  <Button
-                    key={task.id}
-                    type="text"
-                    className="compact-row"
-                    onClick={() => setSelectedTask(task)}
-                  >
-                    <span>
-                      <strong>{task.title}</strong>
-                      <small>{task.projectName}</small>
-                    </span>
-                    <StatusBadge status={task.status}>{taskStatusText[task.status]}</StatusBadge>
-                  </Button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="tool-panel compact-panel">
-            <div className="section-heading">
-              <div>
-                <h2>执行队列</h2>
-              </div>
-              <span>{queuedTasks.length}</span>
-            </div>
-            {queuedTasks.length === 0 ? (
-              <EmptyState title="队列为空" />
-            ) : (
-              <div className="compact-list">
-                {queuedTasks.map((task, index) => (
-                  <Button
-                    key={task.id}
-                    type="text"
-                    className="compact-row"
-                    onClick={() => setSelectedTask(task)}
-                  >
-                    <span className="queue-index">{index + 1}</span>
-                    <span>
-                      <strong>{task.title}</strong>
-                      <small>
-                        {task.projectName} · 分数 {task.priority}
-                      </small>
-                    </span>
-                  </Button>
-                ))}
-              </div>
-            )}
-          </section>
+          <TaskQueuePanel
+            title="待审核"
+            tasks={reviewTasks}
+            emptyTitle="没有待审核任务"
+            onSelect={setSelectedTask}
+          />
+          <TaskQueuePanel
+            title="执行队列"
+            tasks={queuedTasks}
+            emptyTitle="队列为空"
+            queue
+            onSelect={setSelectedTask}
+          />
         </div>
       </div>
 

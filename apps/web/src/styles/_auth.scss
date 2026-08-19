@@ -1,0 +1,129 @@
+// auth.scss styles
+
+.pair-page,
+.access-page,
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: var(--surface-subtle);
+}
+
+.pair-shell,
+.auth-shell {
+  width: min(420px, 100%);
+  padding: 25px;
+  border: 1px solid rgba(15, 23, 42, 0.126);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.0495);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px rgba(15, 23, 42, 0.0405),
+    0 24px 70px rgba(15, 23, 42, 0.133);
+}
+
+.auth-shell {
+  width: min(440px, 100%);
+}
+
+.pair-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 32px;
+  color: var(--text);
+  font-size: 17px;
+}
+
+.pair-brand > span {
+  display: grid;
+  gap: 2px;
+}
+
+.pair-brand > span small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.auth-secondary-link {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.auth-secondary-link:hover {
+  color: var(--text);
+}
+
+.pair-heading {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 21px;
+}
+
+.pair-heading > span {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.108);
+  border-radius: 7px;
+  background: linear-gradient(135deg, rgba(129, 255, 112, 0.14), rgba(85, 156, 255, 0.14));
+  color: #ffffff;
+}
+
+.pair-heading h1,
+.pair-heading p {
+  margin: 0;
+}
+
+.pair-heading h1,
+.access-page h1 {
+  color: var(--text);
+}
+
+.pair-heading h1 {
+  font-size: 21px;
+}
+
+.pair-heading p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pair-code-input {
+  height: 54px !important;
+  text-align: center;
+  font-family: "SFMono-Regular", Consolas, monospace !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.access-page {
+  align-content: center;
+  text-align: center;
+}
+
+.access-page h1 {
+  margin: 17px 0 5px;
+  font-size: 21px;
+}
+
+.access-page p {
+  margin: 0 0 19px;
+  color: var(--muted);
+}

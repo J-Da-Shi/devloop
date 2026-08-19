@@ -43,12 +43,5 @@ export function InlineNotice({
   children: React.ReactNode;
 }) {
   const type = tone === "danger" ? "error" : tone;
-  return (
-    <Alert
-      className={`inline-notice notice-${tone}`}
-      type={type}
-      showIcon
-      title={children}
-    />
-  );
+  return <Alert className={`inline-notice notice-${tone}`} type={type} showIcon title={children} />;
 }
