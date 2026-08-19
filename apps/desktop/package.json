@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "electron .",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "icon:build": "node scripts/generate-app-icon.mjs",
     "package": "pnpm --dir ../.. build && pnpm prepare:runtime && node scripts/run-forge.mjs package",
     "make": "pnpm --dir ../.. build && pnpm prepare:runtime && node scripts/run-forge.mjs make",
     "typecheck": "tsc -p tsconfig.json --noEmit"

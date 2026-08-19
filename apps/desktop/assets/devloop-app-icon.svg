@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">DevLoop desktop app icon</title>
+  <desc id="description">A dark rounded-square icon with a continuous delivery loop and a return arrow.</desc>
+  <defs>
+    <linearGradient id="surface" x1="176" y1="120" x2="848" y2="904" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182131" />
+      <stop offset="1" stop-color="#080b11" />
+    </linearGradient>
+    <linearGradient id="loop" x1="264" y1="292" x2="820" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d8ffb4" />
+      <stop offset="0.46" stop-color="#a8e7c1" />
+      <stop offset="1" stop-color="#78aaff" />
+    </linearGradient>
+    <filter id="shadow" x="178" y="202" width="700" height="640" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="30" stdDeviation="30" flood-color="#00050b" flood-opacity="0.48" />
+    </filter>
+  </defs>
+
+  <!-- Keep the artwork inside the macOS icon safe area so Dock sizing stays balanced. -->
+  <g transform="translate(82 82) scale(0.84)">
+    <rect width="1024" height="1024" rx="232" fill="#090c12" />
+    <rect x="56" y="56" width="912" height="912" rx="188" fill="url(#surface)" />
+    <rect x="57" y="57" width="910" height="910" rx="187" fill="none" stroke="#ffffff" stroke-opacity="0.1" stroke-width="2" />
+    <path d="M270 314h322a198 198 0 0 1 0 396H448" fill="none" stroke="#101829" stroke-width="126" stroke-linecap="round" filter="url(#shadow)" />
+    <path d="M270 314h322a198 198 0 0 1 0 396H448" fill="none" stroke="url(#loop)" stroke-width="98" stroke-linecap="round" />
+    <path d="M458 710H278m92-92-92 92 92 92" fill="none" stroke="#ffffff" stroke-width="86" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="768" cy="288" r="18" fill="#d8ffb4" fill-opacity="0.92" />
+    <circle cx="768" cy="288" r="35" fill="none" stroke="#d8ffb4" stroke-opacity="0.2" stroke-width="10" />
+  </g>
+</svg>

@@ -19,6 +19,9 @@ const rendererUrl =
 const trustedOrigins = new Set([new URL(serviceUrl).origin, new URL(rendererUrl).origin]);
 const bundledRuntimeDirectoryName = "runtime-bundle";
 const maxServiceLogLength = 12_000;
+const desktopIconPath = fileURLToPath(
+  new URL("../../assets/devloop-app-icon.png", import.meta.url),
+);
 
 let mainWindow: BrowserWindow | null = null;
 let bundledService: UtilityProcess | null = null;
@@ -182,6 +185,7 @@ async function openPreviewWindow(input: {
     minHeight: 560,
     show: false,
     title: `${input.title.slice(0, 120)} - DevLoop 预览`,
+    icon: desktopIconPath,
     backgroundColor: "#ffffff",
     webPreferences: {
       contextIsolation: true,
@@ -370,6 +374,7 @@ async function createWindow(): Promise<void> {
     minHeight: 700,
     show: false,
     title: "DevLoop",
+    icon: desktopIconPath,
     backgroundColor: "#000000",
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 18 } }
@@ -459,6 +464,9 @@ if (!hasSingleInstanceLock) {
         // 清缓存失败不影响启动。
       }
       registerDesktopBridge();
+      if (process.platform === "darwin") {
+        app.dock?.setIcon(desktopIconPath);
+      }
       installApplicationMenu();
       await startBundledService();
       await createWindow();
