@@ -1760,6 +1760,13 @@ code {
   justify-content: flex-end;
 }
 
+.run-validation-config {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .run-validation-checks {
   display: grid;
   gap: 6px;
@@ -1833,7 +1840,7 @@ code {
 
 .object-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
   gap: 18px;
   margin: 0;
 }
@@ -1951,6 +1958,13 @@ code {
   color: var(--text-soft);
   font-size: 13px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.run-summary-block > p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .run-audit-section,

@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CodexRunner } from "./codex-runner.js";
+import { buildCodexPrompt, CodexRunner } from "./codex-runner.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -36,6 +36,42 @@ describe("CodexRunner", () => {
     expect(args).toContain("workspace-write");
     expect(args).not.toContain("--output-schema");
     expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args).not.toContain("sandbox_workspace_write.network_access=true");
+    expect(
+      buildCodexPrompt(
+        {
+          runId: "run",
+          taskId: "task",
+          title: "Task",
+          goal: "Goal",
+          acceptanceCriteria: ["Done"],
+          skills: [],
+          worktreePath: "/tmp/worktree",
+          outputSchemaPath: "/tmp/schema.json",
+          signal: controller.signal,
+        },
+        "{}",
+      ),
+    ).toContain("最终 JSON 的 preview");
+
+    const researchInput = {
+      runId: "research-run",
+      taskId: "research-task",
+      taskType: "RESEARCH" as const,
+      title: "Research",
+      goal: "Fetch public information",
+      acceptanceCriteria: ["Cite sources"],
+      skills: [],
+      worktreePath: "/tmp/worktree",
+      outputSchemaPath: "/tmp/schema.json",
+      signal: controller.signal,
+    };
+    const researchArgs = runner.buildArguments(researchInput);
+    expect(researchArgs).toContain("sandbox_workspace_write.network_access=true");
+    expect(buildCodexPrompt(researchInput, "{}")).toContain(
+      "必须先自行生成一个或多个 Python、Node.js 或 Shell 脚本",
+    );
+    expect(buildCodexPrompt(researchInput, "{}")).toContain("最终 summary 必须直接包含完整");
   });
 
   it("解析 Codex JSONL 事件和结构化最终结果", async () => {
@@ -100,7 +136,12 @@ const output = !isRepair && prompt.includes("模拟格式错误")
         summary: isRepair ? "格式修复完成" : "实现完成",
         acceptanceCriteria: [{ criterion: "完成开发", status: "passed", evidence: "测试通过" }],
         risks: [],
-        blockedReason: null
+        blockedReason: null,
+        preview: isRepair ? null : {
+          command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+          workingDirectory: "apps/web",
+          healthPath: "/"
+        }
       });
 await writeFile(args[outputIndex + 1], output);
 process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
@@ -149,6 +190,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     await expect(handle.result).resolves.toMatchObject({
       outcome: "succeeded",
       summary: "实现完成",
+      preview: { workingDirectory: "apps/web" },
     });
     expect(events).toContain("Codex 会话已启动");
     expect(events).toContain("Codex 正在执行：pnpm test");

@@ -36,6 +36,21 @@
     },
     "blockedReason": {
       "type": ["string", "null"]
+    },
+    "preview": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["command", "workingDirectory", "healthPath"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "allOf": [{ "pattern": "\\{\\{port\\}\\}" }, { "pattern": "127\\.0\\.0\\.1" }]
+        },
+        "workingDirectory": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "healthPath": { "type": "string", "pattern": "^/(?!/)" }
+      }
     }
   }
 }

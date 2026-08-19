@@ -30,6 +30,7 @@ import type {
   TaskRun,
   RunPublishResult,
   RunPreview,
+  RunPreviewConfig,
   UpdateProjectRunnerInput,
   UpdateProjectPreviewInput,
   UpdateSkillInput,
@@ -54,12 +55,14 @@ export interface RunDetails {
     report: PlaywrightValidationReport | null;
     artifacts: RunArtifact[];
   };
+  previewConfiguration: RunPreviewConfig | null;
 }
 
 export interface RunApprovalResponse {
   task: Task;
   publication?: RunPublishResult;
   application?: RunApplicationResult;
+  research?: { status: "accepted"; summary: string };
   replayed: boolean;
 }
 

@@ -56,7 +56,13 @@ export class FakeRunner implements AgentRunner {
   ): Promise<RunnerResult> {
     const steps: RunnerEvent[] = [
       { type: "runner.preparing", message: "Preparing isolated execution context" },
-      { type: "runner.agent", message: `Implementing ${input.title}` },
+      {
+        type: "runner.agent",
+        message:
+          input.taskType === "RESEARCH"
+            ? `Researching ${input.title}`
+            : `Implementing ${input.title}`,
+      },
       { type: "runner.verifying", message: "Running configured verification checks" },
       { type: "runner.review", message: "Preparing review package" },
     ];
@@ -71,7 +77,10 @@ export class FakeRunner implements AgentRunner {
 
     return {
       outcome: "succeeded",
-      summary: `FakeRunner completed the architecture pass for ${input.title}.`,
+      summary:
+        input.taskType === "RESEARCH"
+          ? `FakeRunner completed the research summary for ${input.title}.`
+          : `FakeRunner completed the architecture pass for ${input.title}.`,
       risks: ["No repository files were changed by the fake runner."],
     };
   }

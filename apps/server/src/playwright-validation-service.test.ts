@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { PlaywrightValidationReport } from "@devloop/shared";
 import type { ArtifactService } from "./artifact-service.js";
 import { PlaywrightValidationService } from "./playwright-validation-service.js";
+import { PreviewNotDetectedError } from "./preview-service.js";
 import type { PreviewService } from "./preview-service.js";
 
 describe("PlaywrightValidationService", () => {
-  it("没有预览命令时记录跳过报告", async () => {
+  it("无法识别预览时记录跳过报告", async () => {
     const reports: PlaywrightValidationReport[] = [];
     const artifactService = {
       writeValidationReport: async (_runId: string, report: PlaywrightValidationReport) => {
@@ -14,8 +15,8 @@ describe("PlaywrightValidationService", () => {
       },
     } as unknown as ArtifactService;
     const previewService = {
-      start: () => {
-        throw new Error("不应启动预览");
+      start: async () => {
+        throw new PreviewNotDetectedError("未能自动识别可启动的 Web 预览");
       },
       stop: async () => true,
     } as unknown as PreviewService;
@@ -31,15 +32,14 @@ describe("PlaywrightValidationService", () => {
       runId: crypto.randomUUID(),
       repositoryPath: "/tmp/repository",
       resultCommit: "result-commit",
-      previewCommand: null,
-      previewWorkingDirectory: ".",
-      previewHealthPath: "/",
+      previewConfiguration: null,
       playwrightEnabled: true,
       playwrightTestCommand: null,
     });
 
     expect(report).toMatchObject({
       status: "skipped",
+      previewConfiguration: null,
       checks: [{ name: "启动预览", status: "skipped" }],
     });
     expect(reports).toEqual([report]);
@@ -63,6 +63,12 @@ describe("PlaywrightValidationService", () => {
         status: "running",
         startedAt: new Date().toISOString(),
         workingDirectory: "/tmp",
+        configuration: {
+          source: "detected",
+          command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+          workingDirectory: ".",
+          healthPath: "/",
+        },
       }),
       stop: async (id: string) => {
         stopped.push(id);
@@ -81,14 +87,18 @@ describe("PlaywrightValidationService", () => {
       runId: crypto.randomUUID(),
       repositoryPath: "/tmp/repository",
       resultCommit: "result-commit",
-      previewCommand: "preview",
-      previewWorkingDirectory: ".",
-      previewHealthPath: "/",
+      previewConfiguration: {
+        source: "agent",
+        command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+        workingDirectory: ".",
+        healthPath: "/",
+      },
       playwrightEnabled: true,
       playwrightTestCommand: null,
     });
 
     expect(report.status).toBe("skipped");
+    expect(report.previewConfiguration).toMatchObject({ source: "detected" });
     expect(report.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "启动 Playwright 浏览器", status: "skipped" }),

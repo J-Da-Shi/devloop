@@ -25,6 +25,7 @@ async function main(): Promise<void> {
     gitService,
     config.previewsPath,
     config.previewStartupTimeoutMs,
+    config.previewDependencyInstallTimeoutMs,
   );
   const playwrightValidationService = new PlaywrightValidationService(
     previewService,

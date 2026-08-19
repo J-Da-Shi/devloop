@@ -1,0 +1,387 @@
+name: Release component
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Release component'
+        required: true
+        type: choice
+        options:
+          - desktop
+          - tui
+          - runtime
+      version:
+        description: 'Component release version (X.Y.Z)'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact release branch commit to build'
+        required: true
+        type: string
+      publish_npm:
+        description: 'Publish pisper after this component release'
+        required: false
+        default: false
+        type: boolean
+      npm_version:
+        description: 'pisper version when publish_npm is enabled'
+        required: false
+        type: string
+      tui_version:
+        description: 'pisper TUI version bound into the npm manifest'
+        required: false
+        type: string
+      runtime_version:
+        description: 'pisper Runtime version bound into the npm manifest'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_COMPONENT: ${{ inputs.component }}
+  RELEASE_VERSION: ${{ inputs.version }}
+  RELEASE_TAG: ${{ inputs.component == 'desktop' && format('v{0}', inputs.version) || format('{0}-v{1}', inputs.component, inputs.version) }}
+  RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+  RELEASE_TUI_VERSION: ${{ inputs.tui_version || '' }}
+  RELEASE_RUNTIME_VERSION: ${{ inputs.runtime_version || '' }}
+
+jobs:
+  prepare:
+    name: Prepare staged ${{ inputs.component }} release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - name: Verify immutable release branch source
+        shell: bash
+        run: |
+          git fetch origin release
+          node scripts/verify-release-head.mjs "$RELEASE_SOURCE_SHA" origin/release
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Stage component version without committing or tagging
+        run: node scripts/stage-release-version.mjs "$RELEASE_COMPONENT" "$RELEASE_VERSION" "$RELEASE_SOURCE_SHA"
+      - name: Generate component release notes from the immutable source
+        run: node scripts/prepare-release.mjs "$RELEASE_TAG" "$RELEASE_SOURCE_SHA" "$RELEASE_COMPONENT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-source
+          if-no-files-found: error
+          path: |
+            package.json
+            package-lock.json
+            src-tauri/desktop-package.json
+            src-tui/Cargo.toml
+            src-tui/Cargo.lock
+            release-body.md
+            public/release-notes.json
+
+  quality:
+    name: Verify staged ${{ inputs.component }} source
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-source
+          path: .
+      - uses: actions/setup-node@v5
+        if: inputs.component != 'tui'
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.component != 'runtime'
+      - name: Install Linux Tauri prerequisites
+        if: inputs.component == 'desktop'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install Node dependencies
+        if: inputs.component != 'tui'
+        run: npm ci
+      - name: Check runtime and web
+        if: inputs.component == 'runtime'
+        run: |
+          npm test
+          npm run check
+          npm run build
+      - name: Check TUI
+        if: inputs.component == 'tui'
+        run: |
+          cargo fmt --manifest-path src-tui/Cargo.toml -- --check
+          cargo test --manifest-path src-tui/Cargo.toml --locked
+          cargo clippy --manifest-path src-tui/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Check integrated desktop source
+        if: inputs.component == 'desktop'
+        run: |
+          npm test
+          npm run check
+          npm run build
+          npm run sidecar:sea
+          npm run tui:stage
+          cargo check --manifest-path src-tauri/Cargo.toml
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path src-tui/Cargo.toml --locked
+          cargo clippy --manifest-path src-tui/Cargo.toml --all-targets --locked -- -D warnings
+
+  build:
+    name: Build ${{ inputs.component }} for ${{ matrix.name }}
+    needs: [prepare, quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            target: windows-x86_64
+            os: windows-latest
+          - name: macOS Intel
+            target: darwin-x86_64
+            os: macos-15-intel
+          - name: macOS Apple Silicon
+            target: darwin-aarch64
+            os: macos-15
+          - name: Linux x64
+            target: linux-x86_64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_CERTIFICATE || '' }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+      APPLE_SIGNING_IDENTITY: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+      APPLE_ID: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_ID || '' }}
+      APPLE_PASSWORD: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+      APPLE_TEAM_ID: ${{ inputs.component == 'desktop' && startsWith(matrix.target, 'darwin-') && secrets.APPLE_TEAM_ID || '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-source
+          path: .
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.component != 'runtime'
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.component != 'runtime'
+        with:
+          workspaces: |
+            src-tauri
+            src-tui
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux' && inputs.component == 'desktop'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - name: Require component signing credentials
+        shell: bash
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "TAURI_SIGNING_PRIVATE_KEY is not configured." >&2; exit 1; }
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" || { echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not configured." >&2; exit 1; }
+      - name: Build scoped release artifacts
+        shell: bash
+        run: |
+          case "$RELEASE_COMPONENT" in
+            desktop)
+              npm run build
+              node scripts/fetch-bundled-components.mjs
+              npm run desktop:webview:package
+              node scripts/archive-component-release.mjs desktop
+              ;;
+            tui)
+              npm run sidecar:sea
+              npm run sidecar:sea:smoke
+              npm run tui:package
+              node scripts/archive-component-release.mjs tui
+              ;;
+            runtime)
+              npm run sidecar:sea
+              npm run sidecar:sea:smoke
+              node scripts/archive-component-release.mjs runtime
+              ;;
+            *)
+              echo "Unsupported release component: $RELEASE_COMPONENT" >&2
+              exit 1
+              ;;
+          esac
+      - name: Test desktop shell on the release platform
+        if: inputs.component == 'desktop'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Sign independently updateable component archives
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r -d '' archive; do
+            npx tauri signer sign "$archive"
+          done < <(find release/component-artifacts -type f -name '*.tar.gz' -print0)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pisper-${{ inputs.component }}-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            release/tauri-artifacts
+            release/component-artifacts
+
+  release:
+    name: Finalize ${{ inputs.component }} version and publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-source
+          path: .
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: pisper-${{ inputs.component }}-*
+          path: artifacts
+          merge-multiple: true
+      - name: Create multi-platform updater manifest
+        if: inputs.component == 'desktop'
+        run: node scripts/create-tauri-update-manifest.mjs "$RELEASE_TAG" artifacts --require-all --output artifacts/latest.json
+      - name: Validate exact desktop release asset set
+        if: inputs.component == 'desktop'
+        run: node scripts/validate-tauri-release-assets.mjs "$RELEASE_TAG" artifacts
+      - name: Validate exact component release asset set
+        if: inputs.component != 'desktop'
+        run: node scripts/validate-component-release-assets.mjs "$RELEASE_COMPONENT" "$RELEASE_TAG" artifacts
+      - name: Commit component version, upload a draft, and publish atomically
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: release
+          MAKE_LATEST: ${{ inputs.component == 'desktop' && 'true' || 'false' }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "$RELEASE_BRANCH"
+          remote_source="$(git rev-parse "origin/$RELEASE_BRANCH")"
+          node scripts/verify-release-head.mjs "$RELEASE_SOURCE_SHA" "$remote_source"
+          test -z "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" || {
+            echo "tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          }
+
+          case "$RELEASE_COMPONENT" in
+            desktop) git add src-tauri/desktop-package.json ;;
+            tui) git add src-tui/Cargo.toml src-tui/Cargo.lock ;;
+            runtime) git add package.json package-lock.json ;;
+          esac
+          git diff --cached --quiet && {
+            echo "staged release has no version changes" >&2
+            exit 1
+          }
+          git commit -m "chore(release-$RELEASE_COMPONENT): $RELEASE_TAG"
+          stash_before="$(git rev-parse -q --verify refs/stash || true)"
+          stash_paths=()
+          for path in public/release-notes.json release-body.md; do
+            if [ -e "$path" ]; then
+              stash_paths+=("$path")
+            fi
+          done
+          if [ "${#stash_paths[@]}" -gt 0 ]; then
+            git stash push --include-untracked -- "${stash_paths[@]}" >/dev/null
+          fi
+          stash_after="$(git rev-parse -q --verify refs/stash || true)"
+          if [ "$remote_source" != "$RELEASE_SOURCE_SHA" ]; then
+            git rebase --onto "$remote_source" "$RELEASE_SOURCE_SHA" HEAD
+          fi
+          if [ -n "$stash_after" ] && [ "$stash_after" != "$stash_before" ]; then
+            git stash pop >/dev/null
+          fi
+          release_commit="$(git rev-parse HEAD)"
+          git tag "$RELEASE_TAG"
+
+          pushed=0
+          rollback() {
+            status=$?
+            trap - ERR
+            gh release delete "$RELEASE_TAG" --yes >/dev/null 2>&1 || true
+            if [ "$pushed" = 1 ]; then
+              git push --atomic \
+                --force-with-lease="refs/heads/$RELEASE_BRANCH:$release_commit" \
+                origin \
+                "$remote_source:refs/heads/$RELEASE_BRANCH" \
+                ":refs/tags/$RELEASE_TAG" || true
+            fi
+            exit "$status"
+          }
+          trap rollback ERR
+
+          git push --atomic origin \
+            "HEAD:refs/heads/$RELEASE_BRANCH" \
+            "refs/tags/$RELEASE_TAG"
+          pushed=1
+
+          mapfile -d '' assets < <(find artifacts -type f -print0)
+          title="Pisper ${RELEASE_COMPONENT^} $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --verify-tag \
+            --title "$title" \
+            --notes-file release-body.md \
+            "${assets[@]}"
+          gh release edit "$RELEASE_TAG" \
+            --draft=false \
+            --latest="$MAKE_LATEST" \
+            --title "$title" \
+            --notes-file release-body.md
+
+          trap - ERR
+          echo "Published $RELEASE_TAG from $release_commit"
+
+  publish-npm:
+    name: Dispatch npm CLI after ${{ inputs.component }}
+    if: inputs.publish_npm
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Dispatch the provenance-enabled npm workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run publish-npm.yml --ref release \
+            -f npm_version="${{ inputs.npm_version }}" \
+            -f tui_version="${{ inputs.tui_version || (inputs.component == 'tui' && inputs.version) || '' }}" \
+            -f runtime_version="${{ inputs.runtime_version || (inputs.component == 'runtime' && inputs.version) || '' }}" \
+            -f source_sha="${{ inputs.source_sha }}"

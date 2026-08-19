@@ -24,6 +24,7 @@ export interface RuntimeConfig {
   agentClaimDelayMs: number;
   fakeRunnerDelayMs: number;
   previewStartupTimeoutMs: number;
+  previewDependencyInstallTimeoutMs: number;
   playwrightTimeoutMs: number;
   playwrightTestTimeoutMs: number;
   playwrightExecutable: string | null;
@@ -105,6 +106,11 @@ export function loadRuntimeConfig(): RuntimeConfig {
       process.env.DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS,
       90_000,
       "DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS",
+    ),
+    previewDependencyInstallTimeoutMs: parseInteger(
+      process.env.DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS,
+      10 * 60_000,
+      "DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS",
     ),
     playwrightTimeoutMs: parseInteger(
       process.env.DEVLOOP_PLAYWRIGHT_TIMEOUT_MS,

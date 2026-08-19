@@ -7,6 +7,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   MessageSquareText,
+  Search,
   XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -14,7 +15,7 @@ import { api, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
 import { RunEventList } from "../components/run-event-list.js";
 import { StatusBadge } from "../components/status-badge.js";
-import { formatDateTime, formatDuration, runStatusText } from "../utils.js";
+import { formatDateTime, formatDuration, runStatusText, taskTypeText } from "../utils.js";
 
 const reviewDecisionText = {
   APPROVED: "审核通过",
@@ -36,6 +37,7 @@ export function RunsPage() {
   });
   const appliedLocally =
     details.data?.events.some((event) => event.type === "run.applied") ?? false;
+  const researchTask = details.data?.revision.taskType === "RESEARCH";
   const reviewLabel = details.data?.reviewDecision
     ? reviewDecisionText[details.data.reviewDecision.decision]
     : details.data?.run.status === "SUCCEEDED" &&
@@ -77,7 +79,7 @@ export function RunsPage() {
                 <h2>{details.data.revision.title}</h2>
                 <span>
                   {details.data.task?.projectName ?? "未知项目"} · Revision #
-                  {details.data.revision.revision}
+                  {details.data.revision.revision} · {taskTypeText[details.data.revision.taskType]}
                   {details.data.task?.deletedAt ? " · 任务已删除" : ""}
                 </span>
               </div>
@@ -101,40 +103,51 @@ export function RunsPage() {
                 </strong>
               </span>
               <span>
+                <small>任务类型</small>
+                <strong>
+                  {researchTask ? <Search size={14} /> : <FileText size={14} />}
+                  {taskTypeText[details.data.revision.taskType]}
+                </strong>
+              </span>
+              <span>
                 <small>任务 Revision</small>
                 <code>
                   <FileText size={14} />#{details.data.revision.revision} ·{" "}
                   {details.data.revision.specHash.slice(0, 10)}
                 </code>
               </span>
-              <span>
-                <small>基础 Commit</small>
-                <code>
-                  <GitCommitHorizontal size={14} />
-                  {details.data.run.baseCommit?.slice(0, 10) ?? "暂无"}
-                </code>
-              </span>
-              <span>
-                <small>结果 Commit</small>
-                <code>
-                  <GitCommitHorizontal size={14} />
-                  {details.data.run.resultCommit?.slice(0, 10) ?? "暂无"}
-                </code>
-              </span>
-              <span>
-                <small>目标分支</small>
-                <code>
-                  <GitBranch size={14} />
-                  {details.data.run.targetBranch}
-                </code>
-              </span>
-              <span>
-                <small>结果分支</small>
-                <code>
-                  <GitBranch size={14} />
-                  {details.data.run.branchName ?? "暂无"}
-                </code>
-              </span>
+              {!researchTask ? (
+                <>
+                  <span>
+                    <small>基础 Commit</small>
+                    <code>
+                      <GitCommitHorizontal size={14} />
+                      {details.data.run.baseCommit?.slice(0, 10) ?? "暂无"}
+                    </code>
+                  </span>
+                  <span>
+                    <small>结果 Commit</small>
+                    <code>
+                      <GitCommitHorizontal size={14} />
+                      {details.data.run.resultCommit?.slice(0, 10) ?? "暂无"}
+                    </code>
+                  </span>
+                  <span>
+                    <small>目标分支</small>
+                    <code>
+                      <GitBranch size={14} />
+                      {details.data.run.targetBranch}
+                    </code>
+                  </span>
+                  <span>
+                    <small>结果分支</small>
+                    <code>
+                      <GitBranch size={14} />
+                      {details.data.run.branchName ?? "暂无"}
+                    </code>
+                  </span>
+                </>
+              ) : null}
               <span>
                 <small>审核决定</small>
                 <strong>
@@ -142,15 +155,17 @@ export function RunsPage() {
                   {reviewLabel}
                 </strong>
               </span>
-              <span>
-                <small>{appliedLocally ? "本地写入" : "远程推送"}</small>
-                <code>
-                  <GitCommitHorizontal size={14} />
-                  {appliedLocally
-                    ? "已写入项目"
-                    : (details.data.run.pushedCommit?.slice(0, 10) ?? "尚未推送")}
-                </code>
-              </span>
+              {!researchTask ? (
+                <span>
+                  <small>{appliedLocally ? "本地写入" : "远程推送"}</small>
+                  <code>
+                    <GitCommitHorizontal size={14} />
+                    {appliedLocally
+                      ? "已写入项目"
+                      : (details.data.run.pushedCommit?.slice(0, 10) ?? "尚未推送")}
+                  </code>
+                </span>
+              ) : null}
             </div>
             {details.data.run.summary ? (
               <p className="run-summary">{details.data.run.summary}</p>

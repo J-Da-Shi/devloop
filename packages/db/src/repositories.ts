@@ -20,6 +20,7 @@ import {
   type TaskRevision,
   type TaskRun,
   type TaskStatus,
+  type TaskType,
   type UpdateProjectPreviewInput,
   type WorkerState,
   workerConcurrencyMax,
@@ -112,6 +113,7 @@ const buildRunInputHash = (input: {
 }): string => hash(JSON.stringify(input));
 
 interface TaskRevisionSpecSnapshot {
+  taskType: TaskType;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -127,6 +129,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
     throw new Error("任务 Revision 内容格式无效");
   }
   const record = parsed as Record<string, unknown>;
+  const taskType = record.taskType;
   const acceptanceCriteria = record.acceptanceCriteria;
   const reviewFeedback = record.reviewFeedback;
   const autoResolveConflicts = record.autoResolveConflicts;
@@ -135,6 +138,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
   if (
     typeof record.title !== "string" ||
     typeof record.goal !== "string" ||
+    (taskType !== undefined && taskType !== "DEVELOPMENT" && taskType !== "RESEARCH") ||
     !Array.isArray(acceptanceCriteria) ||
     !acceptanceCriteria.every((item) => typeof item === "string") ||
     (reviewFeedback !== undefined &&
@@ -153,6 +157,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
     throw new Error("任务 Revision 内容格式无效");
   }
   return {
+    taskType: taskType ?? "DEVELOPMENT",
     title: record.title,
     goal: record.goal,
     acceptanceCriteria,
@@ -195,6 +200,7 @@ const mapTask = (row: TaskRow, projectName: string): Task => ({
   id: row.id,
   projectId: row.projectId,
   projectName,
+  taskType: row.taskType,
   targetBranch: row.targetBranch,
   autoResolveConflicts: row.autoResolveConflicts,
   title: row.title,
@@ -216,6 +222,7 @@ const mapTaskRevision = (row: TaskRevisionRow): TaskRevision => {
     id: row.id,
     taskId: row.taskId,
     revision: row.revision,
+    taskType: spec.taskType,
     autoResolveConflicts: spec.autoResolveConflicts,
     title: spec.title,
     goal: spec.goal,
@@ -337,6 +344,7 @@ export interface ProjectExecutionContext {
 export interface ClaimedTask {
   task: Task;
   run: TaskRun;
+  taskType: TaskType;
   projectPath: string;
   projectDefaultBaseRef: string;
   projectRepositoryUrl: string | null;
@@ -379,11 +387,20 @@ export interface AppliedRunApproval {
   application: RunApplicationResult;
 }
 
-export type RunApprovalResult = PublishedRunApproval | AppliedRunApproval;
+export interface ResearchRunApproval {
+  task: Task;
+  research: {
+    status: "accepted";
+    summary: string;
+  };
+}
+
+export type RunApprovalResult = PublishedRunApproval | AppliedRunApproval | ResearchRunApproval;
 
 export type RunApprovalContext =
   | { type: "remote"; context: RunPublishContext }
-  | { type: "local"; context: RunApplicationContext };
+  | { type: "local"; context: RunApplicationContext }
+  | { type: "research"; context: { summary: string } };
 
 export interface StoredSkillVersionInput {
   name: string;
@@ -766,8 +783,9 @@ export class DevLoopRepository {
   }
 
   createTask(
-    input: Omit<CreateTaskInput, "autoResolveConflicts"> & {
+    input: Omit<CreateTaskInput, "autoResolveConflicts" | "taskType"> & {
       autoResolveConflicts?: boolean;
+      taskType?: TaskType;
     },
   ): EventfulResult<Task> {
     const id = randomUUID();
@@ -788,6 +806,7 @@ export class DevLoopRepository {
         .values({
           id,
           projectId: input.projectId,
+          taskType: input.taskType ?? "DEVELOPMENT",
           targetBranch: input.targetBranch,
           autoResolveConflicts: input.autoResolveConflicts ?? true,
           title: input.title,
@@ -814,6 +833,7 @@ export class DevLoopRepository {
     taskId: string,
     deviceId: string,
     input: {
+      taskType?: TaskType | undefined;
       targetBranch?: string | undefined;
       autoResolveConflicts?: boolean | undefined;
       title?: string | undefined;
@@ -840,6 +860,7 @@ export class DevLoopRepository {
         const row = this.handle.db
           .update(tasks)
           .set({
+            taskType: input.taskType ?? current.taskType,
             targetBranch: input.targetBranch ?? current.targetBranch,
             autoResolveConflicts: input.autoResolveConflicts ?? current.autoResolveConflicts,
             title: input.title ?? current.title,
@@ -919,15 +940,20 @@ export class DevLoopRepository {
           latestRun.taskRevisionId === current.activeRevisionId &&
           latestReviewDecision?.decision === "APPROVED",
         );
-        const continuationBaseCommit = continuesAcceptedRevision
-          ? null
-          : (previousSpec?.continuationBaseCommit ?? null);
-        const continuationResultCommit = continuesAcceptedRevision
-          ? null
-          : (previousSpec?.continuationResultCommit ?? null);
+        const continuesDevelopmentRevision =
+          current.taskType === "DEVELOPMENT" && previousSpec?.taskType === "DEVELOPMENT";
+        const continuationBaseCommit =
+          continuesAcceptedRevision || !continuesDevelopmentRevision
+            ? null
+            : (previousSpec?.continuationBaseCommit ?? null);
+        const continuationResultCommit =
+          continuesAcceptedRevision || !continuesDevelopmentRevision
+            ? null
+            : (previousSpec?.continuationResultCommit ?? null);
         const baseStrategy = continuationResultCommit ? "PINNED" : input.baseStrategy;
         const baseRef = continuationResultCommit ?? current.targetBranch;
         const spec = {
+          taskType: current.taskType,
           title: current.title,
           goal: current.goal,
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
@@ -1233,6 +1259,7 @@ export class DevLoopRepository {
         value: {
           task: mapTask(taskRow, project.name),
           run: mapRun(runRow),
+          taskType: revisionSpec.taskType,
           projectPath: project.path,
           projectDefaultBaseRef: project.defaultBaseRef,
           projectRepositoryUrl: project.repositoryUrl,
@@ -1787,6 +1814,12 @@ export class DevLoopRepository {
       throw new Error("只有任务最近一次成功执行可以通过");
     }
     this.assertVersion(currentTask.version, expectedVersion);
+    if (currentTask.taskType === "RESEARCH") {
+      if (!currentRun.summary) {
+        throw new Error("研究执行缺少可审核的总结");
+      }
+      return { type: "research", context: { summary: currentRun.summary } };
+    }
     if (!currentRun.baseCommit || !currentRun.resultCommit) {
       throw new Error("执行记录缺少完整的 Git 结果范围");
     }
@@ -1834,6 +1867,76 @@ export class DevLoopRepository {
       )
       .get();
     return command ? (JSON.parse(command.resultJson) as RunApprovalResult) : null;
+  }
+
+  approveResearchRun(
+    runId: string,
+    deviceId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): EventfulResult<ResearchRunApproval> {
+    return this.executeIdempotent(deviceId, idempotencyKey, "run.approve", expectedVersion, () => {
+      const currentRun = this.requireRunRow(runId);
+      const currentTask = this.requireTaskRow(currentRun.taskId);
+      if (
+        currentTask.taskType !== "RESEARCH" ||
+        currentRun.status !== "SUCCEEDED" ||
+        currentTask.status !== "REVIEW" ||
+        currentTask.latestRunId !== runId ||
+        !currentRun.summary
+      ) {
+        throw new Error("只有待审核的最新研究总结可以通过");
+      }
+      assertTaskTransition(currentTask.status, "COMPLETED");
+      this.assertVersion(currentTask.version, expectedVersion);
+      const project = this.requireProjectRow(currentTask.projectId);
+      const timestamp = now();
+      const taskRow = this.handle.db
+        .update(tasks)
+        .set({ status: "COMPLETED", version: currentTask.version + 1, updatedAt: timestamp })
+        .where(
+          and(
+            eq(tasks.id, currentTask.id),
+            eq(tasks.version, expectedVersion),
+            eq(tasks.status, "REVIEW"),
+            isNull(tasks.deletedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!taskRow) {
+        throw new Error("Version conflict: 研究任务审核状态已发生变化");
+      }
+      this.handle.db
+        .insert(reviewDecisions)
+        .values({
+          id: randomUUID(),
+          runId,
+          decision: "APPROVED",
+          feedback: null,
+          deviceId,
+          createdAt: timestamp,
+        })
+        .run();
+      this.insertRunEvent(runId, "run.research_approved", "研究总结已通过审核", {});
+      const taskEvent = this.insertDomainEvent("task", currentTask.id, "task.status_changed", {
+        taskId: currentTask.id,
+        from: "REVIEW",
+        to: "COMPLETED",
+      });
+      const runEvent = this.insertDomainEvent("run", runId, "run.finished", {
+        runId,
+        outcome: "accepted",
+        taskType: "RESEARCH",
+      });
+      return {
+        value: {
+          task: mapTask(taskRow, project.name),
+          research: { status: "accepted", summary: currentRun.summary },
+        },
+        events: [taskEvent, runEvent],
+      };
+    });
   }
 
   approvePublishedRun(
@@ -2104,7 +2207,8 @@ export class DevLoopRepository {
       if (!currentRevision) {
         throw new Error("执行记录关联的 Revision 不存在");
       }
-      if (!currentRun.baseCommit || !currentRun.resultCommit) {
+      const researchTask = currentTask.taskType === "RESEARCH";
+      if (!researchTask && (!currentRun.baseCommit || !currentRun.resultCommit)) {
         throw new Error("执行记录缺少连续迭代所需的基础或结果 Commit");
       }
       const project = this.requireProjectRow(currentTask.projectId);
@@ -2117,13 +2221,18 @@ export class DevLoopRepository {
           .get()?.value ?? 0) + 1;
       const revisionId = randomUUID();
       const previousSpec = JSON.parse(currentRevision.specJson) as Record<string, unknown>;
+      const nextBaseRef = researchTask ? currentRevision.baseRef : currentRun.resultCommit!;
+      const nextBaseStrategy = researchTask ? currentRevision.baseStrategy : "PINNED";
+      const nextConfirmedBaseCommit = researchTask
+        ? currentRevision.confirmedBaseCommit
+        : currentRun.resultCommit!;
       const specJson = JSON.stringify({
         ...previousSpec,
         reviewFeedback: feedback,
-        continuationBaseCommit: currentRun.baseCommit,
-        continuationResultCommit: currentRun.resultCommit,
-        baseStrategy: "PINNED",
-        baseRef: currentRun.resultCommit,
+        continuationBaseCommit: researchTask ? null : currentRun.baseCommit,
+        continuationResultCommit: researchTask ? null : currentRun.resultCommit,
+        baseStrategy: nextBaseStrategy,
+        baseRef: nextBaseRef,
       });
       this.handle.db
         .insert(taskRevisions)
@@ -2134,9 +2243,9 @@ export class DevLoopRepository {
           specJson,
           specHash: hash(specJson),
           targetBranch: currentRevision.targetBranch,
-          baseRef: currentRun.resultCommit,
-          baseStrategy: "PINNED",
-          confirmedBaseCommit: currentRun.resultCommit,
+          baseRef: nextBaseRef,
+          baseStrategy: nextBaseStrategy,
+          confirmedBaseCommit: nextConfirmedBaseCommit,
           createdFrom: currentRevision.id,
           createdByDeviceId: deviceId,
           confirmedAt: timestamp,

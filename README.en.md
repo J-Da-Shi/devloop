@@ -77,9 +77,26 @@ DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
 
 # Simulated execution delay for the fake runner, in milliseconds.
 DEVLOOP_FAKE_RUNNER_DELAY_MS=850
+
+# Maximum time to wait for an automatic preview process to pass its health check, in milliseconds.
+DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
+
+# Maximum time, in milliseconds, for installing dependencies from a lockfile in an isolated preview worktree.
+DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS=600000
+
+# Timeout for page load, screenshots, and baseline Playwright checks, in milliseconds.
+DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
+
+# Maximum duration for a project's custom Playwright command, in milliseconds.
+DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
+
+# Optional Chromium, Chrome, or Edge executable. When omitted, DevLoop checks Playwright, Chrome, then Edge.
+DEVLOOP_PLAYWRIGHT_EXECUTABLE=
 ```
 
 `DEVLOOP_CODEX_TIMEOUT_MS` remains only as a compatibility alias for older releases. New configurations should use `DEVLOOP_CODEX_STALL_TIMEOUT_MS`.
+
+Most projects do not need a preview command. For every completed task, DevLoop uses an optional project-level advanced override first, then the Agent's Web-start suggestion, and finally scans `package.json` files in the result commit for common Vite, Next.js, Nuxt, Astro, SvelteKit, Remix, Webpack, Parcel, and Storybook scripts. For this repository, detection selects `apps/web` instead of the root `pnpm dev`, which also starts the server and desktop client. DevLoop installs dependencies from the nearest `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, or Bun lockfile in the isolated result-commit worktree before starting the preview and running baseline Playwright checks. If detection is not reliable, the review page explains why; add an advanced override such as `npm run dev -- --host 127.0.0.1 --port {{port}}` only when needed.
 
 ### Packaging the desktop client
 

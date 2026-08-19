@@ -71,6 +71,13 @@
       "when": 1787124620262,
       "tag": "0009_yielding_lethal_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787130084201,
+      "tag": "0010_task_type",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Image, Space, Tag } from "antd";
 import { CheckCircle2, ExternalLink, Play, Square, TestTube2, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { PlaywrightValidationReport, RunArtifact } from "@devloop/shared";
+import type { PlaywrightValidationReport, RunArtifact, RunPreviewConfig } from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
 import { useNotice } from "./notice-provider.js";
 
@@ -10,6 +10,7 @@ interface RunValidationPanelProps {
   runId: string;
   report: PlaywrightValidationReport | null;
   artifacts: RunArtifact[];
+  previewConfiguration: RunPreviewConfig | null;
   canPreview: boolean;
   previewTitle: string;
   title?: string;
@@ -21,10 +22,17 @@ const reportStatus: Record<PlaywrightValidationReport["status"], string> = {
   skipped: "已跳过",
 };
 
+const previewSourceLabels: Record<RunPreviewConfig["source"], string> = {
+  project: "人工高级覆盖",
+  agent: "Agent 识别",
+  detected: "自动识别",
+};
+
 export function RunValidationPanel({
   runId,
   report,
   artifacts,
+  previewConfiguration,
   canPreview,
   previewTitle,
   title = "预览与自动验证",
@@ -88,6 +96,7 @@ export function RunValidationPanel({
     [artifacts, report?.screenshotArtifactId],
   );
   const status = report?.status ?? null;
+  const selectedPreviewConfiguration = report?.previewConfiguration ?? previewConfiguration;
 
   return (
     <section className="run-validation-panel" aria-label={title}>
@@ -98,6 +107,15 @@ export function RunValidationPanel({
         </div>
         <TestTube2 size={18} aria-hidden="true" />
       </header>
+
+      {selectedPreviewConfiguration ? (
+        <Space size={8} wrap>
+          <Tag color="blue">{previewSourceLabels[selectedPreviewConfiguration.source]}</Tag>
+          <span className="run-validation-config">
+            {selectedPreviewConfiguration.workingDirectory} · {selectedPreviewConfiguration.command}
+          </span>
+        </Space>
+      ) : null}
 
       <div className="run-validation-actions">
         {canPreview ? (

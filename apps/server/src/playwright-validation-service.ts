@@ -1,17 +1,23 @@
 import { spawn } from "node:child_process";
 import { chromium, type Browser } from "playwright";
 import { terminateProcessGroup } from "@devloop/runners";
-import type { PlaywrightValidationCheck, PlaywrightValidationReport } from "@devloop/shared";
+import type {
+  PlaywrightValidationCheck,
+  PlaywrightValidationReport,
+  RunPreviewConfig,
+} from "@devloop/shared";
 import type { ArtifactService } from "./artifact-service.js";
-import { buildPreviewEnvironment, type PreviewService } from "./preview-service.js";
+import {
+  buildPreviewEnvironment,
+  PreviewNotDetectedError,
+  type PreviewService,
+} from "./preview-service.js";
 
 export interface ValidateRunInput {
   runId: string;
   repositoryPath: string;
   resultCommit: string;
-  previewCommand: string | null;
-  previewWorkingDirectory: string;
-  previewHealthPath: string;
+  previewConfiguration: RunPreviewConfig | null;
   playwrightEnabled: boolean;
   playwrightTestCommand: string | null;
   signal?: AbortSignal;
@@ -42,6 +48,7 @@ export class PlaywrightValidationService {
     let screenshotArtifactId: string | null = null;
     let customTestOutput: string | null = null;
     let previewId: string | null = null;
+    let previewConfiguration: RunPreviewConfig | null = null;
 
     if (!input.playwrightEnabled) {
       checks.push({
@@ -49,15 +56,16 @@ export class PlaywrightValidationService {
         status: "skipped",
         message: "项目已关闭自动 Playwright 验证",
       });
-      return this.finish(input.runId, startedAt, checks, pageErrors, consoleErrors, null, null);
-    }
-    if (!input.previewCommand) {
-      checks.push({
-        name: "启动预览",
-        status: "skipped",
-        message: "项目尚未配置预览命令",
-      });
-      return this.finish(input.runId, startedAt, checks, pageErrors, consoleErrors, null, null);
+      return this.finish(
+        input.runId,
+        startedAt,
+        checks,
+        pageErrors,
+        consoleErrors,
+        null,
+        null,
+        null,
+      );
     }
 
     try {
@@ -65,12 +73,14 @@ export class PlaywrightValidationService {
         runId: input.runId,
         repositoryPath: input.repositoryPath,
         resultCommit: input.resultCommit,
-        command: input.previewCommand,
-        workingDirectory: input.previewWorkingDirectory,
-        healthPath: input.previewHealthPath,
+        command: input.previewConfiguration?.command ?? null,
+        workingDirectory: input.previewConfiguration?.workingDirectory ?? ".",
+        healthPath: input.previewConfiguration?.healthPath ?? "/",
+        ...(input.previewConfiguration ? { source: input.previewConfiguration.source } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       previewId = preview.id;
+      previewConfiguration = preview.configuration;
       checks.push({ name: "启动预览", status: "passed", message: `预览已在本机端口就绪` });
 
       try {
@@ -132,7 +142,11 @@ export class PlaywrightValidationService {
       }
     } catch (error) {
       if (isAbortError(error)) throw error;
-      checks.push({ name: "启动预览", status: "failed", message: asMessage(error) });
+      checks.push({
+        name: "启动预览",
+        status: error instanceof PreviewNotDetectedError ? "skipped" : "failed",
+        message: asMessage(error),
+      });
     } finally {
       if (previewId) await this.previewService.stop(previewId).catch(() => undefined);
     }
@@ -145,6 +159,7 @@ export class PlaywrightValidationService {
       consoleErrors,
       screenshotArtifactId,
       customTestOutput,
+      previewConfiguration,
     );
   }
 
@@ -340,6 +355,7 @@ export class PlaywrightValidationService {
     consoleErrors: string[],
     screenshotArtifactId: string | null,
     customTestOutput: string | null,
+    previewConfiguration: RunPreviewConfig | null,
   ): Promise<PlaywrightValidationReport> {
     const hasFailure = checks.some((check) => check.status === "failed");
     const hasVerification = checks.some(
@@ -350,6 +366,7 @@ export class PlaywrightValidationService {
       status: hasFailure ? "failed" : hasVerification ? "passed" : "skipped",
       startedAt,
       finishedAt: new Date().toISOString(),
+      previewConfiguration,
       checks,
       pageErrors,
       consoleErrors,
