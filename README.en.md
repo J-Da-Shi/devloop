@@ -29,6 +29,7 @@
 
 <p align="center">
   <a href="#why-devloop">Why DevLoop</a> ·
+  <a href="#capabilities">Capabilities</a> ·
   <a href="#how-it-delivers">How it delivers</a> ·
   <a href="#review-gate">Review gate</a> ·
   <a href="#quick-start">Get started</a> ·
@@ -47,6 +48,19 @@
 Codex CLI and Claude Code CLI are excellent at completing an individual coding request. A real project also needs to answer what changed, whether acceptance criteria were met, whether the result runs, when it may reach the target branch, and how to continue from a rejected result.
 
 DevLoop is a local development-delivery console. It runs every Agent execution in an isolated Git worktree, pins the result as a commit, and keeps the diff, logs, automated validation, conflicts, and human review on one task record. You can move several projects forward in parallel while retaining human control over branch writes.
+
+<a id="capabilities"></a>
+
+## Capabilities
+
+| Capability           | Supported scope                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Task types           | `DEVELOPMENT` code delivery and `RESEARCH` structured findings                                                          |
+| Project sources      | SSH remote repositories or an existing local Git directory on the desktop                                               |
+| Runners              | Codex CLI, Claude Code CLI, and Fake Runner; configure 1-10 concurrent workers                                          |
+| Context              | Skill version snapshots, revisions, failed-run context, and continued iterations after rejection                        |
+| Delivery control     | Isolated worktrees, result commits, per-file diffs, conflict previews, and human or Agent-assisted resolution           |
+| Automatic validation | Common Web start-command detection, isolated previews, Playwright, screenshots, console errors, and interaction results |
 
 <a id="how-it-delivers"></a>
 
@@ -91,7 +105,14 @@ When the target branch changes during execution, DevLoop produces a conflict pre
 
 ### Run from source
 
-Requires Node.js 24 (`>=24 <27`), pnpm 10, and at least one installed and authenticated runner: `codex` or `claude`.
+Requires Node.js 24 (`>=24 <27`), pnpm 10, and at least one installed and authenticated runner: `codex` or `claude`. Verify the CLI available in your shell:
+
+```bash
+codex --version
+claude --version
+```
+
+You can use the built-in Fake Runner to inspect the UI and state transitions without either CLI.
 
 ```bash
 git clone https://github.com/J-Da-Shi/devloop.git
@@ -122,6 +143,22 @@ pnpm --filter @devloop/desktop make
 
 Artifacts are written to `apps/desktop/out/make/`. Packaged clients start the bundled server by default; set `DEVLOOP_SERVICE_URL` to connect to an existing server instead.
 
+### Docker Compose
+
+For a server deployment, install Docker and Docker Compose, then create writable data and configuration directories:
+
+```bash
+cp .env.example .env
+mkdir -p data config/codex config/ssh
+docker compose up --build
+```
+
+Open `http://127.0.0.1:4317` when the container is healthy. The default binding is local-only. Put private-repository SSH configuration in `config/ssh` and Codex configuration or credentials in `config/codex`, or point the mounts at different directories in `.env`.
+
+### Register projects and create tasks
+
+The project page accepts an SSH remote repository or an existing local Git directory on the desktop. When creating a task, provide a title, task type, target branch, objective, and acceptance criteria, then choose Codex or Claude, whether conflicts should be auto-resolved, and any project-level settings. Before approval, the result stays in an isolated worktree and result commit.
+
 <a id="preview-validation"></a>
 
 ## Preview and automatic validation
@@ -151,18 +188,34 @@ You can instead set `DEVLOOP_PLAYWRIGHT_EXECUTABLE` to a compatible Chrome, Chro
 Common server settings:
 
 ```bash
+# Network and local data directories.
+DEVLOOP_HOST=127.0.0.1
+DEVLOOP_PORT=4317
+DEVLOOP_ALLOW_LAN=false
+DEVLOOP_REPOSITORY_ROOT=/path/to/repositories
+DEVLOOP_DATA_DIR=.devloop-data
+
+# Default runner and executable paths; individual tasks can still choose Codex or Claude.
+DEVLOOP_RUNNER=codex
+DEVLOOP_CODEX_EXECUTABLE=codex
+DEVLOOP_CLAUDE_CODE_EXECUTABLE=claude
+
 # Continuous CLI inactivity before termination; not a total task limit.
 DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
 DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
+DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+DEVLOOP_FAKE_RUNNER_DELAY_MS=850
+DEVLOOP_LOG_LEVEL=info
 
 # Isolated preview and Playwright timeouts.
 DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
 DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS=600000
 DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
 DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
+DEVLOOP_PLAYWRIGHT_EXECUTABLE=/path/to/chromium
 ```
 
-See [`.env.example`](./.env.example) for the Docker Compose example and its commented variables.
+See [`.env.example`](./.env.example) for the complete Docker Compose example and commented variables. The reverse-proxy example is [`deploy/baota-nginx.conf`](./deploy/baota-nginx.conf).
 
 <a id="development"></a>
 
@@ -174,8 +227,12 @@ DevLoop is a pnpm workspace with a Fastify server, React Web UI, Electron deskto
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm lint
+pnpm format
 git diff --check
 ```
+
+Directory responsibilities: `apps/server` owns the API and Worker, `apps/web` owns the React UI, and `apps/desktop` owns the Electron client. `packages/db`, `packages/git`, `packages/runners`, `packages/workflow`, and `packages/shared` cover persistence, Git, runners, state transitions, and shared models. Development conventions live in [`AGENTS.md`](./AGENTS.md).
 
 Issues and pull requests are welcome. Do not commit API keys, Git credentials, personal data from `.devloop-data`, or local artifacts generated by task runs.
 

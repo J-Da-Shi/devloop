@@ -29,6 +29,7 @@
 
 <p align="center">
   <a href="#why-devloop">为什么是 DevLoop</a> ·
+  <a href="#capabilities">能力范围</a> ·
   <a href="#how-it-delivers">如何交付</a> ·
   <a href="#review-gate">审核闸门</a> ·
   <a href="#quick-start">开始使用</a> ·
@@ -47,6 +48,19 @@
 Codex CLI 和 Claude Code CLI 很擅长完成一次开发请求，但一个真实项目还需要知道：任务改了什么、是否满足验收、是否能运行、何时可以写入目标分支，以及驳回后如何在原结果上继续。
 
 DevLoop 是运行在本机的开发交付控制台。它把每次 Agent 执行放进独立 Git Worktree，将结果固定为 Commit，并把 Diff、日志、自动验证、冲突和人工审核汇集到同一条任务记录里。你可以同时推进多个项目，但仍由人决定最终是否写入分支。
+
+<a id="capabilities"></a>
+
+## 能力范围
+
+| 能力     | 支持内容                                                                    |
+| -------- | --------------------------------------------------------------------------- |
+| 任务类型 | `DEVELOPMENT` 代码交付、`RESEARCH` 结构化研究                               |
+| 项目来源 | SSH 远程仓库，或桌面上已经存在的本地 Git 目录                               |
+| 执行器   | Codex CLI、Claude Code CLI、Fake Runner；Worker 并发数可配置为 1-10         |
+| 上下文   | Skill 版本快照、Revision、失败上下文、驳回后的连续迭代                      |
+| 交付控制 | 隔离 Worktree、结果 Commit、逐文件 Diff、冲突预览、人工或 Agent 协助解决    |
+| 自动验证 | 自动识别常见 Web 启动方式、隔离预览、Playwright、截图、控制台错误和交互结果 |
 
 <a id="how-it-delivers"></a>
 
@@ -91,7 +105,14 @@ DevLoop 是运行在本机的开发交付控制台。它把每次 Agent 执行�
 
 ### 从源码启动
 
-需要 Node.js 24（`>=24 <27`）、pnpm 10，以及至少一个已安装并登录的执行器：`codex` 或 `claude`。
+需要 Node.js 24（`>=24 <27`）、pnpm 10，以及至少一个已安装并登录的执行器：`codex` 或 `claude`。先确认 CLI 可以在当前终端使用：
+
+```bash
+codex --version
+claude --version
+```
+
+没有 CLI 时也可以使用内置 Fake Runner 检查界面和状态流转。
 
 ```bash
 git clone https://github.com/J-Da-Shi/devloop.git
@@ -122,6 +143,22 @@ pnpm --filter @devloop/desktop make
 
 产物位于 `apps/desktop/out/make/`。打包客户端默认启动内置服务；设置 `DEVLOOP_SERVICE_URL` 后可改为连接已有服务。
 
+### Docker Compose
+
+服务端部署需要 Docker、Docker Compose，以及可写的数据和配置目录：
+
+```bash
+cp .env.example .env
+mkdir -p data config/codex config/ssh
+docker compose up --build
+```
+
+启动后访问 `http://127.0.0.1:4317`。默认只绑定本机地址；私有仓库需要把 SSH 配置放入 `config/ssh`，Codex 配置或凭据放入 `config/codex`，也可以在 `.env` 中改为其它挂载目录。
+
+### 注册项目与创建任务
+
+在项目页可以选择 SSH 远程仓库，也可以直接选择桌面上已有的本地 Git 目录。创建任务时填写标题、任务类型、目标分支、任务目标和验收标准，再选择 Codex 或 Claude、是否自动解决冲突以及其它项目级设置。审核通过前，结果只存在于隔离 Worktree 和结果 Commit 中。
+
 <a id="preview-validation"></a>
 
 ## 预览与自动验证
@@ -151,18 +188,34 @@ pnpm exec playwright install chromium
 常用服务端配置：
 
 ```bash
+# 网络与本地数据目录。
+DEVLOOP_HOST=127.0.0.1
+DEVLOOP_PORT=4317
+DEVLOOP_ALLOW_LAN=false
+DEVLOOP_REPOSITORY_ROOT=/path/to/repositories
+DEVLOOP_DATA_DIR=.devloop-data
+
+# 默认执行器和可执行文件路径；项目任务仍可选择 Codex 或 Claude。
+DEVLOOP_RUNNER=codex
+DEVLOOP_CODEX_EXECUTABLE=codex
+DEVLOOP_CLAUDE_CODE_EXECUTABLE=claude
+
 # CLI 连续无输出多久后终止；不是任务总执行时限。
 DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
 DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
+DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
+DEVLOOP_FAKE_RUNNER_DELAY_MS=850
+DEVLOOP_LOG_LEVEL=info
 
 # 隔离预览与 Playwright 的超时设置。
 DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
 DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS=600000
 DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
 DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
+DEVLOOP_PLAYWRIGHT_EXECUTABLE=/path/to/chromium
 ```
 
-Docker Compose 示例及其环境变量注释见 [`.env.example`](./.env.example)。
+Docker Compose 的完整示例及每个变量的注释见 [`.env.example`](./.env.example)，服务器反向代理示例见 [`deploy/baota-nginx.conf`](./deploy/baota-nginx.conf)。
 
 <a id="development"></a>
 
@@ -174,8 +227,12 @@ DevLoop 使用 pnpm workspace：Fastify 服务端、React Web、Electron 桌面�
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm lint
+pnpm format
 git diff --check
 ```
+
+目录职责：`apps/server` 提供 API 和 Worker，`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端；`packages/db`、`packages/git`、`packages/runners`、`packages/workflow` 和 `packages/shared` 分别承载数据库、Git、执行器、状态流转和共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。
 
 欢迎提交 Issue 和 Pull Request。请勿提交 API Key、Git 凭据、`.devloop-data` 中的个人数据，或任务生成的本地运行产物。
 

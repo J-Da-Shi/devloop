@@ -15,6 +15,7 @@
     <link rel="icon" href="brand/devloop-mark.svg" type="image/svg+xml" />
     <link rel="preload" href="shots/execution-overview.png" as="image" />
     <link rel="stylesheet" href="site.css" />
+    <link rel="stylesheet" href="site-capabilities.css" />
     <script src="site.js" defer></script>
     <title>DevLoop · AI 开发交付工作台</title>
   </head>
@@ -30,6 +31,7 @@
         </a>
         <div class="nav-links">
           <a href="#product">产品</a>
+          <a href="#capabilities">能力</a>
           <a href="#workflow">流程</a>
           <a href="#review">审核</a>
           <a href="#local">本地边界</a>
@@ -143,6 +145,60 @@
         </div>
       </section>
 
+      <section class="section scope-section" id="capabilities" aria-labelledby="capabilities-title">
+        <div class="shell">
+          <div class="section-heading split-heading">
+            <div>
+              <p class="eyebrow eyebrow-dark">CAPABILITY SCOPE</p>
+              <h2 id="capabilities-title">一个任务，<br /><span>覆盖完整交付边界。</span></h2>
+            </div>
+            <p>
+              从项目来源到验证方式都在创建任务时明确。DevLoop
+              把执行器、上下文和证据组合成可审核的交付单元。
+            </p>
+          </div>
+          <div class="scope-table" role="list" aria-label="DevLoop 能力范围">
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>01</span><strong>任务类型</strong></div>
+              <div class="scope-detail">
+                <strong>DEVELOPMENT · RESEARCH</strong>
+                <p>既可以交付代码变更，也可以让 Agent 输出结构化研究结论和证据。</p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>02</span><strong>项目来源</strong></div>
+              <div class="scope-detail">
+                <strong>SSH REMOTE · LOCAL GIT</strong>
+                <p>连接远程仓库，或直接选择桌面上已经存在的本地 Git 目录。</p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>03</span><strong>执行与上下文</strong></div>
+              <div class="scope-detail">
+                <strong>CODEX · CLAUDE · SKILLS</strong>
+                <p>
+                  执行器和 Worker 并发数可配置；Skill 快照、失败上下文和 Revision 会随任务保留。
+                </p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>04</span><strong>预览与验证</strong></div>
+              <div class="scope-detail">
+                <strong>AUTO PREVIEW · PLAYWRIGHT</strong>
+                <p>从结果 Commit 自动识别常见 Web 启动方式，附上截图、控制台错误和交互测试结果。</p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>05</span><strong>交付控制</strong></div>
+              <div class="scope-detail">
+                <strong>DIFF · CONFLICTS · ITERATION</strong>
+                <p>逐文件审核 Diff，处理或委托 Agent 解决冲突；驳回后从上一轮 Commit 继续迭代。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="section dark-section" id="workflow" aria-labelledby="workflow-title">
         <div class="shell">
           <div class="section-heading split-heading dark-heading">
@@ -158,25 +214,25 @@
             <div class="workflow-step">
               <span>01</span>
               <h3>创建任务</h3>
-              <p>写下目标、验收标准、项目与分支。</p>
+              <p>选择任务类型，写下目标、验收标准、项目与分支。</p>
             </div>
             <div class="workflow-connector" aria-hidden="true"></div>
             <div class="workflow-step">
               <span>02</span>
               <h3>Agent 执行</h3>
-              <p>在隔离 Worktree 中运行 Codex 或 Claude。</p>
+              <p>在隔离 Worktree 中运行 Codex 或 Claude，可并发领取多个任务。</p>
             </div>
             <div class="workflow-connector" aria-hidden="true"></div>
             <div class="workflow-step">
               <span>03</span>
-              <h3>验证结果</h3>
-              <p>查看 Commit、Diff、日志和 Playwright 证据。</p>
+              <h3>预览与验证</h3>
+              <p>自动启动预览，查看 Commit、Diff、日志和 Playwright 证据。</p>
             </div>
             <div class="workflow-connector" aria-hidden="true"></div>
             <div class="workflow-step">
               <span>04</span>
               <h3>人工写入</h3>
-              <p>解决冲突、批准结果，或继续下一轮迭代。</p>
+              <p>解决冲突、批准结果，或带着上下文继续下一轮迭代。</p>
             </div>
           </div>
           <div class="workflow-shot">
@@ -280,18 +336,20 @@
         <div class="principle-grid">
           <article>
             <span class="principle-number">A</span>
-            <h3>本机数据</h3>
+            <h3>本地优先</h3>
             <p>数据库、Git 镜像、Worktree、Skill 和运行产物默认写在本机数据目录。</p>
           </article>
           <article>
             <span class="principle-number">B</span>
-            <h3>分支有边界</h3>
-            <p>审核通过前不写入目标分支；目标分支变化或存在未解决冲突时，操作会停止。</p>
+            <h3>项目有选择</h3>
+            <p>支持 SSH 远程仓库和桌面已有的本地 Git 目录；审核通过前不写入目标分支。</p>
           </article>
           <article>
             <span class="principle-number">C</span>
             <h3>过程可追溯</h3>
-            <p>Revision、事件、Commit、验证报告和审核决定都留在任务历史里。</p>
+            <p>
+              Revision、事件、Commit、验证报告和审核决定都留在任务历史里，冲突未解决时无法写入。
+            </p>
           </article>
         </div>
       </section>

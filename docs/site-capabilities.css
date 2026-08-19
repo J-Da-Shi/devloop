@@ -1,0 +1,72 @@
+.scope-section {
+  padding-top: 30px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+.scope-section .section-heading {
+  padding-top: 83px;
+}
+.scope-table {
+  border-top: 1px solid var(--line);
+}
+.scope-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.38fr) minmax(0, 1fr);
+  gap: 30px;
+  align-items: center;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+.scope-label {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+}
+.scope-label span {
+  color: var(--blue);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+.scope-label strong {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+}
+.scope-detail {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.42fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: baseline;
+}
+.scope-detail strong {
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.scope-detail p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .scope-section {
+    padding-top: 0;
+  }
+  .scope-section .section-heading {
+    padding-top: 60px;
+  }
+  .scope-row {
+    grid-template-columns: 1fr;
+    gap: 11px;
+    padding: 19px 0;
+  }
+  .scope-detail {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
