@@ -1182,6 +1182,79 @@ describe("DevLoopRepository 自动入队", () => {
     });
   });
 
+  it("失败重试会冻结失败诊断，并从已保存的结果 Commit 继续", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "失败续跑项目",
+      repositoryUrl: "git@example.com:team/retry-context.git",
+      repositoryPath: "/tmp/devloop-retry-context-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "从失败处继续",
+      goal: "保留失败轮已完成的实现并继续修复测试",
+      acceptanceCriteria: ["失败上下文会传给下一轮"],
+      priority: 80,
+    }).value;
+    const ready = repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(firstClaim).not.toBeNull();
+    repository.recordRunEvent(firstClaim!.value.run.id, "runner.command", "pnpm test 退出码 1", {
+      command: "pnpm test",
+    });
+    const failed = repository.failRun(
+      firstClaim!.value.run.id,
+      firstClaim!.value.run.executionToken,
+      "测试失败：缺少异常路径断言",
+      "partial-result-commit",
+    ).value.task;
+
+    const retry = repository.confirmTask(failed.id, "instance-owner", {
+      expectedVersion: failed.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const retryRevision = repository.getTaskRevision(retry.activeRevisionId!);
+    expect(retryRevision).toMatchObject({
+      baseStrategy: "PINNED",
+      baseRef: "partial-result-commit",
+      confirmedBaseCommit: "partial-result-commit",
+      retryContext: {
+        sourceRunId: firstClaim!.value.run.id,
+        sourceStatus: "FAILED",
+        summary: "测试失败：缺少异常路径断言",
+        baseCommit: "base-commit",
+        resultCommit: "partial-result-commit",
+      },
+    });
+    expect(retryRevision?.retryContext?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "runner.command", message: "pnpm test 退出码 1" }),
+        expect.objectContaining({ type: "run.failed", message: "测试失败：缺少异常路径断言" }),
+      ]),
+    );
+
+    const retryClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(retryClaim?.value).toMatchObject({
+      run: { baseCommit: "partial-result-commit" },
+      continuationBaseCommit: "base-commit",
+      continuationResultCommit: "partial-result-commit",
+      retryContext: {
+        sourceRunId: firstClaim!.value.run.id,
+        resultCommit: "partial-result-commit",
+      },
+    });
+  });
+
   it("已完成任务可以继续迭代，并以最新已接受结果为下一轮基础", () => {
     const repository = createRepository();
     const project = repository.createProject({

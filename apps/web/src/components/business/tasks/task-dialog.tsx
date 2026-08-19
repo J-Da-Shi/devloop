@@ -202,7 +202,9 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         confirm: "任务已确认并加入队列",
         unconfirm: "任务已撤回为草稿",
         continue: "已进入新一轮草稿，请补充需求后确认排队",
-        retry: "任务已创建新 Revision 并重新加入队列",
+        retry: researchTask
+          ? "已带上上次失败诊断并重新加入队列"
+          : "已从上次失败的保存进度继续加入队列",
         revise: "任务已退回草稿，可修改后重新排队",
         cancel: "执行已取消，Worktree 和日志已保留",
         delete: "任务已删除，执行历史仍会保留",
@@ -271,9 +273,11 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       danger: false,
     },
     retry: {
-      title: "按当前任务内容重新执行？",
-      description: "系统会创建新的不可变 Revision，并把任务重新加入执行队列。",
-      label: "直接重试",
+      title: "从上次失败处继续重试？",
+      description: researchTask
+        ? "系统会保存上次失败的摘要和日志，并将它们带入下一轮研究。"
+        : "系统会保存上次失败的摘要和日志；已保存的代码进度会先与最新目标分支对齐，再继续执行。",
+      label: "继续重试",
       danger: false,
     },
     revise: {

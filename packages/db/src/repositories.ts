@@ -12,6 +12,7 @@ import {
   type RunApplicationResult,
   type RunPublishResult,
   type RunEvent,
+  type RetryContext,
   type RunStatus,
   type RunSkillSnapshot,
   type Skill,
@@ -112,6 +113,99 @@ const buildRunInputHash = (input: {
   skillSnapshot: RunSkillSnapshot[];
 }): string => hash(JSON.stringify(input));
 
+const maxRetryContextEvents = 16;
+const maxRetryContextSummaryCharacters = 12_000;
+const maxRetryContextEventCharacters = 1_200;
+const maxRetryContextCharacters = 30_000;
+
+const truncateRetryContextText = (value: string, maximum: number): string => {
+  const normalized = value.trim();
+  if (normalized.length <= maximum) return normalized;
+  return `${normalized.slice(0, Math.max(0, maximum - 24))}\n[已截断历史输出]`;
+};
+
+const parseRetryContext = (value: unknown): RetryContext | null => {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("任务 Revision 重试上下文格式无效");
+  }
+  const record = value as Record<string, unknown>;
+  const sourceStatus = record.sourceStatus;
+  const events = record.events;
+  const baseCommit = record.baseCommit;
+  const resultCommit = record.resultCommit;
+  if (
+    typeof record.sourceRunId !== "string" ||
+    !record.sourceRunId ||
+    typeof record.sourceRunner !== "string" ||
+    !record.sourceRunner ||
+    typeof record.sourceFinishedAt !== "string" ||
+    !record.sourceFinishedAt ||
+    (sourceStatus !== "BLOCKED" && sourceStatus !== "FAILED") ||
+    typeof record.summary !== "string" ||
+    !record.summary ||
+    record.summary.length > maxRetryContextSummaryCharacters ||
+    (baseCommit !== null && (typeof baseCommit !== "string" || !baseCommit.trim())) ||
+    (resultCommit !== null && (typeof resultCommit !== "string" || !resultCommit.trim())) ||
+    !Array.isArray(events) ||
+    events.length > maxRetryContextEvents
+  ) {
+    throw new Error("任务 Revision 重试上下文格式无效");
+  }
+  const parsedEvents = events.map((event) => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      throw new Error("任务 Revision 重试上下文格式无效");
+    }
+    const eventRecord = event as Record<string, unknown>;
+    if (
+      typeof eventRecord.type !== "string" ||
+      !eventRecord.type ||
+      typeof eventRecord.message !== "string" ||
+      !eventRecord.message ||
+      eventRecord.message.length > maxRetryContextEventCharacters ||
+      typeof eventRecord.createdAt !== "string" ||
+      !eventRecord.createdAt
+    ) {
+      throw new Error("任务 Revision 重试上下文格式无效");
+    }
+    return {
+      type: eventRecord.type,
+      message: eventRecord.message,
+      createdAt: eventRecord.createdAt,
+    };
+  });
+  const sourceRunId = record.sourceRunId as string;
+  const sourceRunner = record.sourceRunner as string;
+  const sourceFinishedAt = record.sourceFinishedAt as string;
+  const summary = record.summary as string;
+  const normalizedBaseCommit = baseCommit as string | null;
+  const normalizedResultCommit = resultCommit as string | null;
+  const characterCount =
+    sourceRunId.length +
+    sourceRunner.length +
+    sourceFinishedAt.length +
+    summary.length +
+    (normalizedBaseCommit?.length ?? 0) +
+    (normalizedResultCommit?.length ?? 0) +
+    parsedEvents.reduce(
+      (total, event) => total + event.type.length + event.message.length + event.createdAt.length,
+      0,
+    );
+  if (characterCount > maxRetryContextCharacters) {
+    throw new Error("任务 Revision 重试上下文超过大小限制");
+  }
+  return {
+    sourceRunId,
+    sourceStatus: sourceStatus as RetryContext["sourceStatus"],
+    sourceRunner,
+    sourceFinishedAt,
+    summary,
+    baseCommit: normalizedBaseCommit,
+    resultCommit: normalizedResultCommit,
+    events: parsedEvents,
+  };
+};
+
 interface TaskRevisionSpecSnapshot {
   taskType: TaskType;
   title: string;
@@ -119,6 +213,7 @@ interface TaskRevisionSpecSnapshot {
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
   autoResolveConflicts: boolean;
+  retryContext: RetryContext | null;
   continuationBaseCommit: string | null;
   continuationResultCommit: string | null;
 }
@@ -133,6 +228,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
   const acceptanceCriteria = record.acceptanceCriteria;
   const reviewFeedback = record.reviewFeedback;
   const autoResolveConflicts = record.autoResolveConflicts;
+  const retryContext = parseRetryContext(record.retryContext);
   const continuationBaseCommit = record.continuationBaseCommit;
   const continuationResultCommit = record.continuationResultCommit;
   if (
@@ -163,6 +259,7 @@ const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot => {
     acceptanceCriteria,
     reviewFeedback: reviewFeedback ?? null,
     autoResolveConflicts: autoResolveConflicts ?? true,
+    retryContext,
     continuationBaseCommit: continuationBaseCommit ?? null,
     continuationResultCommit: continuationResultCommit ?? null,
   };
@@ -228,6 +325,7 @@ const mapTaskRevision = (row: TaskRevisionRow): TaskRevision => {
     goal: spec.goal,
     acceptanceCriteria: spec.acceptanceCriteria,
     reviewFeedback: spec.reviewFeedback,
+    retryContext: spec.retryContext,
     specHash: row.specHash,
     targetBranch: row.targetBranch,
     baseRef: row.baseRef,
@@ -359,6 +457,7 @@ export interface ClaimedTask {
   goal: string;
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
+  retryContext: RetryContext | null;
   continuationBaseCommit: string | null;
   continuationResultCommit: string | null;
 }
@@ -942,14 +1041,31 @@ export class DevLoopRepository {
         );
         const continuesDevelopmentRevision =
           current.taskType === "DEVELOPMENT" && previousSpec?.taskType === "DEVELOPMENT";
+        const retryableLatestRun =
+          latestRun &&
+          latestRun.taskRevisionId === current.activeRevisionId &&
+          (latestRun.status === "FAILED" || latestRun.status === "BLOCKED")
+            ? latestRun
+            : null;
+        const retryContext = retryableLatestRun ? this.buildRetryContext(retryableLatestRun) : null;
+        const resumesFailedDevelopmentCheckpoint = Boolean(
+          retryableLatestRun &&
+          continuesDevelopmentRevision &&
+          retryableLatestRun.baseCommit &&
+          retryableLatestRun.resultCommit,
+        );
         const continuationBaseCommit =
           continuesAcceptedRevision || !continuesDevelopmentRevision
             ? null
-            : (previousSpec?.continuationBaseCommit ?? null);
+            : resumesFailedDevelopmentCheckpoint
+              ? retryableLatestRun!.baseCommit
+              : (previousSpec?.continuationBaseCommit ?? null);
         const continuationResultCommit =
           continuesAcceptedRevision || !continuesDevelopmentRevision
             ? null
-            : (previousSpec?.continuationResultCommit ?? null);
+            : resumesFailedDevelopmentCheckpoint
+              ? retryableLatestRun!.resultCommit
+              : (previousSpec?.continuationResultCommit ?? null);
         const baseStrategy = continuationResultCommit ? "PINNED" : input.baseStrategy;
         const baseRef = continuationResultCommit ?? current.targetBranch;
         const spec = {
@@ -959,6 +1075,7 @@ export class DevLoopRepository {
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
           reviewFeedback: continuesAcceptedRevision ? null : (previousSpec?.reviewFeedback ?? null),
           autoResolveConflicts: current.autoResolveConflicts,
+          retryContext,
           continuationBaseCommit,
           continuationResultCommit,
           baseStrategy,
@@ -1274,6 +1391,7 @@ export class DevLoopRepository {
           goal: revisionSpec.goal,
           acceptanceCriteria: revisionSpec.acceptanceCriteria,
           reviewFeedback: revisionSpec.reviewFeedback,
+          retryContext: revisionSpec.retryContext,
           continuationBaseCommit: revisionSpec.continuationBaseCommit,
           continuationResultCommit: revisionSpec.continuationResultCommit,
         },
@@ -1582,6 +1700,7 @@ export class DevLoopRepository {
     runId: string,
     executionToken: string,
     errorMessage: string,
+    resultCommit?: string,
   ): EventfulResult<{ task: Task; run: TaskRun }> {
     return this.handle.sqlite.transaction(() => {
       const currentRun = this.requireRunRow(runId);
@@ -1600,6 +1719,7 @@ export class DevLoopRepository {
         .set({
           status: "FAILED",
           summary: errorMessage,
+          resultCommit: resultCommit ?? currentRun.resultCommit,
           processGroupId: null,
           finishedAt: timestamp,
         })
@@ -1655,6 +1775,7 @@ export class DevLoopRepository {
     runId: string,
     executionToken: string,
     reason: string,
+    resultCommit?: string,
   ): EventfulResult<{ task: Task; run: TaskRun }> {
     return this.handle.sqlite.transaction(() => {
       const currentRun = this.requireRunRow(runId);
@@ -1673,6 +1794,7 @@ export class DevLoopRepository {
         .set({
           status: "BLOCKED",
           summary: reason,
+          resultCommit: resultCommit ?? currentRun.resultCommit,
           processGroupId: null,
           finishedAt: timestamp,
         })
@@ -2352,6 +2474,42 @@ export class DevLoopRepository {
       .orderBy(runEvents.sequence)
       .all()
       .map(mapRunEvent);
+  }
+
+  private buildRetryContext(run: TaskRunRow): RetryContext {
+    if (run.status !== "FAILED" && run.status !== "BLOCKED") {
+      throw new Error("只有失败或阻塞的执行记录可以生成重试上下文");
+    }
+    const events = this.handle.db
+      .select({
+        type: runEvents.type,
+        message: runEvents.message,
+        createdAt: runEvents.createdAt,
+      })
+      .from(runEvents)
+      .where(eq(runEvents.runId, run.id))
+      .orderBy(desc(runEvents.sequence))
+      .limit(maxRetryContextEvents)
+      .all()
+      .reverse()
+      .map((event) => ({
+        type: event.type,
+        message: truncateRetryContextText(event.message, maxRetryContextEventCharacters),
+        createdAt: event.createdAt,
+      }));
+    return {
+      sourceRunId: run.id,
+      sourceStatus: run.status,
+      sourceRunner: run.runner,
+      sourceFinishedAt: run.finishedAt ?? run.startedAt,
+      summary: truncateRetryContextText(
+        run.summary ?? "上一轮未记录失败摘要，请根据下方执行日志继续排查。",
+        maxRetryContextSummaryCharacters,
+      ),
+      baseCommit: run.baseCommit,
+      resultCommit: run.resultCommit,
+      events,
+    };
   }
 
   createRunArtifact(input: {
