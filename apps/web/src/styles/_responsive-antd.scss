@@ -1,0 +1,106 @@
+// responsive antd.scss styles
+
+@media (max-width: 760px) {
+  .icon-button.ant-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .ant-modal-root .ant-modal-wrap {
+    padding: 8px;
+  }
+
+  .task-dialog.ant-modal,
+  .confirm-dialog.ant-modal,
+  .diff-dialog.ant-modal {
+    top: 0;
+    width: 100% !important;
+    max-width: 100%;
+    margin: 0;
+    padding-bottom: 0;
+  }
+
+  .task-dialog .ant-modal-container {
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .confirm-dialog .ant-modal-container {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .task-readonly-summary {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: min(42dvh, 340px);
+  }
+
+  .task-readonly-summary section:first-child {
+    border-right: 0;
+  }
+
+  .task-readonly-summary section {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .task-readonly-summary section:last-child {
+    grid-column: auto;
+    border-bottom: 0;
+  }
+
+  .event-log-panel.compact {
+    height: 320px;
+  }
+
+  .diff-dialog.ant-modal {
+    height: calc(100dvh - 16px);
+  }
+
+  .dialog-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .dialog-actions .ant-btn {
+    width: 100%;
+  }
+
+  .field-compact.ant-form-item {
+    width: 100%;
+  }
+
+  .input-action-row {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 390px) {
+  .metric-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .metric-item strong {
+    grid-column: 2;
+  }
+
+  .worker-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .object-facts {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

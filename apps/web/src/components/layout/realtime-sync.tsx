@@ -1,8 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { DomainEvent } from "@devloop/shared";
-import { eventNames, queryKeys } from "../api.js";
-import { useUiStore } from "../store.js";
+import { eventNames, queryKeys, useUiStore } from "../../core/index.js";
 
 export function RealtimeSync() {
   const queryClient = useQueryClient();

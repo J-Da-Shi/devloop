@@ -13,9 +13,8 @@ import {
   WifiOff,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, queryKeys } from "../api.js";
-import { useUiStore } from "../store.js";
-import { ErrorPanel, LoadingPanel } from "./feedback.js";
+import { api, queryKeys, useUiStore } from "../../core/index.js";
+import { ErrorPanel, LoadingPanel } from "../common/index.js";
 import { RealtimeSync } from "./realtime-sync.js";
 
 const navigation = [

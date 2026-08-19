@@ -3,8 +3,8 @@ import { Alert, Button, Image, Space, Tag } from "antd";
 import { CheckCircle2, ExternalLink, Play, Square, TestTube2, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { PlaywrightValidationReport, RunArtifact, RunPreviewConfig } from "@devloop/shared";
-import { api, queryKeys } from "../api.js";
-import { useNotice } from "./notice-provider.js";
+import { api, queryKeys } from "../../../core/index.js";
+import { useNotice } from "../../common/index.js";
 
 interface RunValidationPanelProps {
   runId: string;

@@ -1,6 +1,6 @@
 import type { RunEvent } from "@devloop/shared";
 import { useLayoutEffect, useRef } from "react";
-import { formatDateTime } from "../utils.js";
+import { formatDateTime } from "../../../core/index.js";
 
 interface RunEventListProps {
   events: RunEvent[];

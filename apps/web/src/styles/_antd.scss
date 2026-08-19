@@ -1,0 +1,539 @@
+// antd.scss styles
+
+/* Ant Design integration */
+.devloop-antd-app,
+.ant-app {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+
+.ant-btn > .ant-btn-icon,
+.ant-btn > .ant-btn-loading-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ant-btn-primary:not(:disabled) {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.icon-button.ant-btn {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.icon-button.ant-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.system-clock.ant-tag,
+.connection-state.ant-tag,
+.status-badge.ant-tag,
+.skill-count.ant-tag,
+.diff-preview-conflict-state.ant-tag {
+  margin: 0;
+}
+
+.status-badge.ant-tag {
+  line-height: 18px;
+}
+
+.empty-state-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.empty-state-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.state-panel.ant-empty {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0;
+}
+
+.state-panel.ant-empty .ant-empty-image {
+  height: 42px;
+  margin-bottom: 8px;
+}
+
+.state-panel.ant-alert {
+  width: 100%;
+  min-height: 72px;
+  justify-content: center;
+}
+
+.inline-notice.ant-alert {
+  align-items: center;
+}
+
+.desktop-client .ant-btn,
+.desktop-client .ant-select,
+.desktop-client .ant-input,
+.desktop-client .ant-input-affix-wrapper,
+.desktop-client .ant-input-number,
+.desktop-client .ant-switch,
+.desktop-client .ant-segmented,
+.desktop-client .ant-modal,
+.desktop-client .ant-modal-close {
+  -webkit-app-region: no-drag;
+}
+
+.ant-modal-root .ant-modal-mask {
+  background: rgba(4, 6, 9, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.ant-modal .ant-modal-container {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.2);
+}
+
+.ant-modal .ant-modal-header {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.ant-modal .ant-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ant-modal .ant-modal-footer {
+  flex: 0 0 auto;
+}
+
+.task-dialog-title,
+.diff-dialog-title {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding-right: 28px;
+}
+
+.task-dialog-title strong,
+.diff-dialog-title strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.task-dialog-title small,
+.diff-dialog-title small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.task-dialog.ant-modal {
+  top: 16px;
+  padding-bottom: 0;
+}
+
+.task-dialog .ant-modal-container {
+  height: min(calc(100dvh - 32px), 900px);
+  max-height: none;
+}
+
+.task-dialog .ant-modal-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.task-dialog-status,
+.task-dialog > .ant-modal-container > .ant-modal-body > .inline-notice,
+.task-readonly-summary,
+.task-destructive-actions {
+  flex: 0 0 auto;
+}
+
+.task-dialog-scroll-region {
+  min-height: 0;
+  flex: 1;
+  padding-right: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.task-readonly-summary {
+  grid-template-columns: minmax(150px, 0.55fr) minmax(0, 1.35fr) minmax(190px, 1fr);
+  max-height: min(38dvh, 320px);
+  gap: 0;
+  margin-bottom: 16px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  scrollbar-gutter: stable;
+}
+
+.task-readonly-summary section {
+  min-width: 0;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.task-readonly-summary section:last-child {
+  grid-column: auto;
+  border-right: 0;
+}
+
+.task-readonly-summary h3 {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.task-readonly-summary p,
+.task-readonly-summary ul {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.task-readonly-details {
+  padding-bottom: 4px;
+}
+
+.confirm-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 24px;
+}
+
+.confirm-dialog-title.danger .dialog-symbol {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.confirm-dialog-description {
+  margin: 2px 0 0 48px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.dialog-actions .ant-btn {
+  min-width: 104px;
+}
+
+.task-destructive-actions {
+  gap: 8px;
+}
+
+.form-stack.ant-form,
+.form-grid {
+  min-width: 0;
+}
+
+.form-stack .ant-form-item,
+.form-grid > .ant-form-item,
+.review-actions .ant-form-item {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.form-grid .field-wide {
+  grid-column: 1 / -1;
+}
+
+.field-compact.ant-form-item {
+  width: 150px;
+  max-width: 100%;
+}
+
+.field-compact .ant-input-number {
+  width: 100%;
+}
+
+.input-action-row .ant-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.compact-select .ant-select {
+  min-width: 180px;
+}
+
+.project-source-control.ant-segmented {
+  display: inline-flex;
+  width: min(100%, 310px);
+  margin-bottom: 16px;
+  padding: 3px;
+}
+
+.project-source-control .ant-segmented-group {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-source-control .ant-segmented-item-label > span,
+.diff-view-tabs .ant-segmented-item-label > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.task-card.ant-card {
+  height: auto;
+  min-height: 148px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.task-card.ant-card .ant-card-body {
+  display: grid;
+  min-height: 146px;
+  gap: 8px;
+  padding: 12px;
+}
+
+.task-card.ant-card:focus-visible {
+  outline: 2px solid rgba(17, 24, 39, 0.4);
+  outline-offset: 2px;
+}
+
+.object-list.ant-list,
+.run-list.ant-list,
+.skill-issue-list.ant-list,
+.skill-version-list.ant-list {
+  display: block;
+}
+
+.object-list .ant-list-items,
+.run-list .ant-list-items,
+.skill-issue-list .ant-list-items,
+.skill-version-list .ant-list-items {
+  margin: 0;
+  padding: 0;
+}
+
+.object-list .ant-list-item.object-row {
+  display: grid;
+  padding: 13px 16px;
+  border-block-end: 1px solid var(--border);
+}
+
+.object-list .ant-list-item.object-row:last-child {
+  border-block-end: 0;
+}
+
+.run-list .ant-list-item {
+  padding: 0;
+  border-block-end: 1px solid var(--border);
+}
+
+.run-list .ant-list-item:last-child {
+  border-block-end: 0;
+}
+
+.run-row.ant-btn,
+.compact-row.ant-btn,
+.skill-list-item.ant-btn,
+.diff-file-browser-item.ant-btn {
+  height: auto;
+  white-space: normal;
+}
+
+.run-row.ant-btn {
+  border-radius: 0;
+}
+
+.compact-row.ant-btn {
+  justify-content: flex-start;
+  border-radius: 0;
+}
+
+.metric-item .ant-statistic {
+  display: contents;
+}
+
+.metric-item .ant-statistic-title {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.metric-item .ant-statistic-content {
+  grid-column: 3;
+  grid-row: 1;
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 29px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-search.ant-input-affix-wrapper {
+  width: auto;
+  min-height: 40px;
+  margin: 12px;
+}
+
+.skill-search.ant-input-affix-wrapper:focus,
+.skill-search.ant-input-affix-wrapper-focused {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.skill-list-item.ant-btn {
+  border-radius: 0;
+  line-height: normal;
+}
+
+.skill-state-dot.ant-badge {
+  width: auto;
+  height: auto;
+  margin-top: 3px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.skill-state-dot .ant-badge-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.skill-count.ant-tag {
+  display: grid;
+  padding: 0;
+}
+
+.skill-code-editor .ant-input {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.skill-conflict-banner.ant-alert {
+  border: 0;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.24);
+  border-radius: 0;
+}
+
+.skill-issue-list .ant-list-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 11px 13px;
+  border-block-end: 1px solid var(--border);
+}
+
+.skill-version-list .ant-list-item {
+  display: grid;
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--border);
+}
+
+.diff-conflict-summary.ant-alert {
+  align-items: flex-start;
+}
+
+.diff-preview-conflict-state.ant-tag {
+  padding-inline: 8px;
+  background: var(--warning-soft);
+}
+
+.diff-preview-conflict-state.is-resolved.ant-tag {
+  background: var(--success-soft);
+}
+
+.diff-dialog.ant-modal {
+  top: 0;
+  height: min(90vh, 880px);
+  max-width: calc(100vw - 36px);
+  padding-bottom: 0;
+}
+
+.diff-dialog .ant-modal-container {
+  height: 100%;
+}
+
+.diff-dialog .ant-modal-header {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.diff-dialog .ant-modal-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.diff-dialog-body {
+  width: 100%;
+}
+
+.diff-file-browser-item.ant-btn {
+  justify-content: stretch;
+  border-radius: 0;
+  line-height: normal;
+}
+
+.diff-view-tabs.ant-segmented {
+  display: flex;
+  min-height: 40px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.diff-view-tabs .ant-segmented-group {
+  width: fit-content;
+}
+
+.diff-conflict-editor > .diff-conflict-textarea.ant-input {
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.diff-conflict-side-actions .ant-btn.is-selected {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}

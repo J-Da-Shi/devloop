@@ -1,0 +1,122 @@
+// base.scss styles
+
+:root {
+  color-scheme: light;
+  font-family:
+    Inter,
+    "SF Pro Text",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #111827;
+  background: #ffffff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-subtle: #f9fafb;
+  --surface-hover: #f3f4f6;
+  --text: #111827;
+  --text-soft: #1f2937;
+  --muted: #6b7280;
+  --muted-dim: #9ca3af;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --primary: #111827;
+  --primary-hover: #1f2937;
+  --primary-soft: rgba(17, 24, 39, 0.06);
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.1);
+  --warning: #d97706;
+  --warning-soft: rgba(217, 119, 6, 0.1);
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --radius: 8px;
+  --shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+  letter-spacing: 0;
+  scrollbar-color: rgba(17, 24, 39, 0.2) transparent;
+  scrollbar-width: thin;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+  min-height: 0;
+  background: #ffffff;
+  color: var(--text);
+}
+
+::selection {
+  background: rgba(17, 24, 39, 0.12);
+  color: #111827;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+a,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="switch"]:focus-visible {
+  outline: 2px solid rgba(17, 24, 39, 0.4);
+  outline-offset: 2px;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.88em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
