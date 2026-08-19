@@ -12,6 +12,7 @@ import type {
   ResolveRemoteTargetBaseInput,
   ResolveTargetBaseInput,
   ResolvedTargetBase,
+  RunPublishResult,
 } from "./git-types.js";
 import { GitApplyError } from "./git-types.js";
 
@@ -219,7 +220,7 @@ export class GitRepositoryService extends GitBaseService {
     return { targetBranch, baseCommit: fallbackCommit, branchExists: false };
   }
 
-  async pushResult(input: PushResultInput): Promise<import("./git-types.js").RunPublishResult> {
+  async pushResult(input: PushResultInput): Promise<RunPublishResult> {
     const repositoryPath = await realpath(input.repositoryPath);
     const targetBranch = await this.validateBranchName(input.targetBranch);
     await this.fetchRepository(repositoryPath);

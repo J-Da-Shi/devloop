@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, realpath, rm } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { GitRepositoryService } from "./git-repository-service.js";
 import { parseNameStatusZ, parseNumstatZ, pathExists } from "./git-base-service.js";

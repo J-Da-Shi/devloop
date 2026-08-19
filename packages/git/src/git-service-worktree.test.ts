@@ -26,23 +26,6 @@ const commitAll = async (repositoryPath: string, message: string): Promise<strin
   return stdout.trim();
 };
 
-const createRemoteFixture = async (prefix: string) => {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  temporaryDirectories.push(root);
-  const remotePath = join(root, "remote.git");
-  const seedPath = join(root, "seed");
-  const managedPath = join(root, "managed");
-  await execa("git", ["init", "--bare", remotePath]);
-  await execa("git", ["init", "--initial-branch=main", seedPath]);
-  await writeFile(join(seedPath, "README.md"), "远程仓库初始内容\n");
-  const baseCommit = await commitAll(seedPath, "初始化远程仓库");
-  await execa("git", ["-C", seedPath, "remote", "add", "origin", remotePath]);
-  await execa("git", ["-C", seedPath, "push", "-u", "origin", "main"]);
-  await execa("git", ["--git-dir", remotePath, "symbolic-ref", "HEAD", "refs/heads/main"]);
-  await execa("git", ["clone", "--no-checkout", "--origin", "origin", remotePath, managedPath]);
-  return { root, remotePath, seedPath, managedPath, baseCommit };
-};
-
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories

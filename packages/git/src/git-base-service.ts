@@ -1,7 +1,7 @@
 import { access, realpath, rm } from "node:fs/promises";
 import { execa } from "execa";
 import { createGitCommand } from "./git-command.js";
-import type { GitExecutionOptions } from "./git-types.js";
+import type { GitExecutionOptions, RunChangedFileStatus, RunConflictFile } from "./git-types.js";
 import { GitApplyError } from "./git-types.js";
 
 export interface NumstatEntry {
@@ -12,7 +12,7 @@ export interface NumstatEntry {
 
 export interface NameStatusEntry {
   path: string;
-  status: import("./git-types.js").RunChangedFileStatus;
+  status: RunChangedFileStatus;
   oldPath?: string;
 }
 
@@ -23,7 +23,7 @@ export interface ConflictStageEntry {
 }
 
 export interface PreparedConflictFile {
-  file: import("./git-types.js").RunConflictFile;
+  file: RunConflictFile;
   stages: ConflictStageEntry[];
 }
 
@@ -84,7 +84,7 @@ export const parseNumstatZ = (stdout: string): Map<string, NumstatEntry> => {
   return result;
 };
 
-const mapNameStatusCode = (code: string): import("./git-types.js").RunChangedFileStatus => {
+const mapNameStatusCode = (code: string): RunChangedFileStatus => {
   switch (code[0]) {
     case "A":
       return "added";

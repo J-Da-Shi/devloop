@@ -1,47 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { GitService } from "./git-service.js";
 
 const temporaryDirectories: string[] = [];
-
-const commitAll = async (repositoryPath: string, message: string): Promise<string> => {
-  await execa("git", ["-C", repositoryPath, "add", "--all"]);
-  await execa("git", [
-    "-c",
-    "user.name=DevLoop Test",
-    "-c",
-    "user.email=devloop-test@local",
-    "-c",
-    "commit.gpgSign=false",
-    "-C",
-    repositoryPath,
-    "commit",
-    "-m",
-    message,
-  ]);
-  const { stdout } = await execa("git", ["-C", repositoryPath, "rev-parse", "HEAD"]);
-  return stdout.trim();
-};
-
-const createRemoteFixture = async (prefix: string) => {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  temporaryDirectories.push(root);
-  const remotePath = join(root, "remote.git");
-  const seedPath = join(root, "seed");
-  const managedPath = join(root, "managed");
-  await execa("git", ["init", "--bare", remotePath]);
-  await execa("git", ["init", "--initial-branch=main", seedPath]);
-  await writeFile(join(seedPath, "README.md"), "远程仓库初始内容\n");
-  const baseCommit = await commitAll(seedPath, "初始化远程仓库");
-  await execa("git", ["-C", seedPath, "remote", "add", "origin", remotePath]);
-  await execa("git", ["-C", seedPath, "push", "-u", "origin", "main"]);
-  await execa("git", ["--git-dir", remotePath, "symbolic-ref", "HEAD", "refs/heads/main"]);
-  await execa("git", ["clone", "--no-checkout", "--origin", "origin", remotePath, managedPath]);
-  return { root, remotePath, seedPath, managedPath, baseCommit };
-};
 
 afterEach(async () => {
   await Promise.all(

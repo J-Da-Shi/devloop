@@ -8,7 +8,6 @@ import {
   type ReconcileCommitResult,
 } from "@devloop/git";
 import type {
-  DomainEvent,
   RunPreviewConfig,
   RunnerCapabilities,
   RunStatus,

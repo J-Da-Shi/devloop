@@ -83,7 +83,7 @@ function createLine(
 }
 
 function classifyDiffLine(text: string): DiffLineKind {
-  const conflictContent = text.replace(/^[ +\-]{0,2}/, "");
+  const conflictContent = text.replace(/^[ +-]{0,2}/, "");
   if (
     conflictContent.startsWith("<<<<<<<") ||
     conflictContent.startsWith("=======") ||

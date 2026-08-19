@@ -1,13 +1,6 @@
 import { Button, Input, Tooltip } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import {
-  Check,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  GitMerge,
-  TriangleAlert,
-} from "lucide-react";
+import { Check, CheckCircle2, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { RunConflictFile, RunConflictResolution } from "@devloop/shared";
 import {

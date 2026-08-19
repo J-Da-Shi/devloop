@@ -1,4 +1,6 @@
-const { contextBridge, ipcRenderer } = require("electron") as typeof import("electron");
+import type * as Electron from "electron";
+
+const { contextBridge, ipcRenderer } = require("electron") as typeof Electron;
 
 const desktopApi = Object.freeze({
   platform: process.platform,

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { openDatabase, type DatabaseHandle } from "./client.js";
 import { DevLoopRepository } from "./repositories.js";
 
@@ -11,28 +11,6 @@ const createRepository = (): DevLoopRepository => {
   const handle = openDatabase({ filePath: ":memory:", migrationsFolder });
   handles.push(handle);
   return new DevLoopRepository(handle);
-};
-
-const createReadyTask = (
-  repository: DevLoopRepository,
-  projectId: string,
-  title: string,
-  priority: number,
-) => {
-  const draft = repository.createTask({
-    projectId,
-    targetBranch: "main",
-    title,
-    goal: `完成 ${title}`,
-    acceptanceCriteria: ["任务可以被 Worker 领取"],
-    priority,
-  }).value;
-  return repository.confirmTask(draft.id, "instance-owner", {
-    expectedVersion: draft.version,
-    idempotencyKey: randomUUID(),
-    baseStrategy: "LATEST_ACCEPTED",
-    baseRef: "main",
-  }).value;
 };
 
 afterEach(() => {
@@ -58,13 +36,12 @@ it("阻塞任务可直接重试，失败任务可退回草稿修改后重试", (
     acceptanceCriteria: ["保留运行历史"],
     priority: 80,
   }).value;
-  const ready = repository.confirmTask(draft.id, "instance-owner", {
+  const firstRevisionId = repository.confirmTask(draft.id, "instance-owner", {
     expectedVersion: draft.version,
     idempotencyKey: randomUUID(),
     baseStrategy: "LATEST_ACCEPTED",
     baseRef: "main",
-  }).value;
-  const firstRevisionId = ready.activeRevisionId;
+  }).value.activeRevisionId;
   const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
   expect(firstClaim).not.toBeNull();
   const blocked = repository.blockRun(
@@ -136,12 +113,12 @@ it("失败重试会冻结失败诊断，并从已保存的结果 Commit 继续",
     acceptanceCriteria: ["失败上下文会传给下一轮"],
     priority: 80,
   }).value;
-  const ready = repository.confirmTask(draft.id, "instance-owner", {
+  repository.confirmTask(draft.id, "instance-owner", {
     expectedVersion: draft.version,
     idempotencyKey: randomUUID(),
     baseStrategy: "LATEST_ACCEPTED",
     baseRef: "main",
-  }).value;
+  });
   const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
   expect(firstClaim).not.toBeNull();
   repository.recordRunEvent(firstClaim!.value.run.id, "runner.command", "pnpm test 退出码 1", {

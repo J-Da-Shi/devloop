@@ -9,7 +9,9 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/node_modules/**",
+      ".pnpm-store/**",
       ".devloop-data/**",
+      "pisper/**",
       "coverage/**",
       "playwright-report/**",
       "test-results/**",
@@ -19,7 +21,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.{ts,tsx}"],
+    files: ["**/*.{js,cjs,mjs,ts,tsx,cts,mts}"],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -32,6 +34,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/*.{cjs,cts}"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  {
     files: ["apps/web/**/*.{ts,tsx}"],
     plugins: {
       "react-hooks": reactHooks,
@@ -39,7 +47,9 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": ["warn", { "allowConstantExport": true }],
+      // Existing query-to-state synchronization is valid but cannot be optimized by React Compiler.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
 );

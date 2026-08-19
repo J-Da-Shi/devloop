@@ -1,7 +1,6 @@
 import type {
   BaseStrategy,
   DomainEvent,
-  PairedDevice,
   Project,
   RunApplicationResult,
   RunArtifact,

@@ -1,4 +1,4 @@
-import { Activity, Clock3, Columns3, FolderGit2, History, Puzzle, Settings } from "lucide-react";
+import { Activity, Columns3, FolderGit2, History, Puzzle, Settings } from "lucide-react";
 import { BoardPage } from "../pages/board-page.js";
 import { ProjectsPage } from "../pages/projects-page.js";
 import { RunsPage } from "../pages/runs-page.js";
