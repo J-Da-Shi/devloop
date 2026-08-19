@@ -1,106 +1,116 @@
-# DevLoop
+<p align="right"><strong>简体中文</strong> · <a href="./README.en.md">English</a></p>
 
-English version: [README.en.md](./README.en.md)
+<a id="top"></a>
 
-DevLoop 是一个单用户、本机运行的开发任务执行系统。用户在自己的电脑上安装 Electron 客户端，客户端会启动一个只监听 `127.0.0.1` 的本地服务进程，负责管理任务队列、Git Worktree、结构化验收结果和审核推送。所有数据都保存在用户当前设备。
+<p align="center">
+  <img src="./apps/web/public/devloop-mark.svg" width="112" alt="DevLoop 项目标志" />
+</p>
 
-每个项目可以独立选择使用 **Codex CLI** 还是 **Claude Code CLI** 作为执行器，配置保存在本机数据库，切换后立刻对下一次执行生效。
+<h1 align="center">DevLoop</h1>
 
-## 获取与使用
+<p align="center"><strong>把 AI 编程任务变成可审核、可验证的本地交付</strong></p>
 
-### 普通用户：下载 Electron 安装包
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-24%2B-1B1B1F?style=flat-square&logo=nodedotjs&logoColor=4F8CFF" alt="Node.js 24+" />
+  <img src="https://img.shields.io/badge/pnpm-10-1B1B1F?style=flat-square&logo=pnpm&logoColor=F69220" alt="pnpm 10" />
+  <img src="https://img.shields.io/badge/TypeScript-1B1B1F?style=flat-square&logo=typescript&logoColor=4F8CFF" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/React-1B1B1F?style=flat-square&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/Electron-1B1B1F?style=flat-square&logo=electron&logoColor=9FEAF9" alt="Electron" />
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-4F8CFF?style=flat-square" alt="MIT License" /></a>
+</p>
 
-即将提供。发布后可从 Releases 下载对应平台的 `.dmg` / `.exe` 安装包，安装后直接使用。
+<p align="center">
+  <a href="#quick-start">
+    <img src="https://img.shields.io/badge/从源码启动-DevLoop-4F8CFF?style=for-the-badge&logo=github&logoColor=1B1B1F" alt="从源码启动 DevLoop" />
+  </a>
+</p>
 
-在此之前请使用下面的源码方式运行。
+<p align="center">
+  <a href="#why-devloop">为什么是 DevLoop</a> ·
+  <a href="#how-it-delivers">如何交付</a> ·
+  <a href="#review-gate">审核闸门</a> ·
+  <a href="#quick-start">开始使用</a> ·
+  <a href="#preview-validation">预览与验证</a> ·
+  <a href="#local-boundary">本地边界</a> ·
+  <a href="#development">开发</a> ·
+  <a href="#license">许可</a>
+</p>
 
-### 开发者：使用源码运行
+---
 
-要求 Node.js 24 和 pnpm 10。
+<a id="why-devloop"></a>
+
+## 为什么是 DevLoop
+
+Codex CLI 和 Claude Code CLI 很擅长完成一次开发请求，但一个真实项目还需要知道：任务改了什么、是否满足验收、是否能运行、何时可以写入目标分支，以及驳回后如何在原结果上继续。
+
+DevLoop 是运行在本机的开发交付控制台。它把每次 Agent 执行放进独立 Git Worktree，将结果固定为 Commit，并把 Diff、日志、自动验证、冲突和人工审核汇集到同一条任务记录里。你可以同时推进多个项目，但仍由人决定最终是否写入分支。
+
+<a id="how-it-delivers"></a>
+
+## 从任务到分支
+
+```text
+任务目标与验收标准
+          |
+          v
+隔离 Worktree 中的 Codex CLI / Claude Code CLI
+          |
+          v
+结果 Commit + Diff + 执行日志
+          |
+          +---- Web 项目：隔离预览 + Playwright + 截图
+          |
+          v
+人工审核 / 冲突解决
+          |
+          v
+应用并推送目标分支，或以本轮结果继续迭代
+```
+
+每个项目可选择 Codex CLI 或 Claude Code CLI；Worker 可配置 1-10 个并发任务。开发任务在独立 Worktree 中运行，研究任务则以结构化结论进入审核。DevLoop 还会保存任务 Revision、Skill 快照和运行事件，让后续追溯不依赖某次终端输出。
+
+<a id="review-gate"></a>
+
+## 审核是交付闸门
+
+| 阶段 | DevLoop 负责什么                                  | 人负责什么                 |
+| ---- | ------------------------------------------------- | -------------------------- |
+| 执行 | 调度 CLI、记录事件、生成结果 Commit               | 定义目标、验收标准和执行器 |
+| 验证 | 启动隔离预览、运行 Playwright、保存截图与检查结果 | 判断产品行为是否符合预期   |
+| 审核 | 展示文件列表、补丁、冲突和 Agent 解决结果         | 批准、驳回，或手动解决冲突 |
+| 写入 | 校验目标分支状态后应用并安全推送                  | 决定何时让结果进入目标分支 |
+
+若目标分支在执行期间发生变化，DevLoop 会生成冲突预览。你可以在页面中处理冲突，也可以让 Agent 先生成解决方案再审核；未处理的冲突不能写入目标分支。驳回后的下一轮会以上一轮结果 Commit 为基础，再对齐最新目标分支继续执行。
+
+<a id="quick-start"></a>
+
+## 开始使用
+
+### 从源码启动
+
+需要 Node.js 24（`>=24 <27`）、pnpm 10，以及至少一个已安装并登录的执行器：`codex` 或 `claude`。
 
 ```bash
-git clone <本仓库地址>
+git clone https://github.com/J-Da-Shi/devloop.git
 cd devloop
 pnpm install
 pnpm dev
 ```
 
-`pnpm dev` 会同时启动本地服务、Web 页面和 Electron 客户端；`pnpm dev:web` 只启动本地服务和 Web 页面，在浏览器中打开 `http://127.0.0.1:5173`。
+`pnpm dev` 会启动本地服务、Web 页面和 Electron 客户端。只需浏览器界面时运行：
 
-默认调用当前用户已经可用的 Codex CLI。也可以在项目卡片上把执行器切换成 Claude Code CLI（需要本机已安装并登录 `claude`）。只想验证界面和任务状态时使用模拟执行器：
+```bash
+pnpm dev:web
+```
+
+然后访问 `http://127.0.0.1:5173`。若只想检查界面和状态流转，可使用内置模拟执行器：
 
 ```bash
 DEVLOOP_RUNNER=fake pnpm dev:web
 ```
 
-服务端环境变量如下。`pnpm dev` 不会自动加载项目根目录的 `.env`，需要在命令前设置、从 shell 导出，或通过进程管理器注入。
-
-```bash
-# 解析数据库迁移、Web 静态资源和输出 Schema 的仓库根目录；源码运行时默认是当前仓库。
-DEVLOOP_REPOSITORY_ROOT=/absolute/path/to/devloop
-
-# 服务监听地址；默认仅允许本机访问。
-DEVLOOP_HOST=127.0.0.1
-
-# 服务监听端口。
-DEVLOOP_PORT=4317
-
-# 是否允许监听非回环地址；DEVLOOP_HOST 不是本机地址时必须设为 true。
-DEVLOOP_ALLOW_LAN=false
-
-# 数据库、Git 仓库镜像、Worktree 和 Skill 的存储目录；相对路径基于仓库根目录。
-DEVLOOP_DATA_DIR=.devloop-data
-
-# 服务日志级别，传给 Fastify/Pino，例如 trace、debug、info、warn、error。
-DEVLOOP_LOG_LEVEL=info
-
-# 项目未显式指定执行器时的兜底值；可选 codex 或 fake。
-DEVLOOP_RUNNER=codex
-
-# Codex CLI 的命令名或绝对路径。
-DEVLOOP_CODEX_EXECUTABLE=codex
-
-# 是否让 Codex CLI 忽略用户 config.toml 和规则文件。
-DEVLOOP_CODEX_IGNORE_USER_CONFIG=false
-
-# Codex 连续无输出多久后判定为卡住并终止，单位毫秒；不是任务总执行时限。
-DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
-
-# Claude Code CLI 的命令名或绝对路径。
-DEVLOOP_CLAUDE_CODE_EXECUTABLE=claude
-
-# Claude Code 连续无输出多久后判定为卡住并终止，单位毫秒；不是任务总执行时限。
-DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
-
-# 任务进入待执行状态后，Worker 至少等待多久再领取，单位毫秒。
-DEVLOOP_AGENT_CLAIM_DELAY_MS=5000
-
-# Fake Runner 模拟一次执行所等待的时间，单位毫秒。
-DEVLOOP_FAKE_RUNNER_DELAY_MS=850
-
-# 自动预览启动后等待健康检查通过的最长时间，单位毫秒。
-DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
-
-# 在隔离预览 Worktree 中按锁文件安装依赖的最长时间，单位毫秒。
-DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS=600000
-
-# Playwright 页面加载、截图和基础检查的超时时间，单位毫秒。
-DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
-
-# 项目自定义 Playwright 命令的最长执行时间，单位毫秒。
-DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
-
-# 可选：指定已有的 Chromium/Chrome/Edge 可执行文件。未设置时按 Playwright、Chrome、Edge 顺序探测。
-DEVLOOP_PLAYWRIGHT_EXECUTABLE=
-```
-
-`DEVLOOP_CODEX_TIMEOUT_MS` 仅作为旧版本兼容别名保留；新配置应使用 `DEVLOOP_CODEX_STALL_TIMEOUT_MS`。
-
-预览不要求普通用户填写启动命令。任务完成后，DevLoop 优先使用项目页的“高级覆盖”，其次采用 Agent 返回的 Web 启动建议，最后自动扫描结果 Commit 中的 `package.json`，识别 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见启动脚本。对于本仓库，自动识别会选择 `apps/web`，而不会误用同时启动服务端和桌面端的根级 `pnpm dev`。DevLoop 会在结果 Commit 的隔离 Worktree 中根据最近的 `pnpm-lock.yaml`、`package-lock.json`、`yarn.lock` 或 Bun 锁文件自动安装依赖，再启动预览，运行基础 Playwright 检查并把截图、检查项和自定义交互测试输出附到审核页。无法可靠识别时会明确显示原因；此时可在项目页填写高级覆盖，例如 `npm run dev -- --host 127.0.0.1 --port {{port}}`。预览与测试进程不会继承 DevLoop 的 API Key、Git Token 等敏感环境变量，只保留必要的系统路径以及 `VITE_`、`NEXT_PUBLIC_`、`PUBLIC_` 开头的公开变量。
-
-Playwright 不会默认把 Chromium 打进桌面安装包。需要自动截图时，在运行环境执行 `pnpm exec playwright install chromium`，或通过 `DEVLOOP_PLAYWRIGHT_EXECUTABLE` 指向本机已有的兼容浏览器；没有浏览器时任务仍会进入审核，页面会显示跳过原因。
-
-### 打包桌面客户端
+### 桌面打包
 
 在 macOS 上生成 dmg / zip：
 
@@ -108,98 +118,55 @@ Playwright 不会默认把 Chromium 打进桌面安装包。需要自动截图�
 pnpm --filter @devloop/desktop make
 ```
 
-产物落在 `apps/desktop/out/make/`。桌面主进程支持以下环境变量：
+产物位于 `apps/desktop/out/make/`。打包客户端默认启动内置服务；设置 `DEVLOOP_SERVICE_URL` 后可改为连接已有服务。
+
+<a id="preview-validation"></a>
+
+## 预览与自动验证
+
+大多数项目不需要手动填写预览命令。DevLoop 按“项目高级覆盖 → Agent 返回的 Web 启动建议 → 结果 Commit 的 `package.json` 自动识别”确定预览方式，保守支持 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见脚本。
+
+预览从结果 Commit 的隔离 Worktree 启动，并根据最近的 `pnpm-lock.yaml`、`package-lock.json`、`yarn.lock` 或 Bun 锁文件安装依赖。服务就绪后，DevLoop 会检查页面加载与控制台错误、生成截图，并可执行项目自定义的 Playwright 命令。审核页可直接在桌面独立窗口或浏览器中打开预览。
+
+需要自动截图时安装 Chromium：
 
 ```bash
-# 改用外部 DevLoop Server；设置后，打包客户端不会启动内置服务。
-DEVLOOP_SERVICE_URL=http://127.0.0.1:4317
-
-# 覆盖界面加载地址；开发模式默认 http://127.0.0.1:5173，打包后默认使用服务地址。
-DEVLOOP_WEB_URL=http://127.0.0.1:5173
-
-# 启动时自动打开 Chromium DevTools；只有值为 1 时启用。
-DEVLOOP_OPEN_DEVTOOLS=1
-
-# 把 renderer console、加载失败和崩溃信息转发到主进程 stderr；只有值为 1 时启用。
-DEVLOOP_LOG_RENDERER=1
+pnpm exec playwright install chromium
 ```
 
-### 可选：多人共享部署
+也可设置 `DEVLOOP_PLAYWRIGHT_EXECUTABLE` 指向兼容的 Chrome、Chromium 或 Edge。没有可控浏览器时，任务仍会进入审核，页面会显示跳过原因。
 
-如果需要多台设备连接同一实例，可以把 DevLoop 部署到用户自己的服务器上。此路径不是主流程，详见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+<a id="local-boundary"></a>
 
-## 运行拓扑
+## 本地运行边界
 
-```text
-Electron 客户端 / 本机浏览器
-              |
-           127.0.0.1
-              |
-本机 DevLoop Server 进程
-├── 执行器注册表（Codex CLI / Claude Code CLI / Fake）
-├── SQLite（任务、运行事件、项目 runner 配置）
-├── Git 仓库与 Worktree
-└── Skill
+- DevLoop 默认只监听 `127.0.0.1`，没有注册、登录或多租户服务。
+- 数据库、Git 镜像、Worktree、Skill 与运行产物存放在 `DEVLOOP_DATA_DIR`；开发模式默认是仓库内 `.devloop-data`，打包应用使用系统应用数据目录。
+- 预览和 Playwright 进程不会继承 DevLoop 的 API Key、Git Token 等敏感环境变量，只保留启动 Web 所需的公开变量。
+- 审核通过前不会写入目标分支，也不会强制推送。
+- 如需局域网或服务器部署，必须在外层部署 HTTPS、访问控制和网络隔离；不要直接暴露 `4317` 端口。
+
+常用服务端配置：
+
+```bash
+# CLI 连续无输出多久后终止；不是任务总执行时限。
+DEVLOOP_CODEX_STALL_TIMEOUT_MS=1800000
+DEVLOOP_CLAUDE_CODE_STALL_TIMEOUT_MS=1800000
+
+# 隔离预览与 Playwright 的超时设置。
+DEVLOOP_PREVIEW_STARTUP_TIMEOUT_MS=90000
+DEVLOOP_PREVIEW_DEPENDENCY_INSTALL_TIMEOUT_MS=600000
+DEVLOOP_PLAYWRIGHT_TIMEOUT_MS=60000
+DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS=600000
 ```
 
-开发环境的数据保存在项目内 `.devloop-data`，正式 Electron 安装使用操作系统应用数据目录。
+Docker Compose 示例及其环境变量注释见 [`.env.example`](./.env.example)。
 
-## 执行器
+<a id="development"></a>
 
-DevLoop 在服务端维护一张 runner 注册表，`AgentWorker` 拉取任务时按 `project.runner` 挑选实例：
+## 开发
 
-| Runner          | ID            | 说明                                                                                                        |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| Codex CLI       | `codex`       | 默认执行器，需要本机已登录 `codex`                                                                          |
-| Claude Code CLI | `claude-code` | 与 Codex 契约完全一致（AgentResult schema、stall watchdog、JSON 修复、进程组管理），需要本机已登录 `claude` |
-| Fake            | `fake`        | 内置模拟执行器，用于验证 UI 与状态流转，不做真实修改                                                        |
-
-- 在项目卡片上直接下拉切换。fake 只作为环境兜底，不在项目选项中出现。
-- 若项目指向的 runner 未注册（例如未来卸载了某个 CLI），worker 会回退到默认 runner 并 emit `runner.fallback` 事件写入运行日志。
-- CLI 参数、事件流解析、prompt 规则细节请参阅 `packages/runners/src/codex-runner.ts` 与 `packages/runners/src/claude-code-runner.ts`。
-
-## 访问边界
-
-DevLoop 不提供注册、登录、管理员账户或多租户。所有请求使用内置的"实例所有者"身份。这意味着服务入口必须由部署环境保护：
-
-- 本机模式只监听 `127.0.0.1`。
-- 若走可选的多人共享部署，公网入口必须启用 HTTPS，并增加 Basic Auth、IP 白名单或其他外层保护。
-- 不要把 `4317` 端口直接开放到公网。
-
-## 当前能力
-
-- 通过 SSH Git 地址注册远程项目，或选择本机目录注册本地 Git 项目。
-- 每个项目独立选择 Codex CLI 或 Claude Code CLI 执行器。
-- 草稿达到 100 分后自动进入待执行。
-- 任务进入待执行 5 秒后由 Worker 原子领取。
-- 每次执行前自动 `fetch --prune origin`。
-- 目标分支不存在时从默认分支创建执行基线。
-- 在隔离 Git Worktree 中调用真实执行器 CLI。
-- 由本地解析 CLI 输出的 JSON 并进行一次格式修复重试。
-- 通过 SSE 实时刷新桌面和手机页面。
-- 执行中的任务可请求取消，Codex/Claude Code 主进程会收到 SIGTERM。进程组级取消（一并终止 CLI 拉起的子进程与工具调用）尚未接入。
-- 执行令牌轮换保证迟到结果不能覆盖任务状态。
-- 非执行中任务可软删除，历史记录继续保留。
-- 审核通过后安全推送远程目标分支，不进行强制推送。
-- 管理版本化的 DevLoop Skill 内容，并把已启用版本装配到任务执行中。
-- 读取运行环境中 CLI 已有的 Provider、原生 Skill 和 MCP 配置。
-
-Worker 会在每次领取任务时读取所有已启用 Skill 的当前版本，并把同一份快照注入主任务和自动冲突解决 Prompt。任务级 Skill 选择仍属于后续工作。
-
-当前 Worker 会校验最终 JSON 并创建结果 Commit，但还没有独立验证命令配置。独立测试命令及退出码审计属于下一阶段。
-
-## 项目文档
-
-- [开发方案](./DEVELOPMENT_PLAN.md)
-- [技术选型](./TECH_SELECTION.md)
-- [项目目录说明](./PROJECT_STRUCTURE.md)
-- [可选：多人共享部署说明](./DEPLOYMENT.md)
-
-## 开源协议
-
-本项目采用 [MIT License](./LICENSE) 开源。
-
-## 验证命令
+DevLoop 使用 pnpm workspace：Fastify 服务端、React Web、Electron 桌面端，以及数据库、Git、Runner、工作流和共享模型包。
 
 ```bash
 pnpm typecheck
@@ -207,3 +174,17 @@ pnpm test
 pnpm build
 git diff --check
 ```
+
+欢迎提交 Issue 和 Pull Request。请勿提交 API Key、Git 凭据、`.devloop-data` 中的个人数据，或任务生成的本地运行产物。
+
+<a id="license"></a>
+
+## 许可
+
+DevLoop 采用 [MIT License](./LICENSE) 开源。
+
+## 致谢
+
+感谢 Codex CLI、Claude Code、Electron、Fastify、Drizzle、Playwright 及本项目使用的开源软件。
+
+<p align="right"><a href="#top">返回顶部 ↑</a></p>
