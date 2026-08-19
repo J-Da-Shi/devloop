@@ -1,38 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Avatar, Button, Tag, Tooltip } from "antd";
-import {
-  Activity,
-  Clock3,
-  Columns3,
-  FolderGit2,
-  History,
-  Puzzle,
-  Settings,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { Clock3, Settings, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, queryKeys, useUiStore } from "../../core/index.js";
+import { footerNavigation, getPageTitle, mainNavigation } from "../../routes/index.js";
 import { ErrorPanel, LoadingPanel } from "../common/index.js";
 import { RealtimeSync } from "./realtime-sync.js";
-
-const navigation = [
-  { to: "/status", label: "状态", icon: Activity },
-  { to: "/board", label: "任务", icon: Columns3 },
-  { to: "/projects", label: "项目", icon: FolderGit2 },
-  { to: "/skills", label: "技能", icon: Puzzle },
-  { to: "/runs", label: "执行", icon: History },
-] as const;
-
-const pageTitle: Record<string, string> = {
-  "/status": "执行概览",
-  "/board": "任务看板",
-  "/projects": "项目",
-  "/skills": "Skill 管理",
-  "/runs": "执行记录",
-  "/settings": "设置",
-};
 
 function SystemClock() {
   const [time, setTime] = useState(() => new Date());
@@ -89,12 +63,12 @@ export function AppShell() {
           </span>
         </Link>
         <nav className="sidebar-nav" aria-label="主导航">
-          {navigation.map((item) => {
+          {mainNavigation.map((item) => {
             const Icon = item.icon;
             return (
               <Link
-                key={item.to}
-                to={item.to}
+                key={item.path}
+                to={item.path}
                 className="nav-link"
                 activeProps={{ className: "nav-link active" }}
               >
@@ -105,10 +79,20 @@ export function AppShell() {
           })}
         </nav>
         <div className="sidebar-footer">
-          <Link to="/settings" className="nav-link" activeProps={{ className: "nav-link active" }}>
-            <Settings size={18} aria-hidden="true" />
-            <span>设置</span>
-          </Link>
+          {footerNavigation.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                className="nav-link"
+                activeProps={{ className: "nav-link active" }}
+              >
+                <Icon size={18} aria-hidden="true" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
           <div className="identity-row">
             <Avatar className="identity-avatar" shape="square" size={32}>
               {session.data.identity.name.slice(0, 1)}
@@ -128,7 +112,7 @@ export function AppShell() {
             <strong>DevLoop</strong>
           </div>
           <div className="topbar-title">
-            <h1>{pageTitle[pathname] ?? "DevLoop"}</h1>
+            <h1>{getPageTitle(pathname)}</h1>
           </div>
           <div className="topbar-actions">
             <SystemClock />
@@ -140,7 +124,7 @@ export function AppShell() {
             >
               {connected ? "实时" : realtimeStatus === "disabled" ? "已关闭实时" : "重连中"}
             </Tag>
-            <Link to="/settings" aria-label="设置">
+            <Link to={footerNavigation[0]?.path ?? "/settings"} aria-label="设置">
               <Tooltip title="设置">
                 <Button
                   type="text"
@@ -161,14 +145,14 @@ export function AppShell() {
       <nav
         className="mobile-nav"
         aria-label="手机主导航"
-        style={{ "--mobile-nav-count": navigation.length } as React.CSSProperties}
+        style={{ "--mobile-nav-count": mainNavigation.length } as React.CSSProperties}
       >
-        {navigation.map((item) => {
+        {mainNavigation.map((item) => {
           const Icon = item.icon;
           return (
             <Link
-              key={item.to}
-              to={item.to}
+              key={item.path}
+              to={item.path}
               className="mobile-nav-link"
               activeProps={{ className: "mobile-nav-link active" }}
             >

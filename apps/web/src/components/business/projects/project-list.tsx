@@ -2,8 +2,8 @@ import { Flex, Select } from "antd";
 import { GitBranch, HardDrive, RefreshCw, Settings2 } from "lucide-react";
 import type { Project, ProjectRunner } from "@devloop/shared";
 import { formatDateTime, shortCommit } from "../../../core/index.js";
+import { runnerLabels, type ProjectRunnerOption } from "../../../types/index.js";
 import { IconButton } from "../../common/index.js";
-import { runnerLabels, type ProjectRunnerOption } from "./types.js";
 
 interface ProjectListProps {
   projects: Project[];

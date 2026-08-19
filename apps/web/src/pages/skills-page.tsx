@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, queryKeys } from "../core/index.js";
+import type { SkillEditorState, SkillValidationState } from "../types/index.js";
 import {
   ConfirmDialog,
   EmptyState,
@@ -32,15 +33,7 @@ description: 描述这个 Skill 的适用场景
 2. 写明需要检查的结果。
 `;
 
-interface EditorState {
-  target: string | "new" | null;
-  content: string;
-  baseline: string;
-  expectedVersion: number | null;
-  currentVersionId: string | null;
-}
-
-const emptyEditor: EditorState = {
+const emptyEditor: SkillEditorState = {
   target: null,
   content: "",
   baseline: "",
@@ -68,11 +61,11 @@ export function SkillsPage() {
   const queryClient = useQueryClient();
   const { notify } = useNotice();
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
-  const [editor, setEditor] = useState<EditorState>(emptyEditor);
+  const [editor, setEditor] = useState<SkillEditorState>(emptyEditor);
   const [search, setSearch] = useState("");
   const [pendingTarget, setPendingTarget] = useState<string | "new" | null>(null);
   const [validation, setValidation] = useState<SkillValidationResult | null>(null);
-  const [validationState, setValidationState] = useState<"idle" | "waiting" | "checking">("idle");
+  const [validationState, setValidationState] = useState<SkillValidationState>("idle");
   const validationRequest = useRef(0);
 
   const skills = useQuery({ queryKey: queryKeys.skills, queryFn: api.skills });

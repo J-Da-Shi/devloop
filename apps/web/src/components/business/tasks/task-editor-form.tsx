@@ -3,8 +3,7 @@ import { Play, Save } from "lucide-react";
 import type { Project, Task } from "@devloop/shared";
 import type { UseFormReturn } from "react-hook-form";
 import { Controller } from "react-hook-form";
-import type { TaskFormValues } from "./task-form.js";
-import { taskTypeOptions } from "./task-form.js";
+import { taskTypeOptions, type TaskFormValues } from "../../../types/index.js";
 
 interface TaskEditorFormProps {
   form: UseFormReturn<TaskFormValues>;

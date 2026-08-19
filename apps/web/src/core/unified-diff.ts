@@ -1,11 +1,4 @@
-export type DiffLineKind = "add" | "del" | "hunk" | "meta" | "conflict" | "context";
-
-export interface UnifiedDiffLine {
-  text: string;
-  kind: DiffLineKind;
-  oldLineNumber: number | null;
-  newLineNumber: number | null;
-}
+import type { DiffLineKind, UnifiedDiffLine } from "../types/index.js";
 
 interface HunkPosition {
   oldLineNumber: number;

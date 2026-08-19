@@ -14,8 +14,8 @@ import {
   findConflictBlocks,
   hasUnresolvedConflictMarkers,
   resolveConflictBlock,
-  type ConflictChoice,
 } from "../../../core/index.js";
+import type { ConflictChoice } from "../../../types/index.js";
 
 interface ConflictResolverProps {
   conflict: RunConflictFile;

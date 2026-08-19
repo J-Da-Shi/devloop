@@ -9,13 +9,12 @@ import {
 import { Flex } from "antd";
 import type { SkillDetails, SkillValidationResult } from "@devloop/shared";
 import { formatDateTime } from "../../../core/index.js";
-
-type ValidationState = "idle" | "waiting" | "checking";
+import type { SkillValidationState } from "../../../types/index.js";
 
 interface SkillInspectorProps {
   canEdit: boolean;
   isCreating: boolean;
-  validationState: ValidationState;
+  validationState: SkillValidationState;
   validation: SkillValidationResult | null;
   details: SkillDetails | undefined;
   currentVersionId: string | null;

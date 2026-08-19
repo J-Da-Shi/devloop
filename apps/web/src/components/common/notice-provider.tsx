@@ -1,7 +1,6 @@
 import { message as antdMessage } from "antd";
 import { createContext, useCallback, useContext, useMemo } from "react";
-
-type NoticeTone = "success" | "danger" | "info";
+import type { NoticeTone } from "../../types/index.js";
 
 interface NoticeContextValue {
   notify(message: string, tone?: NoticeTone): void;

@@ -10,19 +10,13 @@ import type {
   RunConflictResolution,
 } from "@devloop/shared";
 import { api, queryKeys } from "../../../core/index.js";
+import type { RunDiffApprovalState } from "../../../types/index.js";
 import { EmptyState, ErrorPanel, LoadingPanel, useNotice } from "../../common/index.js";
 import { DiffFileBrowser } from "./diff-file-browser.js";
 import { DiffFileDetail } from "./diff-file-detail.js";
 import { conflictResolutionsEqual, findFileConflict } from "./diff-utils.js";
 
 const noConflicts: RunConflictFile[] = [];
-
-export interface RunDiffApprovalState {
-  expectedTargetCommit: string | null;
-  conflictResolutions: RunConflictResolution[];
-  unresolvedPaths: string[];
-  agentResolving: boolean;
-}
 
 interface RunDiffPanelProps {
   runId: string;

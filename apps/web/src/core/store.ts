@@ -1,6 +1,5 @@
 import { create } from "zustand";
-
-export type RealtimeStatus = "connecting" | "connected" | "offline" | "disabled";
+import type { RealtimeStatus } from "../types/index.js";
 
 interface UiState {
   realtimeEnabled: boolean;

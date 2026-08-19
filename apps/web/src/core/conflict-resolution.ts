@@ -1,12 +1,4 @@
-export type ConflictChoice = "target" | "result" | "both";
-
-export interface ConflictBlock {
-  startLine: number;
-  separatorLine: number;
-  endLine: number;
-  startOffset: number;
-  endOffset: number;
-}
+import type { ConflictBlock, ConflictChoice } from "../types/index.js";
 
 const markerPattern = /^(?:<{7}|={7}|>{7})(?: .*)?$/;
 const startMarkerPattern = /^<{7}(?: .*)?$/;

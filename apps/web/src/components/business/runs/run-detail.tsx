@@ -13,8 +13,8 @@ import {
   formatDuration,
   runStatusText,
   taskTypeText,
-  type RunDetails,
 } from "../../../core/index.js";
+import type { RunDetails } from "../../../types/index.js";
 import { RunEventList } from "./run-event-list.js";
 import { StatusBadge } from "../../common/index.js";
 

@@ -5,6 +5,12 @@ import { useState } from "react";
 import type { Project, ProjectRunner } from "@devloop/shared";
 import { api, queryKeys } from "../core/index.js";
 import {
+  runnerLabels,
+  type PreviewFormValues,
+  type ProjectRegistration,
+  type ProjectRunnerOption,
+} from "../types/index.js";
+import {
   EmptyState,
   ErrorPanel,
   InlineNotice,
@@ -15,10 +21,6 @@ import {
   ProjectList,
   ProjectPreviewSettingsDialog,
   ProjectRegistrationForm,
-  runnerLabels,
-  type PreviewFormValues,
-  type ProjectRegistration,
-  type ProjectRunnerOption,
 } from "../components/business/projects/index.js";
 
 export function ProjectsPage() {
