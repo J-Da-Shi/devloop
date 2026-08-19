@@ -1,4 +1,9 @@
-import type { RunStatus, TaskStatus, WorkerStatus } from "@devloop/shared";
+import type { RunStatus, TaskStatus, TaskType, WorkerStatus } from "@devloop/shared";
+
+export const taskTypeText: Record<TaskType, string> = {
+  DEVELOPMENT: "代码开发",
+  RESEARCH: "互联网研究",
+};
 
 export const taskStatusText: Record<TaskStatus, string> = {
   DRAFT: "草稿",

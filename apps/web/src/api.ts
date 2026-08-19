@@ -60,6 +60,7 @@ export interface RunApprovalResponse {
   task: Task;
   publication?: RunPublishResult;
   application?: RunApplicationResult;
+  research?: { status: "accepted"; summary: string };
   replayed: boolean;
 }
 

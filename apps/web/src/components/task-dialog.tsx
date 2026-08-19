@@ -15,9 +15,15 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Project, RunApplicationResult, RunPublishResult, Task } from "@devloop/shared";
+import type {
+  Project,
+  RunApplicationResult,
+  RunPublishResult,
+  Task,
+  TaskType,
+} from "@devloop/shared";
 import { api, queryKeys } from "../api.js";
-import { formatDateTime, runStatusText, taskStatusText } from "../utils.js";
+import { formatDateTime, runStatusText, taskStatusText, taskTypeText } from "../utils.js";
 import { ConfirmDialog } from "./confirm-dialog.js";
 import { ErrorPanel, InlineNotice, LoadingPanel } from "./feedback.js";
 import { useNotice } from "./notice-provider.js";
@@ -28,6 +34,7 @@ import { StatusBadge } from "./status-badge.js";
 
 const taskFormSchema = z.object({
   projectId: z.string().uuid("请选择项目"),
+  taskType: z.enum(["DEVELOPMENT", "RESEARCH"]),
   targetBranch: z.string().trim().min(1, "请输入目标分支").max(200, "分支名过长"),
   title: z.string().trim().min(1, "请输入任务标题").max(160, "标题不能超过 160 个字符"),
   goal: z.string().trim().min(1, "请输入任务目标").max(8_000, "目标内容过长"),
@@ -63,6 +70,10 @@ const splitCriteria = (value: string): string[] =>
     .filter(Boolean);
 
 const roleAllowsEdit = (role: "viewer" | "operator" | "editor"): boolean => role === "editor";
+const taskTypeOptions: Array<{ label: string; value: TaskType }> = [
+  { label: "代码开发", value: "DEVELOPMENT" },
+  { label: "互联网研究", value: "RESEARCH" },
+];
 
 export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogProps) {
   const queryClient = useQueryClient();
@@ -85,6 +96,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     const project = projects.find((item) => item.id === projectId);
     return {
       projectId,
+      taskType: task?.taskType ?? "DEVELOPMENT",
       targetBranch: task?.targetBranch ?? project?.defaultBaseRef ?? "HEAD",
       title: task?.title ?? "",
       goal: task?.goal ?? "",
@@ -97,6 +109,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     resolver: zodResolver(taskFormSchema),
     defaultValues: defaults,
   });
+  const selectedTaskType = form.watch("taskType");
 
   useEffect(() => {
     if (open) {
@@ -119,6 +132,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       const acceptanceCriteria = splitCriteria(values.criteriaText);
       if (task) {
         return api.updateTask(task.id, {
+          taskType: values.taskType,
           targetBranch: values.targetBranch,
           title: values.title,
           goal: values.goal,
@@ -131,6 +145,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       }
       return api.createTask({
         projectId: values.projectId,
+        taskType: values.taskType,
         targetBranch: values.targetBranch,
         title: values.title,
         goal: values.goal,
@@ -214,6 +229,10 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         action === "approve" && "application" in data
           ? (data.application as RunApplicationResult | undefined)
           : null;
+      const research =
+        action === "approve" && "research" in data
+          ? (data.research as { status: "accepted"; summary: string } | undefined)
+          : null;
       const messages: Record<Exclude<ConfirmAction, null>, string> = {
         confirm: "任务已确认并加入队列",
         unconfirm: "任务已撤回为草稿",
@@ -223,13 +242,15 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         cancel: "执行已取消，Worktree 和日志已保留",
         delete: "任务已删除，执行历史仍会保留",
         approve:
-          application?.status === "already_applied"
-            ? `本地分支 ${application.branch} 已包含该结果`
-            : application
-              ? `结果已写入本地分支 ${application.branch}`
-              : publication?.status === "already_pushed"
-                ? `远程分支 ${publication.branch} 已包含该结果`
-                : `结果已推送到远程分支 ${publication?.branch ?? targetBranch}`,
+          research?.status === "accepted"
+            ? "研究总结已通过审核"
+            : application?.status === "already_applied"
+              ? `本地分支 ${application.branch} 已包含该结果`
+              : application
+                ? `结果已写入本地分支 ${application.branch}`
+                : publication?.status === "already_pushed"
+                  ? `远程分支 ${publication.branch} 已包含该结果`
+                  : `结果已推送到远程分支 ${publication?.branch ?? targetBranch}`,
         reject: "审核意见已提交，任务将重新排队",
       };
       notify(messages[action]);
@@ -258,7 +279,8 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const canDelete = Boolean(task && task.status !== "RUNNING" && canEdit);
   const pending = saveMutation.isPending || commandMutation.isPending;
   const taskProject = projects.find((project) => project.id === task?.projectId);
-  const localProject = taskProject?.repositoryUrl === null;
+  const researchTask = (task?.taskType ?? selectedTaskType) === "RESEARCH";
+  const localProject = !researchTask && taskProject?.repositoryUrl === null;
   const targetBranch = task?.targetBranch ?? runDetails.data?.run.targetBranch ?? "目标分支";
   const unresolvedConflictCount = diffApprovalState?.unresolvedPaths.length ?? 0;
   const agentResolving = diffApprovalState?.agentResolving ?? false;
@@ -276,10 +298,11 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       danger: false,
     },
     continue: {
-      title: "基于当前完成结果继续迭代？",
-      description:
-        "任务会转为可编辑草稿，已有 Revision、执行记录和审核结果全部保留。补充新需求并确认后，下一轮会以目标分支最新接受的代码为基础。",
-      label: "继续迭代",
+      title: researchTask ? "基于当前总结继续研究？" : "基于当前完成结果继续迭代？",
+      description: researchTask
+        ? "任务会转为可编辑草稿，已有总结、来源记录和审核结果全部保留。补充研究要求后可再次执行。"
+        : "任务会转为可编辑草稿，已有 Revision、执行记录和审核结果全部保留。补充新需求并确认后，下一轮会以目标分支最新接受的代码为基础。",
+      label: researchTask ? "继续研究" : "继续迭代",
       danger: false,
     },
     retry: {
@@ -296,29 +319,38 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
     },
     cancel: {
       title: "取消当前执行？",
-      description:
-        "Codex CLI 会被终止，任务和 Run 将进入已取消状态；Worktree、代码修改和运行日志会保留。",
+      description: researchTask
+        ? "Agent 进程会被终止，任务和 Run 将进入已取消状态；隔离工作区和运行日志会保留。"
+        : "Codex CLI 会被终止，任务和 Run 将进入已取消状态；Worktree、代码修改和运行日志会保留。",
       label: "确认取消",
       danger: true,
     },
     delete: {
       title: "删除这个任务？",
-      description: "任务会从看板和调度队列中移除，但 Revision、执行记录、日志和 Git 结果仍会保留。",
+      description: researchTask
+        ? "任务会从看板和调度队列中移除，但 Revision、研究总结和运行日志仍会保留。"
+        : "任务会从看板和调度队列中移除，但 Revision、执行记录、日志和 Git 结果仍会保留。",
       label: "确认删除",
       danger: true,
     },
     approve: {
-      title: localProject ? "通过并写入本地项目？" : "通过并推送本次结果？",
-      description: localProject
-        ? unresolvedConflictCount > 0
-          ? `仍有 ${unresolvedConflictCount} 个冲突文件未解决，继续写入会被拒绝。`
-          : `DevLoop 会把结果安全写入本地分支 ${targetBranch}。目标文件存在未提交修改或分支已变化时会停止，不会覆盖现有工作。`
-        : `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
-      label: localProject ? "通过并写入" : "通过并推送",
+      title: researchTask
+        ? "通过这份研究总结？"
+        : localProject
+          ? "通过并写入本地项目？"
+          : "通过并推送本次结果？",
+      description: researchTask
+        ? "通过后任务将标记为已完成，不会向项目分支写入任何文件。"
+        : localProject
+          ? unresolvedConflictCount > 0
+            ? `仍有 ${unresolvedConflictCount} 个冲突文件未解决，继续写入会被拒绝。`
+            : `DevLoop 会把结果安全写入本地分支 ${targetBranch}。目标文件存在未提交修改或分支已变化时会停止，不会覆盖现有工作。`
+          : `DevLoop 会把结果安全推送到远程分支 ${targetBranch}。远程分支已前进时不会强制覆盖，任务会继续停留在审核状态。`,
+      label: researchTask ? "通过总结" : localProject ? "通过并写入" : "通过并推送",
       danger: false,
     },
     reject: {
-      title: "驳回并重新排队？",
+      title: researchTask ? "驳回并重新研究？" : "驳回并重新排队？",
       description: "审核意见会写入新 Revision，Worker 将按新版本重新执行。",
       label: "驳回结果",
       danger: true,
@@ -355,7 +387,10 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
             </StatusBadge>
             <span>分数 {task.priority}</span>
             <span>版本 {task.version}</span>
-            <span>{task.autoResolveConflicts ? "自动解决冲突" : "人工解决冲突"}</span>
+            <span>{taskTypeText[task.taskType]}</span>
+            {task.taskType === "DEVELOPMENT" ? (
+              <span>{task.autoResolveConflicts ? "自动解决冲突" : "人工解决冲突"}</span>
+            ) : null}
           </div>
         ) : null}
 
@@ -373,6 +408,20 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 void form.handleSubmit((values) => saveMutation.mutate(values))();
               }}
             >
+              <Form.Item label="任务类型" htmlFor="task-type" required>
+                <Controller
+                  control={form.control}
+                  name="taskType"
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      id="task-type"
+                      disabled={!canEdit}
+                      options={taskTypeOptions}
+                    />
+                  )}
+                />
+              </Form.Item>
               <Form.Item
                 label="项目"
                 required
@@ -403,24 +452,26 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                   )}
                 />
               </Form.Item>
-              <Form.Item
-                label="目标分支"
-                required
-                validateStatus={form.formState.errors.targetBranch ? "error" : ""}
-                help={form.formState.errors.targetBranch?.message}
-              >
-                <Controller
-                  control={form.control}
-                  name="targetBranch"
-                  render={({ field }) => (
-                    <Input
-                      {...field}
-                      disabled={!canEdit}
-                      placeholder="例如 feature/mobile-editor"
-                    />
-                  )}
-                />
-              </Form.Item>
+              {selectedTaskType === "DEVELOPMENT" ? (
+                <Form.Item
+                  label="目标分支"
+                  required
+                  validateStatus={form.formState.errors.targetBranch ? "error" : ""}
+                  help={form.formState.errors.targetBranch?.message}
+                >
+                  <Controller
+                    control={form.control}
+                    name="targetBranch"
+                    render={({ field }) => (
+                      <Input
+                        {...field}
+                        disabled={!canEdit}
+                        placeholder="例如 feature/mobile-editor"
+                      />
+                    )}
+                  />
+                </Form.Item>
+              ) : null}
               <Form.Item
                 label="标题"
                 required
@@ -482,27 +533,29 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                   )}
                 />
               </Form.Item>
-              <Form.Item
-                label="自动解决冲突"
-                htmlFor="task-auto-resolve-conflicts"
-                tooltip="Codex 完成开发后会检查目标分支；存在冲突时先自动解决，再进入待审核。"
-                className="field-compact"
-              >
-                <Controller
-                  control={form.control}
-                  name="autoResolveConflicts"
-                  render={({ field }) => (
-                    <Switch
-                      id="task-auto-resolve-conflicts"
-                      checked={field.value}
-                      disabled={!canEdit}
-                      checkedChildren="开启"
-                      unCheckedChildren="关闭"
-                      onChange={field.onChange}
-                    />
-                  )}
-                />
-              </Form.Item>
+              {selectedTaskType === "DEVELOPMENT" ? (
+                <Form.Item
+                  label="自动解决冲突"
+                  htmlFor="task-auto-resolve-conflicts"
+                  tooltip="Codex 完成开发后会检查目标分支；存在冲突时先自动解决，再进入待审核。"
+                  className="field-compact"
+                >
+                  <Controller
+                    control={form.control}
+                    name="autoResolveConflicts"
+                    render={({ field }) => (
+                      <Switch
+                        id="task-auto-resolve-conflicts"
+                        checked={field.value}
+                        disabled={!canEdit}
+                        checkedChildren="开启"
+                        unCheckedChildren="关闭"
+                        onChange={field.onChange}
+                      />
+                    )}
+                  />
+                </Form.Item>
+              ) : null}
               <div className="dialog-actions">
                 {task && canEdit ? (
                   <Button
@@ -531,11 +584,15 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
           <>
             <div className="task-readonly task-readonly-summary" aria-label="任务概要">
               <section>
-                <h3>目标分支</h3>
-                <code>
-                  <GitBranch size={15} />
-                  {task?.targetBranch}
-                </code>
+                <h3>{researchTask ? "任务类型" : "目标分支"}</h3>
+                {researchTask ? (
+                  <p>{task ? taskTypeText[task.taskType] : "互联网研究"}</p>
+                ) : (
+                  <code>
+                    <GitBranch size={15} />
+                    {task?.targetBranch}
+                  </code>
+                )}
               </section>
               <section>
                 <h3>任务目标</h3>
@@ -554,7 +611,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
               <div className="task-readonly task-readonly-details">
                 {task?.latestRunId ? (
                   <section>
-                    <h3>最近执行</h3>
+                    <h3>{researchTask ? "最近研究" : "最近执行"}</h3>
                     {runDetails.isPending ? <LoadingPanel label="正在加载执行记录" /> : null}
                     {runDetails.isError ? <ErrorPanel error={runDetails.error} /> : null}
                     {runDetails.data ? (
@@ -574,7 +631,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     ) : null}
                   </section>
                 ) : null}
-                {task?.latestRunId && runDetails.data?.run.resultCommit ? (
+                {!researchTask && task?.latestRunId && runDetails.data?.run.resultCommit ? (
                   <section>
                     <h3>代码变更</h3>
                     <RunDiffPanel
@@ -590,7 +647,8 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                     />
                   </section>
                 ) : null}
-                {task?.latestRunId &&
+                {!researchTask &&
+                task?.latestRunId &&
                 runDetails.data &&
                 (runDetails.data.run.status === "SUCCEEDED" ||
                   runDetails.data.events.some((event) =>
@@ -633,7 +691,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                         onClick={() => setConfirmAction("approve")}
                         disabled={pending || agentResolving}
                       >
-                        {localProject ? "通过并写入" : "通过并推送"}
+                        {researchTask ? "通过总结" : localProject ? "通过并写入" : "通过并推送"}
                       </Button>
                     </div>
                   </section>
@@ -670,15 +728,19 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                 ) : null}
                 {task?.status === "COMPLETED" && runDetails.data ? (
                   <section className="apply-actions">
-                    <h3>{localProject ? "本地目标分支" : "远程目标分支"}</h3>
+                    <h3>
+                      {researchTask ? "研究结果" : localProject ? "本地目标分支" : "远程目标分支"}
+                    </h3>
                     <InlineNotice tone="success">
-                      {localProject
-                        ? `本次 Run 结果已写入本地分支 ${runDetails.data.run.targetBranch}。`
-                        : `本次 Run 结果已推送到 ${runDetails.data.run.targetBranch}${
-                            runDetails.data.run.pushedCommit
-                              ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
-                              : ""
-                          }。`}
+                      {researchTask
+                        ? "本次研究总结已通过审核，项目分支未被修改。"
+                        : localProject
+                          ? `本次 Run 结果已写入本地分支 ${runDetails.data.run.targetBranch}。`
+                          : `本次 Run 结果已推送到 ${runDetails.data.run.targetBranch}${
+                              runDetails.data.run.pushedCommit
+                                ? `，Commit ${runDetails.data.run.pushedCommit.slice(0, 10)}`
+                                : ""
+                            }。`}
                     </InlineNotice>
                     {canEdit ? (
                       <div className="dialog-actions">
@@ -688,7 +750,7 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                           onClick={() => setConfirmAction("continue")}
                           disabled={pending}
                         >
-                          继续迭代
+                          {researchTask ? "继续研究" : "继续迭代"}
                         </Button>
                       </div>
                     ) : null}

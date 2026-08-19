@@ -663,7 +663,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       throw new HttpError(503, "预览服务未启用", "PREVIEW_SERVICE_UNAVAILABLE");
     }
     const { runId } = runParamSchema.parse(request.params);
-    const { run, project, repositoryPath } = resolveRunRepositoryPath(runId);
+    const { run, task, project, repositoryPath } = resolveRunRepositoryPath(runId);
+    if (task.taskType === "RESEARCH") {
+      throw new HttpError(409, "互联网研究任务没有可预览的代码结果", "RUN_NOT_PREVIEWABLE");
+    }
     if (run.status !== "SUCCEEDED" || !run.resultCommit) {
       throw new HttpError(409, "只有已经生成结果 Commit 的成功执行可以预览", "RUN_NOT_PREVIEWABLE");
     }
@@ -868,6 +871,16 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       return { ...replay, replayed: true };
     }
     const approval = repository.getRunApprovalContext(runId, input.expectedVersion);
+    if (approval.type === "research") {
+      const result = repository.approveResearchRun(
+        runId,
+        identity.id,
+        input.expectedVersion,
+        input.idempotencyKey,
+      );
+      publish(eventBus, result);
+      return { ...result.value, replayed: result.replayed };
+    }
     if (approval.type === "remote") {
       const publication = await gitService.pushResult(approval.context);
       const result = repository.approvePublishedRun(

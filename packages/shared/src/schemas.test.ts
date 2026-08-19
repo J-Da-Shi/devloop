@@ -4,6 +4,7 @@ import {
   createTaskInputSchema,
   resolveRunConflictsInputSchema,
   runConflictAgentResolutionSchema,
+  updateTaskInputSchema,
 } from "./schemas.js";
 
 const command = {
@@ -26,6 +27,19 @@ describe("createTaskInputSchema", () => {
     expect(
       createTaskInputSchema.parse({ ...input, autoResolveConflicts: false }).autoResolveConflicts,
     ).toBe(false);
+  });
+
+  it("默认创建代码开发任务，并接受互联网研究类型", () => {
+    expect(createTaskInputSchema.parse(input).taskType).toBe("DEVELOPMENT");
+    expect(createTaskInputSchema.parse({ ...input, taskType: "RESEARCH" }).taskType).toBe(
+      "RESEARCH",
+    );
+    expect(
+      updateTaskInputSchema.parse({
+        taskType: "RESEARCH",
+        ...command,
+      }).taskType,
+    ).toBe("RESEARCH");
   });
 });
 

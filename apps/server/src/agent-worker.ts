@@ -349,6 +349,7 @@ export class AgentWorker {
         {
           runId: claimed.run.id,
           taskId: claimed.task.id,
+          taskType: claimed.taskType,
           title: claimed.title,
           goal: claimed.goal,
           acceptanceCriteria: claimed.acceptanceCriteria,
@@ -368,6 +369,21 @@ export class AgentWorker {
       }
       const summary = formatRunnerResult(result);
       if (result.outcome === "succeeded") {
+        if (claimed.taskType === "RESEARCH") {
+          this.publish(
+            this.repository.setRunPhase(
+              claimed.run.id,
+              claimed.run.executionToken,
+              "PREPARING_REVIEW",
+              "runner.review",
+              "互联网研究已完成，正在准备总结供用户审核",
+            ),
+          );
+          this.publish(
+            this.repository.completeRun(claimed.run.id, claimed.run.executionToken, summary),
+          );
+          return;
+        }
         const committedResult = await this.commitWorkspace(
           claimed,
           workspace.path,
@@ -543,6 +559,38 @@ export class AgentWorker {
     }
     if (!this.options.gitService || !this.options.worktreesPath) {
       throw new Error("真实执行器缺少 Git Worktree 配置");
+    }
+    if (claimed.taskType === "RESEARCH") {
+      const baseCommit = claimed.run.baseCommit;
+      if (!baseCommit) {
+        throw new Error("研究任务缺少可用于隔离工作区的项目基线 Commit");
+      }
+      this.publish(
+        this.repository.setRunPhase(
+          claimed.run.id,
+          claimed.run.executionToken,
+          "PREPARING",
+          "runner.preparing",
+          "正在准备互联网研究脚本的隔离工作区",
+        ),
+      );
+      const worktreePath = resolve(this.options.worktreesPath, claimed.run.id);
+      const branchName = `devloop/run/${claimed.run.id}`;
+      await this.options.gitService.createWorktree({
+        repositoryPath: claimed.projectPath,
+        worktreePath,
+        branchName,
+        baseCommit,
+        signal,
+        onProcessGroupId,
+      });
+      this.publish(
+        this.repository.setRunWorkspace(claimed.run.id, claimed.run.executionToken, {
+          worktreePath,
+          branchName,
+        }),
+      );
+      return { path: worktreePath, baseCommit };
     }
     this.publish(
       this.repository.setRunPhase(

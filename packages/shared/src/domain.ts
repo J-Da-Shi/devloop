@@ -31,6 +31,7 @@ export const workerConcurrencyMax = 10;
 export const deviceRoles = ["viewer", "operator", "editor"] as const;
 export const baseStrategies = ["LATEST_ACCEPTED", "PINNED"] as const;
 export const projectRunners = ["codex", "claude-code"] as const;
+export const taskTypes = ["DEVELOPMENT", "RESEARCH"] as const;
 
 export const taskStatusSchema = z.enum(taskStatuses);
 export const runStatusSchema = z.enum(runStatuses);
@@ -38,6 +39,7 @@ export const workerStatusSchema = z.enum(workerStatuses);
 export const deviceRoleSchema = z.enum(deviceRoles);
 export const baseStrategySchema = z.enum(baseStrategies);
 export const projectRunnerSchema = z.enum(projectRunners);
+export const taskTypeSchema = z.enum(taskTypes);
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 export type RunStatus = z.infer<typeof runStatusSchema>;
@@ -45,6 +47,7 @@ export type WorkerStatus = z.infer<typeof workerStatusSchema>;
 export type DeviceRole = z.infer<typeof deviceRoleSchema>;
 export type BaseStrategy = z.infer<typeof baseStrategySchema>;
 export type ProjectRunner = z.infer<typeof projectRunnerSchema>;
+export type TaskType = z.infer<typeof taskTypeSchema>;
 
 export interface Project {
   id: string;
@@ -105,6 +108,7 @@ export interface Task {
   id: string;
   projectId: string;
   projectName: string;
+  taskType: TaskType;
   targetBranch: string;
   autoResolveConflicts: boolean;
   title: string;
@@ -124,6 +128,7 @@ export interface TaskRevision {
   id: string;
   taskId: string;
   revision: number;
+  taskType: TaskType;
   autoResolveConflicts: boolean;
   title: string;
   goal: string;

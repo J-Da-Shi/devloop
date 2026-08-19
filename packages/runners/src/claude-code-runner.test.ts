@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ClaudeCodeRunner } from "./claude-code-runner.js";
+import { buildClaudeCodePrompt, ClaudeCodeRunner } from "./claude-code-runner.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -37,6 +37,24 @@ describe("ClaudeCodeRunner", () => {
     expect(args).toContain("acceptEdits");
     expect(args).toContain("--add-dir");
     expect(args).toContain("/tmp/worktree");
+
+    const researchPrompt = buildClaudeCodePrompt(
+      {
+        runId: "research-run",
+        taskId: "research-task",
+        taskType: "RESEARCH",
+        title: "Research",
+        goal: "Fetch public information",
+        acceptanceCriteria: ["Cite sources"],
+        skills: [],
+        worktreePath: "/tmp/worktree",
+        outputSchemaPath: "/tmp/schema.json",
+        signal: controller.signal,
+      },
+      "{}",
+    );
+    expect(researchPrompt).toContain("必须先自行生成一个或多个 Python、Node.js 或 Shell 脚本");
+    expect(researchPrompt).toContain("不要修改项目的受版本控制文件");
   });
 
   it("解析 Claude Code stream-json 事件和结构化最终结果", async () => {

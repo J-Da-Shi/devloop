@@ -101,8 +101,200 @@ describe("DevLoopRepository 自动入队", () => {
       reviewFeedback: "请调整实现",
     });
     expect(
-      repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })?.value.autoResolveConflicts,
+      repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })?.value
+        .autoResolveConflicts,
     ).toBe(false);
+  });
+
+  it("持久化研究任务类型，并通过总结审核完成任务而不推进项目基线", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "互联网研究项目",
+      repositoryUrl: "git@example.com:team/research.git",
+      repositoryPath: "/tmp/devloop-research-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      taskType: "RESEARCH",
+      targetBranch: "main",
+      title: "研究公开资料",
+      goal: "从互联网获取资料并总结",
+      acceptanceCriteria: ["总结包含来源 URL"],
+      priority: 80,
+    }).value;
+    expect(draft.taskType).toBe("RESEARCH");
+
+    const ready = repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    expect(repository.getTaskRevision(ready.activeRevisionId!)).toMatchObject({
+      taskType: "RESEARCH",
+      reviewFeedback: null,
+    });
+
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });
+    expect(claimed?.value).toMatchObject({
+      taskType: "RESEARCH",
+      task: { taskType: "RESEARCH" },
+    });
+    const completed = repository.completeRun(
+      claimed!.value.run.id,
+      claimed!.value.run.executionToken,
+      "研究总结\n\n来源：https://example.com/report",
+    ).value;
+    expect(repository.getRunApprovalContext(claimed!.value.run.id, completed.task.version)).toEqual(
+      {
+        type: "research",
+        context: { summary: "研究总结\n\n来源：https://example.com/report" },
+      },
+    );
+
+    const idempotencyKey = randomUUID();
+    const approved = repository.approveResearchRun(
+      claimed!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      idempotencyKey,
+    );
+    expect(approved.value).toMatchObject({
+      task: { status: "COMPLETED", taskType: "RESEARCH" },
+      research: { status: "accepted", summary: expect.stringContaining("example.com") },
+    });
+    expect(repository.listProjects()[0]?.integrationCommit).toBe("base-commit");
+    expect(repository.getRunReviewDecision(claimed!.value.run.id)?.decision).toBe("APPROVED");
+
+    const replayed = repository.approveResearchRun(
+      claimed!.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      idempotencyKey,
+    );
+    expect(replayed.replayed).toBe(true);
+  });
+
+  it("驳回研究总结后保留类型和反馈，但不串联上一轮 Git 结果", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "研究返工项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-research-retry-test",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      taskType: "RESEARCH",
+      targetBranch: "main",
+      title: "补充研究来源",
+      goal: "核对公开来源",
+      acceptanceCriteria: ["至少核对两个来源"],
+      priority: 70,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const claimed = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })!;
+    const completed = repository.completeRun(
+      claimed.value.run.id,
+      claimed.value.run.executionToken,
+      "第一版研究总结",
+    ).value;
+
+    const rejected = repository.rejectRun(
+      claimed.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      "请增加第二个权威来源",
+    ).value;
+    expect(repository.getTaskRevision(rejected.activeRevisionId!)).toMatchObject({
+      taskType: "RESEARCH",
+      reviewFeedback: "请增加第二个权威来源",
+      baseStrategy: "LATEST_ACCEPTED",
+    });
+    expect(
+      repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })?.value,
+    ).toMatchObject({
+      taskType: "RESEARCH",
+      reviewFeedback: "请增加第二个权威来源",
+      continuationBaseCommit: null,
+      continuationResultCommit: null,
+    });
+  });
+
+  it("从开发任务切换为研究任务时丢弃未通过代码的连续迭代基线", () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "任务类型切换项目",
+      repositoryUrl: null,
+      repositoryPath: "/tmp/devloop-task-type-switch-test",
+      defaultBaseRef: "main",
+      headCommit: "accepted-base-commit",
+      lastFetchedAt: null,
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      targetBranch: "main",
+      title: "先开发后研究",
+      goal: "验证任务类型切换后的执行基线",
+      acceptanceCriteria: ["不沿用未通过代码"],
+      priority: 60,
+    }).value;
+    repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+    const firstClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })!;
+    const completed = repository.completeRun(
+      firstClaim.value.run.id,
+      firstClaim.value.run.executionToken,
+      "开发结果待审核",
+      "unaccepted-result-commit",
+    ).value;
+    const rejected = repository.rejectRun(
+      firstClaim.value.run.id,
+      "instance-owner",
+      completed.task.version,
+      randomUUID(),
+      "改为调研现有方案",
+    ).value;
+    const reopened = repository.unconfirmTask(
+      rejected.id,
+      "instance-owner",
+      rejected.version,
+      randomUUID(),
+    ).value;
+    const researchDraft = repository.updateDraftTask(reopened.id, "instance-owner", {
+      taskType: "RESEARCH",
+      expectedVersion: reopened.version,
+      idempotencyKey: randomUUID(),
+    }).value;
+    repository.confirmTask(researchDraft.id, "instance-owner", {
+      expectedVersion: researchDraft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    });
+
+    expect(
+      repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" })?.value,
+    ).toMatchObject({
+      taskType: "RESEARCH",
+      continuationBaseCommit: null,
+      continuationResultCommit: null,
+      run: { baseCommit: "accepted-base-commit" },
+    });
   });
 
   it("项目 runner 默认 codex，claim 时按项目 runner 写入 taskRuns.runner", () => {

@@ -4,6 +4,7 @@ import type {
   ReviewDecisionType,
   RunStatus,
   TaskStatus,
+  TaskType,
   WorkerStatus,
 } from "@devloop/shared";
 import { sql } from "drizzle-orm";
@@ -53,6 +54,7 @@ export const tasks = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    taskType: text("task_type").$type<TaskType>().notNull().default("DEVELOPMENT"),
     targetBranch: text("target_branch").notNull().default("HEAD"),
     autoResolveConflicts: integer("auto_resolve_conflicts", { mode: "boolean" })
       .notNull()

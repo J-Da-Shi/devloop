@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CodexRunner } from "./codex-runner.js";
+import { buildCodexPrompt, CodexRunner } from "./codex-runner.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -36,6 +36,26 @@ describe("CodexRunner", () => {
     expect(args).toContain("workspace-write");
     expect(args).not.toContain("--output-schema");
     expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args).not.toContain("sandbox_workspace_write.network_access=true");
+
+    const researchInput = {
+      runId: "research-run",
+      taskId: "research-task",
+      taskType: "RESEARCH" as const,
+      title: "Research",
+      goal: "Fetch public information",
+      acceptanceCriteria: ["Cite sources"],
+      skills: [],
+      worktreePath: "/tmp/worktree",
+      outputSchemaPath: "/tmp/schema.json",
+      signal: controller.signal,
+    };
+    const researchArgs = runner.buildArguments(researchInput);
+    expect(researchArgs).toContain("sandbox_workspace_write.network_access=true");
+    expect(buildCodexPrompt(researchInput, "{}")).toContain(
+      "必须先自行生成一个或多个 Python、Node.js 或 Shell 脚本",
+    );
+    expect(buildCodexPrompt(researchInput, "{}")).toContain("最终 summary 必须直接包含完整");
   });
 
   it("解析 Codex JSONL 事件和结构化最终结果", async () => {

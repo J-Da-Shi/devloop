@@ -448,6 +448,74 @@ describe("AgentWorker", () => {
     );
   });
 
+  it("研究任务在隔离工作区执行，但不提交代码、不拉取仓库也不运行 Playwright", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "互联网研究项目",
+      repositoryUrl: "git@example.com:team/research-worker.git",
+      repositoryPath: "/tmp/devloop-research-worker",
+      defaultBaseRef: "main",
+      headCommit: "research-base-commit",
+    }).value;
+    const draft = repository.createTask({
+      projectId: project.id,
+      taskType: "RESEARCH",
+      targetBranch: "main",
+      title: "收集公开行业数据",
+      goal: "生成脚本获取互联网内容并总结",
+      acceptanceCriteria: ["总结列出来源 URL"],
+      priority: 100,
+    }).value;
+    const task = repository.confirmTask(draft.id, "instance-owner", {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    const validationInputs: ValidateRunInput[] = [];
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-research-worktrees",
+      playwrightValidationService: {
+        validate: async (input) => {
+          validationInputs.push(input);
+          throw new Error("研究任务不应运行 Playwright");
+        },
+      },
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const runId = repository.getTask(task.id)!.latestRunId!;
+    expect(runner.inputs[0]).toMatchObject({
+      taskType: "RESEARCH",
+      worktreePath: `/tmp/devloop-research-worktrees/${runId}`,
+    });
+    expect(gitService.fetched).toEqual([]);
+    expect(gitService.resolvedLocal).toEqual([]);
+    expect(gitService.created[0]).toMatchObject({
+      repositoryPath: "/tmp/devloop-research-worker",
+      baseCommit: "research-base-commit",
+    });
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+    expect(gitService.committed).toEqual([]);
+    expect(gitService.reconciled).toEqual([]);
+    expect(validationInputs).toEqual([]);
+    expect(repository.getRun(runId)).toMatchObject({
+      status: "SUCCEEDED",
+      baseCommit: "research-base-commit",
+      resultCommit: "research-base-commit",
+    });
+    expect(repository.getRunEvents(runId).map((event) => event.message)).toContain(
+      "互联网研究已完成，正在准备总结供用户审核",
+    );
+  });
+
   it("把已启用 Skill 快照传给 Runner", async () => {
     const repository = createRepository();
     const project = repository.createProject({

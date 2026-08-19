@@ -3,6 +3,7 @@ import {
   baseStrategySchema,
   type PlaywrightValidationReport,
   projectRunnerSchema,
+  taskTypeSchema,
   taskStatusSchema,
   workerConcurrencyMax,
   workerConcurrencyMin,
@@ -93,6 +94,7 @@ export const targetBranchSchema = z
 
 export const createTaskInputSchema = z.object({
   projectId: z.string().uuid(),
+  taskType: taskTypeSchema.default("DEVELOPMENT"),
   targetBranch: targetBranchSchema,
   autoResolveConflicts: z.boolean().default(true),
   title: z.string().trim().min(1).max(160),
@@ -103,6 +105,7 @@ export const createTaskInputSchema = z.object({
 
 export const updateTaskInputSchema = z
   .object({
+    taskType: taskTypeSchema.optional(),
     targetBranch: targetBranchSchema.optional(),
     autoResolveConflicts: z.boolean().optional(),
     title: z.string().trim().min(1).max(160).optional(),
@@ -115,6 +118,7 @@ export const updateTaskInputSchema = z
   .refine(
     (value) =>
       value.title !== undefined ||
+      value.taskType !== undefined ||
       value.targetBranch !== undefined ||
       value.autoResolveConflicts !== undefined ||
       value.goal !== undefined ||

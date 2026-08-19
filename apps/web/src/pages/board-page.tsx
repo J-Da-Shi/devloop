@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, Select } from "antd";
-import { Filter, GitBranch, Plus } from "lucide-react";
+import { Filter, GitBranch, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Task, TaskStatus } from "@devloop/shared";
 import { api, getDashboardRefetchInterval, queryKeys } from "../api.js";
 import { EmptyState, ErrorPanel, LoadingPanel } from "../components/feedback.js";
 import { StatusBadge } from "../components/status-badge.js";
 import { TaskDialog } from "../components/task-dialog.js";
-import { formatDateTime, taskStatusText } from "../utils.js";
+import { formatDateTime, taskStatusText, taskTypeText } from "../utils.js";
 
 const columns: TaskStatus[] = [
   "DRAFT",
@@ -118,10 +118,17 @@ export function BoardPage() {
                         <strong>{task.title}</strong>
                         <p>{task.goal}</p>
                         <span className="task-card-meta">
-                          <span className="task-card-branch" title={task.targetBranch}>
-                            <GitBranch size={13} />
-                            <span>{task.targetBranch}</span>
-                          </span>
+                          {task.taskType === "RESEARCH" ? (
+                            <span className="task-card-branch" title={taskTypeText[task.taskType]}>
+                              <Search size={13} />
+                              <span>{taskTypeText[task.taskType]}</span>
+                            </span>
+                          ) : (
+                            <span className="task-card-branch" title={task.targetBranch}>
+                              <GitBranch size={13} />
+                              <span>{task.targetBranch}</span>
+                            </span>
+                          )}
                           <span>分数 {task.priority}</span>
                           <time>{formatDateTime(task.updatedAt)}</time>
                         </span>

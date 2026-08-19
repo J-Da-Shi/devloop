@@ -1951,6 +1951,13 @@ code {
   color: var(--text-soft);
   font-size: 13px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.run-summary-block > p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .run-audit-section,
