@@ -2,7 +2,11 @@ import { Button, Form, Input, Segmented, Select } from "antd";
 import { FolderOpen, HardDrive, Server } from "lucide-react";
 import { useState } from "react";
 import type { ProjectRunner } from "@devloop/shared";
-import type { ProjectRegistration, ProjectRunnerOption, ProjectSource } from "./types.js";
+import type {
+  ProjectRegistration,
+  ProjectRunnerOption,
+  ProjectSource,
+} from "../../../types/index.js";
 
 interface ProjectRegistrationFormProps {
   desktopAvailable: boolean;

@@ -1,7 +1,7 @@
 import { Form, Input, Modal, Switch } from "antd";
 import { useEffect } from "react";
 import type { Project } from "@devloop/shared";
-import type { PreviewFormValues } from "./types.js";
+import type { PreviewFormValues } from "../../../types/index.js";
 
 interface ProjectPreviewSettingsDialogProps {
   project: Project | null;

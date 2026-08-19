@@ -1,6 +1,5 @@
 export { RunDetail } from "./run-detail.js";
 export { RunDiffPanel } from "./run-diff-panel.js";
-export type { RunDiffApprovalState } from "./run-diff-panel.js";
 export { RunEventList } from "./run-event-list.js";
 export { RunList } from "./run-list.js";
 export { RunValidationPanel } from "./run-validation-panel.js";

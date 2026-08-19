@@ -21,25 +21,15 @@ import {
   StatusBadge,
   useNotice,
 } from "../../common/index.js";
-import {
-  RunDiffPanel,
-  RunEventList,
-  RunValidationPanel,
-  type RunDiffApprovalState,
-} from "../runs/index.js";
+import { RunDiffPanel, RunEventList, RunValidationPanel } from "../runs/index.js";
+import type { RunDiffApprovalState } from "../../../types/index.js";
 import { TaskEditorForm } from "./task-editor-form.js";
-import { splitCriteria, taskFormSchema, type TaskFormValues } from "./task-form.js";
-type ConfirmAction =
-  | "confirm"
-  | "unconfirm"
-  | "continue"
-  | "retry"
-  | "revise"
-  | "cancel"
-  | "delete"
-  | "approve"
-  | "reject"
-  | null;
+import {
+  splitCriteria,
+  taskFormSchema,
+  type ConfirmAction,
+  type TaskFormValues,
+} from "../../../types/index.js";
 
 interface TaskDialogProps {
   open: boolean;

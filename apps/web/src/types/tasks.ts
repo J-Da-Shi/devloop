@@ -14,6 +14,18 @@ export const taskFormSchema = z.object({
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
 
+export type ConfirmAction =
+  | "confirm"
+  | "unconfirm"
+  | "continue"
+  | "retry"
+  | "revise"
+  | "cancel"
+  | "delete"
+  | "approve"
+  | "reject"
+  | null;
+
 export const splitCriteria = (value: string): string[] =>
   value
     .split("\n")

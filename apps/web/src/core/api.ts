@@ -7,70 +7,31 @@ import type {
   CreateSkillVersionInput,
   CreateTaskInput,
   DashboardSnapshot,
-  DeviceRole,
   DomainEvent,
   Project,
-  PlaywrightValidationReport,
   RejectRunInput,
   ResolveRunConflictsInput,
-  ReviewDecision,
-  RunChangedFile,
-  RunArtifact,
-  RunApplicationResult,
-  RunConflictPreview,
   RunConflictAgentResolution,
-  RunEvent,
   RunFilePatch,
   Skill,
   SkillDetails,
   SkillValidationResult,
   Task,
   TaskCommandInput,
-  TaskRevision,
   TaskRun,
-  RunPublishResult,
   RunPreview,
-  RunPreviewConfig,
   UpdateProjectRunnerInput,
   UpdateProjectPreviewInput,
   UpdateSkillInput,
   UpdateTaskInput,
   UpdateWorkerConcurrencyInput,
 } from "@devloop/shared";
-
-export interface RequestIdentity {
-  id: string;
-  name: string;
-  role: DeviceRole;
-  kind: "owner";
-}
-
-export interface RunDetails {
-  run: TaskRun;
-  task: Task | null;
-  revision: TaskRevision;
-  reviewDecision: ReviewDecision | null;
-  events: RunEvent[];
-  validation: {
-    report: PlaywrightValidationReport | null;
-    artifacts: RunArtifact[];
-  };
-  previewConfiguration: RunPreviewConfig | null;
-}
-
-export interface RunApprovalResponse {
-  task: Task;
-  publication?: RunPublishResult;
-  application?: RunApplicationResult;
-  research?: { status: "accepted"; summary: string };
-  replayed: boolean;
-}
-
-export interface RunChangedFilesResponse {
-  files: RunChangedFile[];
-  conflictPreview: RunConflictPreview | null;
-  agentResolution: RunConflictAgentResolution | null;
-}
+import type {
+  RequestIdentity,
+  RunApprovalResponse,
+  RunChangedFilesResponse,
+  RunDetails,
+} from "../types/index.js";
 
 export class ApiError extends Error {
   public constructor(
