@@ -1180,6 +1180,73 @@ describe("AgentWorker", () => {
     );
   });
 
+  it("Codex 失败后保存 Worktree 进度，并在重试时从该进度继续", async () => {
+    const repository = createRepository();
+    const project = repository.createProject({
+      name: "Codex 失败续跑项目",
+      repositoryUrl: "git@example.com:team/codex-retry-worker.git",
+      repositoryPath: "/tmp/devloop-codex-retry-worker-project",
+      defaultBaseRef: "main",
+      headCommit: "base-commit",
+    }).value;
+    const task = createReadyTask(repository, project.id, "保存失败进度", 100);
+    const runner = new ControlledRunner("codex");
+    const gitService = new ControlledGitService();
+    const worker = new AgentWorker(repository, runner, new DomainEventBus(), "/tmp/schema.json", {
+      claimDelayMs: 0,
+      gitService,
+      worktreesPath: "/tmp/devloop-worker-worktrees",
+    });
+
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 1);
+    const firstRunId = repository.getTask(task.id)?.latestRunId;
+    expect(firstRunId).toBeTruthy();
+    runner.succeedNext({ outcome: "failed", summary: "pnpm test 失败，等待补充边界断言" });
+    await waitForTaskStatus(repository, task.id, "FAILED");
+
+    expect(repository.getRun(firstRunId ?? "")).toMatchObject({
+      status: "FAILED",
+      baseCommit: "base-commit",
+      resultCommit: "result-commit",
+    });
+    expect(gitService.committed[0]?.message).toBe("DevLoop retry checkpoint: 保存失败进度");
+    expect(repository.getRunEvents(firstRunId ?? "").map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "run.retry_checkpoint.started",
+        "run.retry_checkpoint.saved",
+        "run.failed",
+      ]),
+    );
+
+    const failed = repository.getTask(task.id)!;
+    const retry = repository.confirmTask(failed.id, "local-desktop", {
+      expectedVersion: failed.version,
+      idempotencyKey: randomUUID(),
+      baseStrategy: "LATEST_ACCEPTED",
+      baseRef: "main",
+    }).value;
+    expect(worker.pullNextTask()).toBe(true);
+    await waitFor(() => runner.inputs.length === 2);
+
+    expect(gitService.created[1]).toMatchObject({
+      branchName: `devloop/run/${repository.getTask(task.id)?.latestRunId}`,
+      baseCommit: "result-commit",
+    });
+    expect(runner.inputs[1]).toMatchObject({
+      retryContext: {
+        sourceRunId: firstRunId,
+        sourceStatus: "FAILED",
+        summary: "pnpm test 失败，等待补充边界断言",
+        resultCommit: "result-commit",
+      },
+    });
+    expect(retry.status).toBe("READY");
+
+    runner.succeedNext();
+    await waitForTaskStatus(repository, task.id, "REVIEW");
+  });
+
   it("本地项目使用本地分支准备 Worktree，不执行远程 fetch", async () => {
     const repository = createRepository();
     const project = repository.createProject({

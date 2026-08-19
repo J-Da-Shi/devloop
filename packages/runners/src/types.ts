@@ -1,4 +1,4 @@
-import type { PreviewConfig, RunnerCapabilities, TaskType } from "@devloop/shared";
+import type { PreviewConfig, RetryContext, RunnerCapabilities, TaskType } from "@devloop/shared";
 
 export interface RunnerSkill {
   id: string;
@@ -18,6 +18,7 @@ export interface RunnerInput {
   acceptanceCriteria: string[];
   skills: RunnerSkill[];
   reviewFeedback?: string | null;
+  retryContext?: RetryContext | null;
   mode?: "implementation" | "conflict-resolution";
   conflictPaths?: string[];
   worktreePath: string | null;

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { agentPreviewConfigSchema, type RunnerCapabilities } from "@devloop/shared";
 import { execa } from "execa";
 import { terminateProcessGroup } from "./process-group.js";
+import { buildRetryContextPrompt } from "./retry-context-prompt.js";
 import { buildSkillsPrompt } from "./skill-prompt.js";
 import type { AgentRunner, RunnerEvent, RunnerHandle, RunnerInput, RunnerResult } from "./types.js";
 
@@ -251,6 +252,7 @@ export const buildClaudeCodePrompt = (input: RunnerInput, outputSchema: string):
       "验收标准：",
       ...criteria,
       ...(reviewFeedback ? ["", "上次审核反馈（本轮必须逐项处理）：", reviewFeedback] : []),
+      ...buildRetryContextPrompt(input.retryContext),
       ...buildSkillsPrompt(input.skills),
       "",
       "执行要求：",
@@ -281,6 +283,7 @@ export const buildClaudeCodePrompt = (input: RunnerInput, outputSchema: string):
     "验收标准：",
     ...criteria,
     ...(reviewFeedback ? ["", "上次审核反馈（本轮必须逐项处理）：", reviewFeedback] : []),
+    ...buildRetryContextPrompt(input.retryContext),
     ...buildSkillsPrompt(input.skills),
     "",
     "执行要求：",

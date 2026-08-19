@@ -150,6 +150,7 @@ export interface TaskRevision {
   goal: string;
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
+  retryContext: RetryContext | null;
   specHash: string;
   targetBranch: string;
   baseRef: string;
@@ -175,6 +176,27 @@ export interface RunSkillSnapshot {
   skillId: string;
   version: number;
   contentHash: string;
+}
+
+export interface RetryContextEvent {
+  type: string;
+  message: string;
+  createdAt: string;
+}
+
+/**
+ * A bounded, immutable diagnostic snapshot from the failed or blocked run that
+ * created this revision. It is passed to the next agent attempt as data only.
+ */
+export interface RetryContext {
+  sourceRunId: string;
+  sourceStatus: "BLOCKED" | "FAILED";
+  sourceRunner: string;
+  sourceFinishedAt: string;
+  summary: string;
+  baseCommit: string | null;
+  resultCommit: string | null;
+  events: RetryContextEvent[];
 }
 
 export interface TaskRun {

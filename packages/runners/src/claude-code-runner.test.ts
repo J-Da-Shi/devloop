@@ -54,6 +54,40 @@ describe("ClaudeCodeRunner", () => {
       ),
     ).toContain("最终 JSON 的 preview");
 
+    const retryPrompt = buildClaudeCodePrompt(
+      {
+        runId: "retry-run",
+        taskId: "task",
+        title: "Task",
+        goal: "Goal",
+        acceptanceCriteria: ["Done"],
+        skills: [],
+        retryContext: {
+          sourceRunId: "failed-run",
+          sourceStatus: "FAILED",
+          sourceRunner: "claude-code",
+          sourceFinishedAt: "2026-08-19T00:00:00.000Z",
+          summary: "pnpm test 因缺少断言失败",
+          baseCommit: "base-commit",
+          resultCommit: "partial-result-commit",
+          events: [
+            {
+              type: "runner.command",
+              message: "pnpm test 退出码 1",
+              createdAt: "2026-08-19T00:00:00.000Z",
+            },
+          ],
+        },
+        worktreePath: "/tmp/worktree",
+        outputSchemaPath: "/tmp/schema.json",
+        signal: controller.signal,
+      },
+      "{}",
+    );
+    expect(retryPrompt).toContain("上一轮未完成执行的恢复上下文");
+    expect(retryPrompt).toContain("pnpm test 因缺少断言失败");
+    expect(retryPrompt).toContain("从失败点继续排查和实施");
+
     const researchPrompt = buildClaudeCodePrompt(
       {
         runId: "research-run",

@@ -343,6 +343,10 @@ export class AgentWorker {
         // 事件记录失败不阻断执行。
       }
     }
+    let workspace: { path: string | null; baseCommit: string | null } = {
+      path: null,
+      baseCommit: claimed.run.baseCommit,
+    };
     try {
       const skills = await this.loadEnabledSkills(controller.signal);
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -359,7 +363,7 @@ export class AgentWorker {
           })),
         ),
       );
-      const workspace = runnerRequiresWorktree(runner.id)
+      workspace = runnerRequiresWorktree(runner.id)
         ? await this.prepareWorkspace(claimed, runner, skills, controller.signal, onProcessGroupId)
         : { path: null, baseCommit: claimed.run.baseCommit };
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -375,6 +379,7 @@ export class AgentWorker {
           acceptanceCriteria: claimed.acceptanceCriteria,
           skills,
           reviewFeedback: claimed.reviewFeedback,
+          retryContext: claimed.retryContext,
           worktreePath: workspace.path,
           outputSchemaPath: this.outputSchemaPath,
           signal: controller.signal,
@@ -457,9 +462,23 @@ export class AgentWorker {
           ),
         );
       } else if (result.outcome === "blocked") {
-        this.publish(this.repository.blockRun(claimed.run.id, claimed.run.executionToken, summary));
+        await this.finalizeUnsuccessfulRun(
+          claimed,
+          "blocked",
+          summary,
+          workspace,
+          controller.signal,
+          onProcessGroupId,
+        );
       } else {
-        this.publish(this.repository.failRun(claimed.run.id, claimed.run.executionToken, summary));
+        await this.finalizeUnsuccessfulRun(
+          claimed,
+          "failed",
+          summary,
+          workspace,
+          controller.signal,
+          onProcessGroupId,
+        );
       }
     } catch (error) {
       if (
@@ -470,10 +489,13 @@ export class AgentWorker {
         return;
       }
       if (error instanceof AutoConflictResolutionError) {
-        this.publish(
-          error.outcome === "blocked"
-            ? this.repository.blockRun(claimed.run.id, claimed.run.executionToken, error.message)
-            : this.repository.failRun(claimed.run.id, claimed.run.executionToken, error.message),
+        await this.finalizeUnsuccessfulRun(
+          claimed,
+          error.outcome,
+          error.message,
+          workspace,
+          controller.signal,
+          onProcessGroupId,
         );
         return;
       }
@@ -484,7 +506,14 @@ export class AgentWorker {
             ? error.message
             : "执行器发生未知错误。";
       try {
-        this.publish(this.repository.failRun(claimed.run.id, claimed.run.executionToken, message));
+        await this.finalizeUnsuccessfulRun(
+          claimed,
+          "failed",
+          message,
+          workspace,
+          controller.signal,
+          onProcessGroupId,
+        );
       } catch (failureError) {
         if (!this.isInvalidExecutionError(failureError)) {
           throw failureError;
@@ -768,6 +797,7 @@ export class AgentWorker {
     baseCommit: string | null,
     signal: AbortSignal,
     onProcessGroupId: (processGroupId: number | null) => void,
+    purpose: "review" | "retry" = "review",
   ): Promise<string | null> {
     if (!worktreePath || !this.options.gitService) {
       return baseCommit;
@@ -777,18 +807,89 @@ export class AgentWorker {
         claimed.run.id,
         claimed.run.executionToken,
         "VERIFYING",
-        "runner.verifying",
-        "Codex 执行完成，正在固化 Git 结果",
+        purpose === "retry" ? "run.retry_checkpoint.started" : "runner.verifying",
+        purpose === "retry"
+          ? "执行未完成，正在保存可用于重试的 Git 恢复点"
+          : "Codex 执行完成，正在固化 Git 结果",
       ),
     );
     const title = claimed.task.title.replace(/\s+/g, " ").trim().slice(0, 120);
     const resultCommit = await this.options.gitService.commitWorktree({
       worktreePath,
-      message: `DevLoop: ${title}`,
+      message: purpose === "retry" ? `DevLoop retry checkpoint: ${title}` : `DevLoop: ${title}`,
       signal,
       onProcessGroupId,
     });
     return resultCommit;
+  }
+
+  private async finalizeUnsuccessfulRun(
+    claimed: ClaimedTask,
+    outcome: "blocked" | "failed",
+    summary: string,
+    workspace: { path: string | null; baseCommit: string | null },
+    signal: AbortSignal,
+    onProcessGroupId: (processGroupId: number | null) => void,
+  ): Promise<void> {
+    let resultCommit: string | undefined;
+    let finalSummary = summary;
+
+    if (claimed.taskType === "DEVELOPMENT" && workspace.path) {
+      try {
+        const checkpoint = await this.commitWorkspace(
+          claimed,
+          workspace.path,
+          workspace.baseCommit,
+          signal,
+          onProcessGroupId,
+          "retry",
+        );
+        resultCommit = checkpoint ?? undefined;
+        if (checkpoint) {
+          this.publish(
+            this.repository.recordRunEvent(
+              claimed.run.id,
+              "run.retry_checkpoint.saved",
+              `已保存可用于重试的 Git 恢复点：${checkpoint.slice(0, 12)}`,
+              { baseCommit: workspace.baseCommit, resultCommit: checkpoint },
+            ),
+          );
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        const message = error instanceof Error ? error.message : "未知 Git 错误";
+        finalSummary = `${summary}\n\n未能保存本轮 Worktree 进度，重试将仅携带失败诊断：${message}`;
+        try {
+          this.publish(
+            this.repository.recordRunEvent(
+              claimed.run.id,
+              "run.retry_checkpoint.failed",
+              "未能保存可用于重试的 Git 恢复点",
+              { error: message },
+            ),
+          );
+        } catch (recordError) {
+          if (!this.isInvalidExecutionError(recordError)) throw recordError;
+        }
+      }
+    }
+
+    if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) return;
+    this.publish(
+      outcome === "blocked"
+        ? this.repository.blockRun(
+            claimed.run.id,
+            claimed.run.executionToken,
+            finalSummary,
+            resultCommit,
+          )
+        : this.repository.failRun(
+            claimed.run.id,
+            claimed.run.executionToken,
+            finalSummary,
+            resultCommit,
+          ),
+    );
   }
 
   private async prepareResultForReview(
