@@ -314,7 +314,7 @@ export class CodexRunner implements AgentRunner {
     try {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
-        prompt: buildCodexPrompt(input, outputSchema),
+        prompt: await buildCodexPrompt(input, outputSchema),
         sandbox: "workspace-write",
         startMessage: "正在启动 Codex CLI",
       });

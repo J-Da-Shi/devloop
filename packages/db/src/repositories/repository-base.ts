@@ -23,7 +23,6 @@ import {
   mapRunEvent,
   now,
   retryContextLimits,
-  truncateRetryContextText,
 } from "./repository-codecs.js";
 import type { EventfulResult } from "./repository-types.js";
 
@@ -179,6 +178,8 @@ export class RepositoryBase {
     if (run.status !== "FAILED" && run.status !== "BLOCKED") {
       throw new Error("只有失败或阻塞的执行记录可以生成重试上下文");
     }
+    // 事件条数上限仍保留（避免历史累积无限增长），但单条 message 与 summary 都不再机械截断，
+    // 交由 @devloop/context 的 pipeline 按预算和类型统一压缩（PR4）。
     const events = this.handle.db
       .select({
         type: runEvents.type,
@@ -193,7 +194,7 @@ export class RepositoryBase {
       .reverse()
       .map((event) => ({
         type: event.type,
-        message: truncateRetryContextText(event.message, retryContextLimits.eventCharacters),
+        message: event.message,
         createdAt: event.createdAt,
       }));
     return {
@@ -201,10 +202,7 @@ export class RepositoryBase {
       sourceStatus: run.status,
       sourceRunner: run.runner,
       sourceFinishedAt: run.finishedAt ?? run.startedAt,
-      summary: truncateRetryContextText(
-        run.summary ?? "上一轮未记录失败摘要，请根据下方执行日志继续排查。",
-        retryContextLimits.summaryCharacters,
-      ),
+      summary: run.summary ?? "上一轮未记录失败摘要，请根据下方执行日志继续排查。",
       baseCommit: run.baseCommit,
       resultCommit: run.resultCommit,
       events,

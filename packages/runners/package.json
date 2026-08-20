@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@devloop/context": "workspace:*",
     "@devloop/shared": "workspace:*",
     "execa": "10.0.1"
   }

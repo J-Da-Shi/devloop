@@ -3,6 +3,8 @@ import { GitService } from "@devloop/git";
 import { ClaudeCodeRunner, CodexRunner, FakeRunner, type AgentRunner } from "@devloop/runners";
 import { AgentWorker } from "./agent-worker.js";
 import { createApp } from "./app.js";
+import { DbScratchpadStore } from "./context/db-scratchpad-store.js";
+import { createLlmCompressor } from "./context/llm-compressor-factory.js";
 import { DomainEventBus } from "./event-bus.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { SkillService } from "./skill-service.js";
@@ -56,6 +58,14 @@ async function main(): Promise<void> {
     [...runnerRegistry.values()].map((runner) => runner.detectCapabilities()),
   );
   const runners = [codexRunner, claudeCodeRunner, fakeRunner];
+  const scratchpad = new DbScratchpadStore(repository);
+  const llmCompressor = createLlmCompressor(config.context.compressor);
+  // 启动时清理 7 天前遗留的 scratchpad 记录（幂等，失败不阻塞启动）。
+  try {
+    await scratchpad.purgeOlderThan(7 * 24 * 60 * 60 * 1000);
+  } catch {
+    // 忽略：不影响主流程
+  }
   const worker = new AgentWorker(repository, runnerRegistry, eventBus, config.outputSchemaPath, {
     claimDelayMs: config.agentClaimDelayMs,
     defaultRunnerId,
@@ -64,6 +74,9 @@ async function main(): Promise<void> {
     worktreesPath: config.worktreesPath,
     skillService,
     playwrightValidationService,
+    scratchpad,
+    llmCompressor,
+    contextBudgets: config.context.budgetTokens,
   });
 
   const app = await createApp({

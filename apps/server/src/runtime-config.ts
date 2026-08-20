@@ -28,6 +28,19 @@ export interface RuntimeConfig {
   playwrightTimeoutMs: number;
   playwrightTestTimeoutMs: number;
   playwrightExecutable: string | null;
+  context: {
+    budgetTokens: {
+      codex: number;
+      "claude-code": number;
+      fake: number;
+    };
+    compressor: {
+      endpoint: string | null;
+      apiKey: string | null;
+      model: string;
+      maxCallsPerRun: number;
+    };
+  };
 }
 
 const parseInteger = (value: string | undefined, fallback: number, name: string): number => {
@@ -123,5 +136,34 @@ export function loadRuntimeConfig(): RuntimeConfig {
       "DEVLOOP_PLAYWRIGHT_TEST_TIMEOUT_MS",
     ),
     playwrightExecutable: process.env.DEVLOOP_PLAYWRIGHT_EXECUTABLE?.trim() || null,
+    context: {
+      budgetTokens: {
+        codex: parseInteger(
+          process.env.DEVLOOP_CONTEXT_BUDGET_CODEX,
+          60_000,
+          "DEVLOOP_CONTEXT_BUDGET_CODEX",
+        ),
+        "claude-code": parseInteger(
+          process.env.DEVLOOP_CONTEXT_BUDGET_CLAUDE_CODE,
+          100_000,
+          "DEVLOOP_CONTEXT_BUDGET_CLAUDE_CODE",
+        ),
+        fake: parseInteger(
+          process.env.DEVLOOP_CONTEXT_BUDGET_FAKE,
+          20_000,
+          "DEVLOOP_CONTEXT_BUDGET_FAKE",
+        ),
+      },
+      compressor: {
+        endpoint: process.env.DEVLOOP_CONTEXT_COMPRESSOR_ENDPOINT?.trim() || null,
+        apiKey: process.env.DEVLOOP_CONTEXT_COMPRESSOR_API_KEY?.trim() || null,
+        model: process.env.DEVLOOP_CONTEXT_COMPRESSOR_MODEL?.trim() || "gpt-4o-mini",
+        maxCallsPerRun: parseInteger(
+          process.env.DEVLOOP_CONTEXT_COMPRESSOR_MAX_CALLS,
+          3,
+          "DEVLOOP_CONTEXT_COMPRESSOR_MAX_CALLS",
+        ),
+      },
+    },
   };
 }

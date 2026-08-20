@@ -1,3 +1,4 @@
+import type { LlmCompressor, ScratchpadStore } from "@devloop/context";
 import type { PreviewConfig, RetryContext, RunnerCapabilities, TaskType } from "@devloop/shared";
 
 export interface RunnerSkill {
@@ -7,6 +8,18 @@ export interface RunnerSkill {
   version: number;
   contentHash: string;
   content: string;
+}
+
+/**
+ * agent-worker 组装后注入到 RunnerInput 的上下文管理句柄。
+ * runner 会在 buildTaskPrompt 里把它交给 pipeline，用于 medium 压缩落 ref、logger 采样等。
+ */
+export interface ContextPipelineRef {
+  scratchpad: ScratchpadStore;
+  llm: LlmCompressor | null;
+  runId: string;
+  turn?: number;
+  logger?: (event: string, payload: Record<string, unknown>) => void;
 }
 
 export interface RunnerInput {
@@ -25,6 +38,10 @@ export interface RunnerInput {
   outputSchemaPath: string | null;
   signal: AbortSignal;
   onProcessGroupId?: (processGroupId: number | null) => void;
+  /** 上下文预算（token 估算），由 agent-worker 按 runner id 从 runtime-config 决定。 */
+  contextBudget?: number;
+  /** 上下文管理注入点；若省略则 buildTaskPrompt 会退回纯 join。 */
+  contextPipeline?: ContextPipelineRef | null;
 }
 
 export interface RunnerEvent {

@@ -170,6 +170,10 @@ const config: RuntimeConfig = {
   playwrightTimeoutMs: 1_000,
   playwrightTestTimeoutMs: 1_000,
   playwrightExecutable: null,
+  context: {
+    budgetTokens: { codex: 60_000, "claude-code": 100_000, fake: 20_000 },
+    compressor: { endpoint: null, apiKey: null, model: "gpt-4o-mini", maxCallsPerRun: 3 },
+  },
 };
 
 describe("冲突解决接口", () => {
