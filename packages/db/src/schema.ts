@@ -284,6 +284,24 @@ export const skillVersions = sqliteTable(
   (table) => [uniqueIndex("skill_versions_number_unique").on(table.skillId, table.version)],
 );
 
+export const contextScratchpad = sqliteTable(
+  "context_scratchpad",
+  {
+    key: text("key").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => taskRuns.id, { onDelete: "cascade" }),
+    contentType: text("content_type").notNull(),
+    contentText: text("content_text").notNull(),
+    originalTokens: integer("original_tokens").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => ({
+    runIdIdx: index("idx_context_scratchpad_run").on(table.runId),
+  }),
+);
+
 export const schema = {
   projects,
   tasks,
@@ -300,6 +318,7 @@ export const schema = {
   auditEvents,
   skills,
   skillVersions,
+  contextScratchpad,
 };
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -313,3 +332,4 @@ export type DomainEventRow = typeof domainEvents.$inferSelect;
 export type PairedDeviceRow = typeof pairedDevices.$inferSelect;
 export type SkillRow = typeof skills.$inferSelect;
 export type SkillVersionRow = typeof skillVersions.$inferSelect;
+export type ContextScratchpadRow = typeof contextScratchpad.$inferSelect;

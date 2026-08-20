@@ -282,7 +282,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     try {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
-        prompt: buildClaudeCodePrompt(input, outputSchema),
+        prompt: await buildClaudeCodePrompt(input, outputSchema),
         permissionMode: "acceptEdits",
         startMessage: "正在启动 Claude Code CLI",
       });

@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("CodexRunner", () => {
-  it("builds a non-interactive workspace-write command", () => {
+  it("builds a non-interactive workspace-write command", async () => {
     const runner = new CodexRunner({ ignoreUserConfig: true });
     const controller = new AbortController();
     const args = runner.buildArguments({
@@ -38,7 +38,7 @@ describe("CodexRunner", () => {
     expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(args).not.toContain("sandbox_workspace_write.network_access=true");
     expect(
-      buildCodexPrompt(
+      await buildCodexPrompt(
         {
           runId: "run",
           taskId: "task",
@@ -54,7 +54,7 @@ describe("CodexRunner", () => {
       ),
     ).toContain("最终 JSON 的 preview");
 
-    const retryPrompt = buildCodexPrompt(
+    const retryPrompt = await buildCodexPrompt(
       {
         runId: "retry-run",
         taskId: "task",
@@ -102,10 +102,10 @@ describe("CodexRunner", () => {
     };
     const researchArgs = runner.buildArguments(researchInput);
     expect(researchArgs).toContain("sandbox_workspace_write.network_access=true");
-    expect(buildCodexPrompt(researchInput, "{}")).toContain(
+    expect(await buildCodexPrompt(researchInput, "{}")).toContain(
       "必须先自行生成一个或多个 Python、Node.js 或 Shell 脚本",
     );
-    expect(buildCodexPrompt(researchInput, "{}")).toContain("最终 summary 必须直接包含完整");
+    expect(await buildCodexPrompt(researchInput, "{}")).toContain("最终 summary 必须直接包含完整");
   });
 
   it("解析 Codex JSONL 事件和结构化最终结果", async () => {

@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import {
+  ContextBudgetExceededError,
+  type LlmCompressor,
+  type ScratchpadStore,
+} from "@devloop/context";
 import type { ClaimedTask, DevLoopRepository, EventfulResult } from "@devloop/db";
 import {
   GitApplyError,
@@ -51,6 +56,13 @@ const previewSourceLabel: Record<RunPreviewConfig["source"], string> = {
   detected: "自动识别",
 };
 
+export interface ContextBudgets {
+  codex: number;
+  "claude-code": number;
+  fake: number;
+  [key: string]: number;
+}
+
 export interface AgentWorkerOptions {
   claimDelayMs?: number;
   now?: () => number;
@@ -70,6 +82,12 @@ export interface AgentWorkerOptions {
   terminateProcessGroup?: (processGroupId: number) => void;
   skillService?: Pick<SkillService, "listEnabledForExecution">;
   playwrightValidationService?: Pick<PlaywrightValidationService, "validate">;
+  /** 上下文管理：scratchpad 存储（可选；缺省则 pipeline 走内存实现或跳过 ref）。 */
+  scratchpad?: ScratchpadStore;
+  /** 上下文管理：LLM 压缩器（可选；未配置端点时使用 Noop 降级为规则型）。 */
+  llmCompressor?: LlmCompressor;
+  /** 上下文预算按 runner id 索引；缺省 undefined 则 pipeline 使用默认 100000。 */
+  contextBudgets?: ContextBudgets;
 }
 
 class AutoConflictResolutionError extends Error {
@@ -117,6 +135,14 @@ export class AgentWorker {
   private readonly runners: Map<string, AgentRunner>;
   private readonly defaultRunnerId: string;
   private readonly runnerCapabilitiesById: Map<string, RunnerCapabilities>;
+  /** 按 taskId 递增的「轮」计数，用于 LLM 压缩器冷却门。 */
+  private readonly turnCounters = new Map<string, number>();
+
+  private incrementTurn(taskId: string): number {
+    const next = (this.turnCounters.get(taskId) ?? 0) + 1;
+    this.turnCounters.set(taskId, next);
+    return next;
+  }
 
   public constructor(
     private readonly repository: DevLoopRepository,
@@ -368,6 +394,22 @@ export class AgentWorker {
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
+      const contextBudget = this.options.contextBudgets?.[runner.id];
+      const scratchpad = this.options.scratchpad;
+      const llm = this.options.llmCompressor ?? null;
+      const turn = this.incrementTurn(claimed.task.id);
+      // 若配置了 setCurrentTurn（OpenAI 兼容压缩器实现），把当前轮号传入以驱动冷却门。
+      if (llm && typeof (llm as { setCurrentTurn?: (turn: number) => void }).setCurrentTurn === "function") {
+        (llm as unknown as { setCurrentTurn: (turn: number) => void }).setCurrentTurn(turn);
+      }
+      const contextPipeline = scratchpad
+        ? {
+            scratchpad,
+            llm,
+            runId: claimed.run.id,
+            turn,
+          }
+        : null;
       active.handle = runner.start(
         {
           runId: claimed.run.id,
@@ -383,6 +425,8 @@ export class AgentWorker {
           outputSchemaPath: this.outputSchemaPath,
           signal: controller.signal,
           onProcessGroupId,
+          ...(contextBudget !== undefined ? { contextBudget } : {}),
+          ...(contextPipeline ? { contextPipeline } : {}),
         },
         emit,
       );
@@ -487,6 +531,17 @@ export class AgentWorker {
       ) {
         return;
       }
+      if (error instanceof ContextBudgetExceededError) {
+        await this.finalizeUnsuccessfulRun(
+          claimed,
+          "failed",
+          `上下文超预算无法压缩至预算内（${error.detail.totalTokens}/${error.detail.budgetTokens} tokens）`,
+          workspace,
+          controller.signal,
+          onProcessGroupId,
+        );
+        return;
+      }
       if (error instanceof AutoConflictResolutionError) {
         await this.finalizeUnsuccessfulRun(
           claimed,
@@ -516,6 +571,22 @@ export class AgentWorker {
       } catch (failureError) {
         if (!this.isInvalidExecutionError(failureError)) {
           throw failureError;
+        }
+      }
+    } finally {
+      // Run 结束（无论 succeed/fail/block/cancel）都清理该 run 的 scratchpad。
+      const scratchpad = this.options.scratchpad;
+      if (scratchpad) {
+        try {
+          await scratchpad.purgeByRun(claimed.run.id);
+        } catch (purgeError) {
+          // 清理失败不影响主流程；打印一行让运维可查。
+          // 使用 process.stderr 避免依赖服务级 logger。
+          process.stderr.write(
+            `[agent-worker] 清理 scratchpad 失败 runId=${claimed.run.id}: ${
+              purgeError instanceof Error ? purgeError.message : String(purgeError)
+            }\n`,
+          );
         }
       }
     }

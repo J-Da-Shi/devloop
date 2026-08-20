@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("ClaudeCodeRunner", () => {
-  it("builds a non-interactive workspace-write command", () => {
+  it("builds a non-interactive workspace-write command", async () => {
     const runner = new ClaudeCodeRunner();
     const controller = new AbortController();
     const args = runner.buildArguments({
@@ -38,7 +38,7 @@ describe("ClaudeCodeRunner", () => {
     expect(args).toContain("--add-dir");
     expect(args).toContain("/tmp/worktree");
     expect(
-      buildClaudeCodePrompt(
+      await buildClaudeCodePrompt(
         {
           runId: "run",
           taskId: "task",
@@ -54,7 +54,7 @@ describe("ClaudeCodeRunner", () => {
       ),
     ).toContain("最终 JSON 的 preview");
 
-    const retryPrompt = buildClaudeCodePrompt(
+    const retryPrompt = await buildClaudeCodePrompt(
       {
         runId: "retry-run",
         taskId: "task",
@@ -88,7 +88,7 @@ describe("ClaudeCodeRunner", () => {
     expect(retryPrompt).toContain("pnpm test 因缺少断言失败");
     expect(retryPrompt).toContain("从失败点继续排查和实施");
 
-    const researchPrompt = buildClaudeCodePrompt(
+    const researchPrompt = await buildClaudeCodePrompt(
       {
         runId: "research-run",
         taskId: "research-task",

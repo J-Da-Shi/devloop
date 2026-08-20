@@ -1,6 +1,6 @@
-import { DeviceRepository } from "./repositories/device-repository.js";
+import { ScratchpadRepository } from "./repositories/scratchpad-repository.js";
 
-export class DevLoopRepository extends DeviceRepository {}
+export class DevLoopRepository extends ScratchpadRepository {}
 
 export type {
   AppliedRunApproval,
