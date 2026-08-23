@@ -31,7 +31,10 @@ export const subAnswerCompressor: Compressor = {
           ctx.logger("context.compress.llm_failed", { fragmentId: fragment.id, err: String(err) });
         }
       }
-      const truncated = headTail(fragment.text, Math.max(400, Math.floor(fragment.text.length * 0.3)));
+      const truncated = headTail(
+        fragment.text,
+        Math.max(400, Math.floor(fragment.text.length * 0.3)),
+      );
       return {
         ...fragment,
         text: truncated,

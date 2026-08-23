@@ -34,9 +34,7 @@ export const projects = sqliteTable(
     previewCommand: text("preview_command"),
     previewWorkingDirectory: text("preview_working_directory").notNull().default("."),
     previewHealthPath: text("preview_health_path").notNull().default("/"),
-    playwrightEnabled: integer("playwright_enabled", { mode: "boolean" })
-      .notNull()
-      .default(true),
+    playwrightEnabled: integer("playwright_enabled", { mode: "boolean" }).notNull().default(true),
     playwrightTestCommand: text("playwright_test_command"),
     version: integer("version").notNull().default(0),
     ...timestamps(),

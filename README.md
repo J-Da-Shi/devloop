@@ -232,6 +232,8 @@ pnpm format
 git diff --check
 ```
 
+Pull Request 会在 Node.js 24 和 26 上执行 packages build、类型检查、Vitest、ESLint、Prettier 与空白错误检查，并分别验证 Server、Web 构建和 Desktop 类型检查。高危依赖变更会被依赖审查阻止；pnpm 与 GitHub Actions 依赖每周检查更新。
+
 目录职责：`apps/server` 提供 API 和 Worker，`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端；`packages/db`、`packages/git`、`packages/runners`、`packages/workflow` 和 `packages/shared` 分别承载数据库、Git、执行器、状态流转和共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。
 
 欢迎提交 Issue 和 Pull Request。请勿提交 API Key、Git 凭据、`.devloop-data` 中的个人数据，或任务生成的本地运行产物。

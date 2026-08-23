@@ -18,12 +18,7 @@ import {
   type TaskRow,
   type TaskRunRow,
 } from "../schema.js";
-import {
-  mapDomainEvent,
-  mapRunEvent,
-  now,
-  retryContextLimits,
-} from "./repository-codecs.js";
+import { mapDomainEvent, mapRunEvent, now, retryContextLimits } from "./repository-codecs.js";
 import type { EventfulResult } from "./repository-types.js";
 
 export class RepositoryBase {

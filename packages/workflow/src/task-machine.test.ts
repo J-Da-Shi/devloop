@@ -11,9 +11,7 @@ describe("task transitions", () => {
   });
 
   it("rejects client-side status jumps", () => {
-    expect(() => assertTaskTransition("DRAFT", "COMPLETED")).toThrow(
-      "Invalid task transition",
-    );
+    expect(() => assertTaskTransition("DRAFT", "COMPLETED")).toThrow("Invalid task transition");
   });
 
   it("allows blocked and failed tasks to retry directly or return to draft", () => {

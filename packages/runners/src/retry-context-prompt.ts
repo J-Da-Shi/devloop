@@ -63,9 +63,7 @@ export const buildRetryContextFragments = (
 /**
  * 兼容旧调用：把 Fragment 列表压平成字符串数组（返回给还没走 pipeline 的地方）。
  */
-export const buildRetryContextPrompt = (
-  retryContext: RunnerInput["retryContext"],
-): string[] => {
+export const buildRetryContextPrompt = (retryContext: RunnerInput["retryContext"]): string[] => {
   if (!retryContext) return [];
   return buildRetryContextFragments(retryContext).map((s) => s.text);
 };

@@ -12,10 +12,7 @@ export interface LlmCompressor {
  * pipeline 遇此实现会自动降级为规则型压缩。
  */
 export class NoopLlmCompressor implements LlmCompressor {
-  async summarize(
-    _text: string,
-    _opts: { targetTokens: number; hint?: string },
-  ): Promise<string> {
+  async summarize(_text: string, _opts: { targetTokens: number; hint?: string }): Promise<string> {
     throw new Error("LLM 压缩器未配置端点");
   }
   isReady(): boolean {
