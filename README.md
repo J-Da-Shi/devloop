@@ -163,7 +163,7 @@ docker compose up --build
 
 ## 预览与自动验证
 
-大多数项目不需要手动填写预览命令。DevLoop 按“项目高级覆盖 → Agent 返回的 Web 启动建议 → 结果 Commit 的 `package.json` 自动识别”确定预览方式，保守支持 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见脚本。
+大多数项目不需要手动填写预览命令。DevLoop 按“项目高级覆盖 → Agent 返回的 Web 启动建议 → 结果 Commit 的 `package.json` 自动识别”确定预览方式，保守支持 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见脚本。若高级配置实际指向 `concurrently`、Electron 等多进程或桌面聚合脚本，DevLoop 会跳过该命令并自动寻找单独的 Web 启动入口。
 
 预览从结果 Commit 的隔离 Worktree 启动，并根据最近的 `pnpm-lock.yaml`、`package-lock.json`、`yarn.lock` 或 Bun 锁文件安装依赖。服务就绪后，DevLoop 会检查页面加载与控制台错误、生成截图，并可执行项目自定义的 Playwright 命令。审核页可直接在桌面独立窗口或浏览器中打开预览。
 

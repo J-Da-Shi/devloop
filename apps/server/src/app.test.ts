@@ -334,7 +334,7 @@ describe("自动预览配置接口", () => {
     const starts: StartPreviewInput[] = [];
     const detectedConfiguration = {
       source: "detected" as const,
-      command: "pnpm run dev -- --host 127.0.0.1 --port {{port}}",
+      command: "pnpm run dev --host 127.0.0.1 --port {{port}}",
       workingDirectory: "apps/web",
       healthPath: "/",
     };

@@ -1,11 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { GitService } from "@devloop/git";
 import { terminateProcessGroup } from "@devloop/runners";
 import type { PreviewConfigSource, RunPreview, RunPreviewConfig } from "@devloop/shared";
+import {
+  detectPreviewConfig,
+  findPreviewDependencyInstallation,
+  isAggregatePreviewCommand,
+  normalizePreviewCommand,
+  type PreviewDependencyInstallation,
+} from "./preview-configuration.js";
+
+export { detectPreviewConfig, findPreviewDependencyInstallation } from "./preview-configuration.js";
+export type { PreviewDependencyInstallation } from "./preview-configuration.js";
 
 export interface StartPreviewInput {
   runId: string;
@@ -23,12 +33,6 @@ export interface ActivePreview extends RunPreview {
   configuration: RunPreviewConfig;
 }
 
-export interface PreviewDependencyInstallation {
-  command: string;
-  workingDirectory: string;
-  lockfile: string;
-}
-
 interface PreviewSession extends ActivePreview {
   repositoryPath: string;
   worktreePath: string;
@@ -44,43 +48,6 @@ interface PreviewSession extends ActivePreview {
 }
 
 const maxPreviewLogLength = 24_000;
-
-const dependencyInstallers = [
-  { lockfile: "pnpm-lock.yaml", command: "pnpm install --frozen-lockfile" },
-  { lockfile: "package-lock.json", command: "npm ci" },
-  { lockfile: "yarn.lock", command: "yarn install --frozen-lockfile" },
-  { lockfile: "bun.lockb", command: "bun install --frozen-lockfile" },
-  { lockfile: "bun.lock", command: "bun install --frozen-lockfile" },
-] as const;
-
-const ignoredSearchDirectories = new Set([
-  ".git",
-  ".next",
-  ".nuxt",
-  ".output",
-  ".devloop-runtime",
-  "node_modules",
-  "dist",
-  "build",
-  "coverage",
-  "test-results",
-  "playwright-report",
-]);
-const maxPreviewManifestDepth = 5;
-const maxPreviewManifests = 48;
-
-type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
-
-interface PreviewPackageManifest {
-  scripts: Record<string, string>;
-}
-
-interface PreviewScriptCandidate {
-  directory: string;
-  script: string;
-  packageManager: PackageManager;
-  score: number;
-}
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -118,219 +85,6 @@ export const buildPreviewEnvironment = (overrides: Record<string, string>): Node
     }
   }
   return { ...environment, ...overrides };
-};
-
-const isFile = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-};
-
-export const findPreviewDependencyInstallation = async (
-  worktreePath: string,
-  workingDirectory: string,
-): Promise<PreviewDependencyInstallation | null> => {
-  const root = resolve(worktreePath);
-  let candidate = resolve(root, workingDirectory);
-  const candidateRelativePath = relative(root, candidate);
-  if (candidateRelativePath.startsWith("..") || isAbsolute(candidateRelativePath)) return null;
-  while (true) {
-    for (const installer of dependencyInstallers) {
-      if (await isFile(join(candidate, installer.lockfile))) {
-        return {
-          command: installer.command,
-          workingDirectory: candidate,
-          lockfile: installer.lockfile,
-        };
-      }
-    }
-    if (candidate === root) return null;
-    const parent = dirname(candidate);
-    if (parent === candidate) return null;
-    candidate = parent;
-  }
-};
-
-const packageManagerForLockfile = (lockfile: string | null): PackageManager => {
-  switch (lockfile) {
-    case "pnpm-lock.yaml":
-      return "pnpm";
-    case "package-lock.json":
-      return "npm";
-    case "yarn.lock":
-      return "yarn";
-    case "bun.lockb":
-    case "bun.lock":
-      return "bun";
-    default:
-      return "npm";
-  }
-};
-
-const parsePreviewPackageManifest = (content: string): PreviewPackageManifest | null => {
-  try {
-    const value: unknown = JSON.parse(content);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    const scriptsValue = record.scripts;
-    const scripts =
-      scriptsValue && typeof scriptsValue === "object" && !Array.isArray(scriptsValue)
-        ? Object.fromEntries(
-            Object.entries(scriptsValue).filter(
-              (entry): entry is [string, string] => typeof entry[1] === "string",
-            ),
-          )
-        : {};
-    return { scripts };
-  } catch {
-    return null;
-  }
-};
-
-const frameworkForPreviewScript = (
-  command: string,
-): { score: number; nextStyleArguments: boolean } | null => {
-  const lowered = command.toLowerCase();
-  if (/[\r\n;&|`<>]|\$\(|\$\{/.test(command)) return null;
-  if (/\b(?:concurrently|electron|turbo|nx\s+run-many)\b/.test(lowered)) return null;
-  const definitions = [
-    { pattern: /\bvite(?:\s|$)/, nextStyleArguments: false },
-    { pattern: /\bnext\s+(?:dev|start)\b/, nextStyleArguments: true },
-    {
-      pattern: /\bnuxt\s+(?:dev|start)\b/,
-      nextStyleArguments: false,
-    },
-    {
-      pattern: /\bastro\s+(?:dev|preview)\b/,
-      nextStyleArguments: false,
-    },
-    {
-      pattern: /\b(?:svelte-kit|vite)\s+dev\b/,
-      nextStyleArguments: false,
-    },
-    {
-      pattern: /\b(?:remix\s+vite:dev|(?:remix|vite)\s+dev)\b/,
-      nextStyleArguments: false,
-    },
-    {
-      pattern: /\bwebpack(?:-cli)?\s+serve\b/,
-      nextStyleArguments: false,
-    },
-    { pattern: /\bparcel\b/, nextStyleArguments: false },
-    {
-      pattern: /\bstorybook\s+dev\b/,
-      nextStyleArguments: false,
-    },
-  ];
-  for (const definition of definitions) {
-    if (definition.pattern.test(lowered)) {
-      return {
-        score: 100,
-        nextStyleArguments: definition.nextStyleArguments,
-      };
-    }
-  }
-  return null;
-};
-
-const buildPreviewScriptCommand = (
-  packageManager: PackageManager,
-  script: string,
-  nextStyleArguments: boolean,
-): string => {
-  const argumentsList = nextStyleArguments
-    ? "--hostname 127.0.0.1 --port {{port}}"
-    : "--host 127.0.0.1 --port {{port}}";
-  switch (packageManager) {
-    case "pnpm":
-      return `pnpm run ${script} -- ${argumentsList}`;
-    case "yarn":
-      return `yarn run ${script} ${argumentsList}`;
-    case "bun":
-      return `bun run ${script} -- ${argumentsList}`;
-    default:
-      return `npm run ${script} -- ${argumentsList}`;
-  }
-};
-
-const previewPackageManifests = async (
-  root: string,
-): Promise<Array<{ directory: string; manifest: PreviewPackageManifest }>> => {
-  const queue: Array<{ directory: string; depth: number }> = [{ directory: root, depth: 0 }];
-  const manifests: Array<{ directory: string; manifest: PreviewPackageManifest }> = [];
-  while (queue.length && manifests.length < maxPreviewManifests) {
-    const current = queue.shift();
-    if (!current) break;
-    const packageJson = join(current.directory, "package.json");
-    try {
-      const manifest = parsePreviewPackageManifest(await readFile(packageJson, "utf8"));
-      if (manifest) manifests.push({ directory: current.directory, manifest });
-    } catch {
-      // 当前目录不是 Node.js 包，继续向下检查。
-    }
-    if (current.depth >= maxPreviewManifestDepth) continue;
-    try {
-      const entries = await readdir(current.directory, { withFileTypes: true, encoding: "utf8" });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || ignoredSearchDirectories.has(entry.name)) continue;
-        queue.push({ directory: join(current.directory, entry.name), depth: current.depth + 1 });
-      }
-    } catch {
-      continue;
-    }
-  }
-  return manifests;
-};
-
-export const detectPreviewConfig = async (
-  worktreePath: string,
-): Promise<RunPreviewConfig | null> => {
-  const root = resolve(worktreePath);
-  const manifests = await previewPackageManifests(root);
-  const candidates: PreviewScriptCandidate[] = [];
-  for (const { directory, manifest } of manifests) {
-    const installation = await findPreviewDependencyInstallation(root, directory);
-    const packageManager = packageManagerForLockfile(installation?.lockfile ?? null);
-    for (const script of ["dev", "preview", "start"] as const) {
-      const command = manifest.scripts[script];
-      if (!command) continue;
-      const framework = frameworkForPreviewScript(command);
-      if (!framework) continue;
-      const relativeDirectory = relative(root, directory);
-      const directoryPreference = /(?:^|\/)(?:web|frontend|client|app)(?:\/|$)/i.test(
-        relativeDirectory,
-      )
-        ? 8
-        : 0;
-      const scriptPreference = script === "dev" ? 3 : script === "preview" ? 2 : 1;
-      candidates.push({
-        directory,
-        script,
-        packageManager,
-        score: framework.score + directoryPreference + scriptPreference,
-      });
-    }
-  }
-  const candidate = candidates.sort((left, right) => right.score - left.score)[0];
-  if (!candidate) return null;
-  const manifest = manifests.find((item) => item.directory === candidate.directory)?.manifest;
-  const script = manifest?.scripts[candidate.script];
-  if (!script) return null;
-  const framework = frameworkForPreviewScript(script);
-  if (!framework) return null;
-  const workingDirectory = relative(root, candidate.directory) || ".";
-  return {
-    source: "detected",
-    command: buildPreviewScriptCommand(
-      candidate.packageManager,
-      candidate.script,
-      framework.nextStyleArguments,
-    ),
-    workingDirectory,
-    healthPath: "/",
-  };
 };
 
 export class PreviewStartError extends Error {
@@ -396,17 +150,32 @@ export class PreviewService {
         ...(input.signal ? { signal: input.signal } : {}),
       });
       input.signal?.throwIfAborted();
-      const configuration = input.command
+      let rejectedAggregateCommand = false;
+      let configuration: RunPreviewConfig | null = input.command
         ? {
             source: input.source ?? "project",
-            command: input.command,
+            command: normalizePreviewCommand(input.command),
             workingDirectory: input.workingDirectory,
             healthPath: input.healthPath,
           }
-        : await detectPreviewConfig(worktreePath);
+        : null;
+      if (configuration) {
+        const configuredWorkingDirectory = this.resolveWorkingDirectory(
+          worktreePath,
+          configuration.workingDirectory,
+        );
+        rejectedAggregateCommand = await isAggregatePreviewCommand(
+          configuredWorkingDirectory,
+          configuration.command,
+        );
+        if (rejectedAggregateCommand) configuration = null;
+      }
+      configuration ??= await detectPreviewConfig(worktreePath);
       if (!configuration) {
         throw new PreviewNotDetectedError(
-          "未能自动识别可启动的 Web 预览；请在项目的高级预览设置中提供启动命令。",
+          rejectedAggregateCommand
+            ? "项目预览命令会启动多个进程或桌面端，且未能自动识别可替代的单一 Web 启动命令；请在项目高级预览设置中指定 Web 启动入口。"
+            : "未能自动识别可启动的 Web 预览；请在项目的高级预览设置中提供启动命令。",
         );
       }
       const workingDirectory = this.resolveWorkingDirectory(
