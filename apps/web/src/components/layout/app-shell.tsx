@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Avatar, Button, Tag, Tooltip } from "antd";
-import { Clock3, Settings, Wifi, WifiOff } from "lucide-react";
+import { Clock3, Moon, Settings, Sun, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, queryKeys, useUiStore } from "../../core/index.js";
 import { footerNavigation, getPageTitle, mainNavigation } from "../../routes/index.js";
+import { useAppTheme } from "../../theme/index.js";
 import { ErrorPanel, LoadingPanel } from "../common/index.js";
 import { RealtimeSync } from "./realtime-sync.js";
 
@@ -30,6 +31,7 @@ export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pageContentRef = useRef<HTMLElement>(null);
   const realtimeStatus = useUiStore((state) => state.realtimeStatus);
+  const { theme, toggleTheme } = useAppTheme();
   const session = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
@@ -124,6 +126,16 @@ export function AppShell() {
             >
               {connected ? "实时" : realtimeStatus === "disabled" ? "已关闭实时" : "重连中"}
             </Tag>
+            <Tooltip title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}>
+              <Button
+                type="text"
+                shape="circle"
+                className="icon-button theme-toggle"
+                icon={theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+                aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+                onClick={toggleTheme}
+              />
+            </Tooltip>
             <Link to={footerNavigation[0]?.path ?? "/settings"} aria-label="设置">
               <Tooltip title="设置">
                 <Button

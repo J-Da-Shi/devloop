@@ -90,7 +90,7 @@
   .topbar {
     min-height: 60px;
     padding: 0 12px;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--topbar-bg);
   }
 
   .topbar-title {
@@ -142,7 +142,7 @@
     min-height: calc(64px + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
     border-top: 1px solid var(--border);
-    background: rgba(5, 5, 5, 0.94);
+    background: var(--mobile-nav-bg);
     box-shadow: 0 -14px 34px var(--surface-subtle);
     backdrop-filter: blur(18px);
   }
@@ -155,7 +155,7 @@
     place-items: center;
     align-content: center;
     gap: 4px;
-    color: rgba(255, 255, 255, 0.58);
+    color: var(--mobile-nav-text);
     text-decoration: none;
     font-size: 10px;
     font-weight: 620;
@@ -174,8 +174,8 @@
   }
 
   .mobile-nav-link.active {
-    background: linear-gradient(90deg, rgba(129, 255, 112, 0.09), rgba(85, 156, 255, 0.09));
-    color: #ffffff;
+    background: var(--primary-soft);
+    color: var(--text-inverse);
   }
 
   .mobile-nav-link.active::before {
@@ -228,6 +228,10 @@
 
   .topbar-actions {
     gap: 5px;
+  }
+
+  .connection-state {
+    display: none;
   }
 
   .topbar-title {

@@ -57,7 +57,7 @@
   min-width: 0;
   padding: 7px 8px;
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   font-size: 12px;
 }
 
@@ -78,7 +78,7 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .run-validation-screenshots .ant-image-img {
@@ -90,7 +90,7 @@
 
 .run-validation-output-details {
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface-code);
 }
 
 .run-validation-output-details summary {
@@ -163,8 +163,8 @@
 }
 
 .run-row.active {
-  background: linear-gradient(90deg, rgba(129, 255, 112, 0.1), rgba(85, 156, 255, 0.1));
-  box-shadow: inset 0 1px rgba(15, 23, 42, 0.036);
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 var(--primary);
 }
 
 .run-row > span:first-child {
@@ -181,7 +181,7 @@
 .run-row small {
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -354,8 +354,8 @@
 .pairing-result > svg {
   max-width: 100%;
   height: auto;
-  border: 8px solid #ffffff;
-  background: #ffffff;
+  border: 8px solid var(--qr-surface);
+  background: var(--qr-surface);
 }
 
 .pairing-result > div {

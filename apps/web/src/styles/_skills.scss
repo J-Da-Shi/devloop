@@ -49,7 +49,7 @@
 .skill-section-kicker {
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -82,7 +82,7 @@
 
 .skill-search:focus-within {
   border-color: var(--border-strong);
-  background: #ffffff;
+  background: var(--surface);
   box-shadow: 0 0 0 2px var(--primary-soft);
 }
 
@@ -128,7 +128,7 @@
   padding: 13px 12px;
   border: 0;
   border-bottom: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text);
   text-align: left;
   transition:
@@ -145,8 +145,8 @@
 }
 
 .skill-list-item.active {
-  background: #f8fafc;
-  box-shadow: inset 3px 0 #111827;
+  background: var(--surface-subtle);
+  box-shadow: inset 3px 0 var(--primary);
 }
 
 .skill-state-dot {
@@ -193,7 +193,7 @@
 
 .skill-list-item > code {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .skill-create-button {
@@ -219,7 +219,7 @@
   gap: 16px;
   padding: 12px 15px;
   border-bottom: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .skill-editor-title,
@@ -286,7 +286,7 @@
   padding: 9px 13px;
   border-bottom: 1px solid rgba(217, 119, 6, 0.24);
   background: var(--warning-soft);
-  color: #92400e;
+  color: var(--warning);
   font-size: 12px;
 }
 
@@ -313,13 +313,13 @@
   padding: 0 12px;
   border-right: 1px solid var(--border);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .skill-editor-meta strong {
   color: var(--text-soft);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -331,7 +331,7 @@
 
 .skill-code-editor {
   min-height: 360px;
-  background: #fbfcfd;
+  background: var(--surface-subtle);
 }
 
 .skill-code-editor textarea {
@@ -344,8 +344,8 @@
   outline: 0;
   padding: 20px 22px;
   background: transparent;
-  color: #172033;
-  caret-color: #111827;
+  color: var(--text);
+  caret-color: var(--info);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   line-height: 1.7;
@@ -367,7 +367,7 @@
 .skill-validation-panel,
 .skill-history-panel {
   min-width: 0;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .skill-validation-panel {
@@ -392,7 +392,7 @@
 .skill-inspector-heading > code,
 .skill-inspector-heading > span:last-child {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -469,7 +469,7 @@
 .skill-issue-list strong {
   color: var(--text-soft);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .skill-issue-list small {
@@ -508,10 +508,10 @@
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text-soft);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -526,16 +526,16 @@
   color: var(--text-soft);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .skill-version-row small {
   gap: 4px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .skill-version-row > strong {
   color: var(--success);
-  font-size: 10px;
+  font-size: 11px;
 }

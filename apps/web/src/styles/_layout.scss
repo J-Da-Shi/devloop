@@ -26,7 +26,7 @@
   inset: 0 0 auto;
   z-index: 40;
   height: 14px;
-  background: #ffffff;
+  background: var(--surface);
   content: "";
   -webkit-app-region: drag;
 }
@@ -57,9 +57,9 @@
   width: 232px;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface-subtle);
   color: var(--text);
-  box-shadow: 1px 0 0 rgba(15, 23, 42, 0.02);
+  box-shadow: 1px 0 0 var(--decorative-weak);
 }
 
 .brand-link {
@@ -78,7 +78,8 @@
 .pair-brand img {
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px var(--decorative-soft);
 }
 
 .brand-link > span {
@@ -153,16 +154,16 @@
 }
 
 .nav-link.active {
-  border-color: var(--border);
-  background: var(--surface-subtle);
+  border-color: var(--border-strong);
+  background: var(--primary-soft);
   color: var(--text);
-  box-shadow: none;
+  box-shadow: inset 3px 0 var(--primary);
 }
 
 .nav-link.active svg {
-  border-color: var(--border);
-  background: #ffffff;
-  color: var(--text);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--text-on-action);
 }
 
 .sidebar-footer {
@@ -170,7 +171,7 @@
   gap: 8px;
   padding: 12px;
   border-top: 1px solid var(--border);
-  background: var(--surface-subtle);
+  background: var(--surface);
 }
 
 .identity-row {
@@ -181,7 +182,7 @@
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--surface-raised);
   color: var(--text);
 }
 
@@ -240,8 +241,8 @@
   gap: 18px;
   padding: 0 24px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.85);
-  box-shadow: none;
+  background: var(--topbar-bg);
+  box-shadow: 0 1px 0 var(--decorative-weak);
   backdrop-filter: blur(18px);
 }
 
@@ -286,7 +287,7 @@
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface-subtle);
+  background: var(--surface-raised);
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
@@ -357,13 +358,17 @@
     box-shadow 180ms ease;
 }
 
+.theme-toggle {
+  color: var(--info);
+}
+
 .icon-button {
   width: 38px;
   height: 38px;
   flex: 0 0 38px;
   padding: 0;
   border-color: var(--border);
-  background: #ffffff;
+  background: var(--surface-raised);
   color: var(--muted);
 }
 

@@ -25,10 +25,10 @@
   height: 38px;
   flex: 0 0 38px;
   place-items: center;
-  border: 1px solid rgba(15, 23, 42, 0.108);
+  border: 1px solid var(--primary-hover);
   border-radius: 7px;
-  background: linear-gradient(135deg, rgba(129, 255, 112, 0.12), rgba(85, 156, 255, 0.12));
-  color: #ffffff;
+  background: var(--primary);
+  color: var(--text-on-action);
 }
 
 .object-main {
