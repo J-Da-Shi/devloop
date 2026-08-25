@@ -1,0 +1,208 @@
+// 让业务组件统一消费主题变量，避免深浅主题出现局部硬编码颜色。
+
+.status-running {
+  border-color: var(--running);
+  background: var(--running-soft);
+  color: var(--running);
+}
+
+.status-success {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-info {
+  border-color: var(--info);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.status-warning {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status-danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.worker-strip,
+.metric-grid,
+.tool-panel,
+.object-list,
+.run-list {
+  background: var(--surface);
+}
+
+.worker-node-mark,
+.compact-panel .section-heading > span:last-child {
+  background: var(--surface-raised);
+}
+
+.worker-node-mark {
+  border-color: var(--border-strong);
+}
+
+.worker-node-mark span {
+  font-size: 11px;
+}
+
+.metric-item:hover {
+  background: var(--surface-hover);
+}
+
+.metric-info .metric-icon {
+  color: var(--info);
+  background: var(--info-soft);
+}
+
+.project-source-control button.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--text-on-action);
+  box-shadow: none;
+}
+
+.signal-monitor {
+  border-color: var(--border-strong);
+  background: var(--surface-code);
+  box-shadow: var(--shadow-panel);
+}
+
+.signal-monitor::after {
+  background: var(--surface-raised);
+  box-shadow: inset 0 1px var(--decorative-soft);
+}
+
+.signal-monitor span {
+  background: var(--border-emphasis);
+}
+
+.signal-monitor svg,
+.execution-state {
+  color: var(--running);
+}
+
+.signal-monitor svg {
+  filter: drop-shadow(0 0 10px var(--running-soft));
+}
+
+.signal-monitor.queued {
+  border-color: var(--running);
+  box-shadow:
+    inset 0 0 0 12px var(--running-soft),
+    0 0 0 1px var(--running),
+    var(--shadow-panel);
+}
+
+.notice-info {
+  border-color: var(--info);
+  background: var(--info-soft);
+  color: var(--text-soft);
+}
+
+.notice-success,
+.notice-warning,
+.notice-danger {
+  color: var(--text-soft);
+}
+
+.event-log-panel {
+  background: var(--surface-code);
+}
+
+.event-list li:not(:last-child)::before {
+  background: var(--border);
+}
+
+.event-log-scroll:focus-visible,
+.event-payload summary:focus-visible {
+  outline-color: var(--focus);
+}
+
+.event-list li.active .event-marker {
+  border-color: var(--running);
+  box-shadow: 0 0 0 3px var(--running-soft);
+}
+
+.event-payload pre {
+  border-color: var(--border-strong);
+  background: var(--surface-code);
+  color: var(--text-soft);
+}
+
+.queue-index {
+  background: var(--surface-active);
+  color: var(--text);
+}
+
+.diff-conflict-summary strong,
+.diff-conflict-summary span,
+.diff-conflict-badge,
+.diff-line-conflict,
+.diff-conflict-block-nav > span,
+.diff-conflict-editor-footer > span.is-unresolved,
+.diff-preview-conflict-state,
+.diff-file-state-conflict {
+  color: var(--warning);
+}
+
+.diff-conflict-summary-unavailable strong,
+.diff-conflict-summary-unavailable span {
+  color: var(--danger);
+}
+
+.diff-conflict-summary.is-resolved strong,
+.diff-conflict-summary.is-resolved span {
+  color: var(--success);
+}
+
+.diff-file-browser-heading span:last-child {
+  background: var(--surface-active);
+  color: var(--text);
+}
+
+.diff-file-browser-item.is-selected {
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 var(--primary);
+}
+
+.diff-file-detail,
+.diff-view-tabs {
+  background: var(--surface);
+}
+
+.diff-conflict-toolbar {
+  background: var(--warning-soft);
+}
+
+.diff-editor-icon-button,
+.diff-conflict-choice-actions button {
+  border-color: var(--warning);
+  background: var(--button-secondary);
+  color: var(--text-on-action);
+}
+
+.diff-editor-icon-button:hover:not(:disabled),
+.diff-conflict-choice-actions button:hover:not(:disabled) {
+  border-color: var(--warning);
+  background: var(--button-secondary-hover);
+}
+
+.diff-conflict-textarea {
+  background: var(--surface-code);
+  color: var(--text);
+  caret-color: var(--info);
+}
+
+.diff-conflict-textarea:focus {
+  box-shadow: inset 0 0 0 2px var(--focus-soft);
+}
+
+.diff-conflict-textarea.is-resolved {
+  background: var(--success-soft);
+}

@@ -26,7 +26,34 @@
 }
 
 .ant-btn-primary:not(:disabled) {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  color: var(--text-on-action);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.ant-btn-default:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--button-secondary);
+  color: var(--text-on-action);
+}
+
+.ant-btn-default:hover:not(:disabled) {
+  border-color: var(--border-emphasis) !important;
+  background: var(--button-secondary-hover) !important;
+  color: var(--text-on-action) !important;
+}
+
+.ant-btn-default.ant-btn-dangerous:not(:disabled),
+.ant-btn-dangerous.ant-btn-primary:not(:disabled) {
+  border-color: var(--danger-strong);
+  background: var(--danger-strong);
+  color: var(--text-on-action);
+}
+
+.ant-btn-default.ant-btn-dangerous:hover:not(:disabled),
+.ant-btn-dangerous.ant-btn-primary:hover:not(:disabled) {
+  border-color: var(--danger-hover) !important;
+  background: var(--danger-hover) !important;
+  color: var(--text-on-action) !important;
 }
 
 .icon-button.ant-btn {
@@ -35,7 +62,7 @@
   height: 38px;
   padding: 0;
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface-raised);
   color: var(--muted);
 }
 
@@ -43,6 +70,10 @@
   border-color: var(--border-strong);
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.icon-button.ant-btn.theme-toggle {
+  color: var(--info);
 }
 
 .system-clock.ant-tag,
@@ -103,7 +134,7 @@
 }
 
 .ant-modal-root .ant-modal-mask {
-  background: rgba(4, 6, 9, 0.72);
+  background: var(--overlay);
   backdrop-filter: blur(4px);
 }
 
@@ -112,8 +143,8 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-overlay);
 }
 
 .ant-modal .ant-modal-header {
@@ -206,7 +237,7 @@
   min-width: 0;
   padding: 12px 14px;
   border-right: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .task-readonly-summary section:last-child {
@@ -327,7 +358,7 @@
 }
 
 .task-card.ant-card:focus-visible {
-  outline: 2px solid rgba(17, 24, 39, 0.4);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -517,7 +548,7 @@
   padding: 4px 10px;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .diff-view-tabs .ant-segmented-group {

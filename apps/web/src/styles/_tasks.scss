@@ -71,7 +71,7 @@
   width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--surface-input);
   color: var(--text);
   font-size: 13px;
   font-weight: 450;
@@ -101,7 +101,7 @@
 .field select:hover:not(:disabled),
 .compact-select select:hover:not(:disabled),
 .device-row select:hover:not(:disabled) {
-  border-color: rgba(15, 23, 42, 0.14);
+  border-color: var(--border-emphasis);
 }
 
 .field input:focus,
@@ -111,13 +111,13 @@
 .device-row select:focus {
   border-color: var(--primary);
   outline: 0;
-  background: #ffffff;
-  box-shadow: 0 0 0 3px rgba(210, 255, 179, 0.1);
+  background: var(--surface-input);
+  box-shadow: 0 0 0 3px var(--focus-soft);
 }
 
 .field input::placeholder,
 .field textarea::placeholder {
-  color: #6b7280;
+  color: var(--muted-dim);
 }
 
 .field-error {
@@ -213,8 +213,8 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(15, 23, 42, 0.0225);
-  box-shadow: inset 0 1px rgba(15, 23, 42, 0.0225);
+  background: var(--surface-subtle);
+  box-shadow: inset 0 1px var(--decorative-weak);
 }
 
 .board-column > header {
@@ -224,7 +224,7 @@
   justify-content: space-between;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.0315);
+  background: var(--surface-raised);
 }
 
 .board-column > header > span:last-child {
@@ -259,10 +259,10 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: rgba(15, 23, 42, 0.0495);
+  background: var(--surface);
   color: var(--text);
   text-align: left;
-  box-shadow: inset 0 1px rgba(15, 23, 42, 0.0225);
+  box-shadow: inset 0 1px var(--decorative-weak);
   transition:
     background-color 180ms ease,
     border-color 180ms ease,
@@ -270,13 +270,13 @@
 }
 
 .task-card:hover {
-  border-color: rgba(15, 23, 42, 0.14);
-  background: linear-gradient(90deg, rgba(129, 255, 112, 0.08), rgba(85, 156, 255, 0.08));
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.063);
+  border-color: var(--border-emphasis);
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-hover);
 }
 
 .task-card-project {
-  color: rgba(15, 23, 42, 0.14);
+  color: var(--muted-dim);
   font-size: 11px;
   font-weight: 650;
 }
