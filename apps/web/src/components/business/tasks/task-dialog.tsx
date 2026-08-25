@@ -68,6 +68,11 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       criteriaText: task?.acceptanceCriteria.join("\n") ?? "",
       priority: task?.priority ?? 50,
       autoResolveConflicts: task?.autoResolveConflicts ?? true,
+      executionMode: task?.executionMode ?? "MANAGED",
+      budgetHardLimitYuan:
+        task?.executionMode === "MANAGED" && task.budget.hardLimitCents > 0
+          ? task.budget.hardLimitCents / 100
+          : undefined,
     };
   }, [projects, task]);
   const form = useForm<TaskFormValues>({
@@ -104,6 +109,10 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
           acceptanceCriteria,
           priority: values.priority,
           autoResolveConflicts: values.autoResolveConflicts,
+          executionMode: values.executionMode,
+          ...(values.executionMode === "MANAGED" && values.budgetHardLimitYuan !== undefined
+            ? { budgetHardLimitCents: Math.round(values.budgetHardLimitYuan * 100) }
+            : {}),
           expectedVersion: task.version,
           idempotencyKey: crypto.randomUUID(),
         });
@@ -117,6 +126,10 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
         acceptanceCriteria,
         priority: values.priority,
         autoResolveConflicts: values.autoResolveConflicts,
+        executionMode: values.executionMode,
+        ...(values.executionMode === "MANAGED" && values.budgetHardLimitYuan !== undefined
+          ? { budgetHardLimitCents: Math.round(values.budgetHardLimitYuan * 100) }
+          : {}),
       });
     },
     onSuccess: async (data) => {
@@ -240,7 +253,9 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
   const canOperate = session.data ? session.data.identity.role !== "viewer" : false;
   const editable = !task || task.status === "DRAFT";
   const canRecover = Boolean(
-    task && (task.status === "BLOCKED" || task.status === "FAILED") && canEdit,
+    task &&
+    (task.status === "BLOCKED" || task.status === "BUDGET_PAUSED" || task.status === "FAILED") &&
+    canEdit,
   );
   const canCancel = Boolean(task?.status === "RUNNING" && canOperate);
   const canDelete = Boolean(task && task.status !== "RUNNING" && canEdit);
@@ -281,9 +296,12 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
       danger: false,
     },
     revise: {
-      title: "退回草稿并修改？",
-      description: "任务会转为可编辑草稿，已有 Run 和失败记录继续保留。",
-      label: "退回草稿",
+      title: task?.status === "BUDGET_PAUSED" ? "调整预算后继续？" : "退回草稿并修改？",
+      description:
+        task?.status === "BUDGET_PAUSED"
+          ? "任务会转为草稿并保留当前检查点。请提高自动停止上限，再确认排队。"
+          : "任务会转为可编辑草稿，已有 Run 和失败记录继续保留。",
+      label: task?.status === "BUDGET_PAUSED" ? "调整预算" : "退回草稿",
       danger: false,
     },
     cancel: {
@@ -357,6 +375,13 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
             <span>分数 {task.priority}</span>
             <span>版本 {task.version}</span>
             <span>{taskTypeText[task.taskType]}</span>
+            <span>{task.executionMode === "MANAGED" ? "AI 托管" : "标准执行"}</span>
+            {task.executionMode === "MANAGED" ? (
+              <span>
+                预算 ¥{(task.budget.consumedCents / 100).toFixed(2)} / ¥
+                {(task.budget.hardLimitCents / 100).toFixed(2)}
+              </span>
+            ) : null}
             {task.taskType === "DEVELOPMENT" ? (
               <span>{task.autoResolveConflicts ? "自动解决冲突" : "人工解决冲突"}</span>
             ) : null}
@@ -512,16 +537,18 @@ export function TaskDialog({ open, onOpenChange, task, projects }: TaskDialogPro
                       onClick={() => setConfirmAction("revise")}
                       disabled={pending}
                     >
-                      修改后重试
+                      {task?.status === "BUDGET_PAUSED" ? "调整预算后继续" : "修改后重试"}
                     </Button>
-                    <Button
-                      type="primary"
-                      icon={<RotateCcw size={17} />}
-                      onClick={() => setConfirmAction("retry")}
-                      disabled={pending}
-                    >
-                      直接重试
-                    </Button>
+                    {task?.status !== "BUDGET_PAUSED" ? (
+                      <Button
+                        type="primary"
+                        icon={<RotateCcw size={17} />}
+                        onClick={() => setConfirmAction("retry")}
+                        disabled={pending}
+                      >
+                        直接重试
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
                 {task?.status === "COMPLETED" && runDetails.data ? (

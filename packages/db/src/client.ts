@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { schema, workerState } from "./schema.js";
+import { managedDeliverySettings, schema, workerState } from "./schema.js";
 
 export interface DatabaseOptions {
   filePath: string;
@@ -38,6 +38,10 @@ export function openDatabase(options: DatabaseOptions): DatabaseHandle {
       activeRunId: null,
       version: 0,
     })
+    .onConflictDoNothing()
+    .run();
+  db.insert(managedDeliverySettings)
+    .values({ id: "primary", updatedAt: now })
     .onConflictDoNothing()
     .run();
 

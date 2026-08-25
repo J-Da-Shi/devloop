@@ -9,6 +9,7 @@ import {
   workerConcurrencyMax,
   workerConcurrencyMin,
 } from "./domain.js";
+import { budgetConfidenceSchema, taskExecutionModeSchema } from "./managed-delivery.js";
 
 const previewCommandSchema = z.string().trim().min(1).max(4_000);
 
@@ -136,6 +137,8 @@ export const createTaskInputSchema = z.object({
   taskType: taskTypeSchema.default("DEVELOPMENT"),
   targetBranch: targetBranchSchema,
   autoResolveConflicts: z.boolean().default(true),
+  executionMode: taskExecutionModeSchema.default("MANAGED"),
+  budgetHardLimitCents: z.number().int().min(100).max(10_000_000).optional(),
   title: z.string().trim().min(1).max(160),
   goal: z.string().trim().min(1).max(8000),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20),
@@ -147,6 +150,8 @@ export const updateTaskInputSchema = z
     taskType: taskTypeSchema.optional(),
     targetBranch: targetBranchSchema.optional(),
     autoResolveConflicts: z.boolean().optional(),
+    executionMode: taskExecutionModeSchema.optional(),
+    budgetHardLimitCents: z.number().int().min(100).max(10_000_000).optional(),
     title: z.string().trim().min(1).max(160).optional(),
     goal: z.string().trim().min(1).max(8000).optional(),
     acceptanceCriteria: z.array(z.string().trim().min(1).max(1000)).min(1).max(20).optional(),
@@ -160,6 +165,8 @@ export const updateTaskInputSchema = z
       value.taskType !== undefined ||
       value.targetBranch !== undefined ||
       value.autoResolveConflicts !== undefined ||
+      value.executionMode !== undefined ||
+      value.budgetHardLimitCents !== undefined ||
       value.goal !== undefined ||
       value.acceptanceCriteria !== undefined ||
       value.priority !== undefined,
@@ -173,6 +180,38 @@ export const taskCommandInputSchema = z.object({
 
 export const updateWorkerConcurrencyInputSchema = z.object({
   concurrencyLimit: z.number().int().min(workerConcurrencyMin).max(workerConcurrencyMax),
+});
+
+export const managedBudgetEstimateInputSchema = createTaskInputSchema.pick({
+  projectId: true,
+  taskType: true,
+  title: true,
+  goal: true,
+  acceptanceCriteria: true,
+  executionMode: true,
+});
+
+export const updateManagedDeliverySettingsInputSchema = z.object({
+  maxTaskBudgetCents: z.number().int().min(100).max(10_000_000),
+  warningPercent: z.number().int().min(10).max(99),
+  budgetOverrunPercent: z.number().int().min(0).max(500),
+  autoRetryLimit: z.number().int().min(0).max(10),
+  runnerHourlyRatesCents: z.object({
+    codex: z.number().int().min(0).max(1_000_000),
+    "claude-code": z.number().int().min(0).max(1_000_000),
+    fake: z.number().int().min(0).max(1_000_000),
+  }),
+  expectedVersion: z.number().int().nonnegative(),
+});
+
+export const taskBudgetEstimateSchema = z.object({
+  currency: z.literal("CNY"),
+  lowCents: z.number().int().nonnegative(),
+  highCents: z.number().int().nonnegative(),
+  lowMinutes: z.number().int().positive(),
+  highMinutes: z.number().int().positive(),
+  confidence: budgetConfidenceSchema,
+  rationale: z.array(z.string().min(1).max(300)).max(10),
 });
 
 const conflictPathSchema = z.string().min(1).max(1024);
@@ -274,6 +313,10 @@ export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type TaskCommandInput = z.infer<typeof taskCommandInputSchema>;
 export type UpdateWorkerConcurrencyInput = z.infer<typeof updateWorkerConcurrencyInputSchema>;
+export type ManagedBudgetEstimateInput = z.infer<typeof managedBudgetEstimateInputSchema>;
+export type UpdateManagedDeliverySettingsInput = z.infer<
+  typeof updateManagedDeliverySettingsInputSchema
+>;
 export type ApproveRunInput = z.infer<typeof approveRunInputSchema>;
 export type ResolveRunConflictsInput = z.infer<typeof resolveRunConflictsInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;

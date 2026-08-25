@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { projectRunnerSchema } from "@devloop/shared";
 import type {
+  ProjectRunner,
   DomainEvent,
   PairedDevice,
   Project,
@@ -35,6 +37,9 @@ const maxRetryContextEventCharacters = 1_200;
 const maxRetryContextCharacters = 30_000;
 
 export const now = (): string => new Date().toISOString();
+
+export const parseProjectRunner = (value: unknown): ProjectRunner =>
+  projectRunnerSchema.parse(value ?? "codex");
 
 export const hash = (value: string): string => createHash("sha256").update(value).digest("hex");
 
@@ -114,7 +119,7 @@ export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["ret
     !record.sourceRunner ||
     typeof record.sourceFinishedAt !== "string" ||
     !record.sourceFinishedAt ||
-    (sourceStatus !== "BLOCKED" && sourceStatus !== "FAILED") ||
+    (sourceStatus !== "BLOCKED" && sourceStatus !== "BUDGET_PAUSED" && sourceStatus !== "FAILED") ||
     typeof record.summary !== "string" ||
     !record.summary ||
     record.summary.length > maxRetryContextSummaryCharacters ||
@@ -189,6 +194,7 @@ export const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot =
   const acceptanceCriteria = record.acceptanceCriteria;
   const reviewFeedback = record.reviewFeedback;
   const autoResolveConflicts = record.autoResolveConflicts;
+  const executionMode = record.executionMode;
   const retryContext = parseRetryContext(record.retryContext);
   const continuationBaseCommit = record.continuationBaseCommit;
   const continuationResultCommit = record.continuationResultCommit;
@@ -202,6 +208,7 @@ export const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot =
       reviewFeedback !== null &&
       typeof reviewFeedback !== "string") ||
     (autoResolveConflicts !== undefined && typeof autoResolveConflicts !== "boolean") ||
+    (executionMode !== undefined && executionMode !== "MANAGED" && executionMode !== "STANDARD") ||
     (continuationBaseCommit !== undefined &&
       continuationBaseCommit !== null &&
       (typeof continuationBaseCommit !== "string" || !continuationBaseCommit.trim())) ||
@@ -220,6 +227,7 @@ export const parseTaskRevisionSpec = (value: string): TaskRevisionSpecSnapshot =
     acceptanceCriteria,
     reviewFeedback: reviewFeedback ?? null,
     autoResolveConflicts: autoResolveConflicts ?? true,
+    executionMode: executionMode ?? "MANAGED",
     retryContext,
     continuationBaseCommit: continuationBaseCommit ?? null,
     continuationResultCommit: continuationResultCommit ?? null,
@@ -233,7 +241,7 @@ export const mapProject = (row: ProjectRow): Project => ({
   defaultBaseRef: row.defaultBaseRef,
   integrationRef: row.integrationRef,
   integrationCommit: row.integrationCommit,
-  runner: (row.runner as Project["runner"]) ?? "codex",
+  runner: parseProjectRunner(row.runner),
   previewCommand: row.previewCommand,
   previewWorkingDirectory: row.previewWorkingDirectory,
   previewHealthPath: row.previewHealthPath,
@@ -261,6 +269,20 @@ export const mapTask = (row: TaskRow, projectName: string): Task => ({
   taskType: row.taskType,
   targetBranch: row.targetBranch,
   autoResolveConflicts: row.autoResolveConflicts,
+  executionMode: row.executionMode,
+  budget: {
+    currency: "CNY",
+    lowCents: row.budgetEstimateLowCents,
+    highCents: row.budgetEstimateHighCents,
+    lowMinutes: row.budgetEstimateLowMinutes,
+    highMinutes: row.budgetEstimateHighMinutes,
+    confidence: row.budgetConfidence,
+    rationale: parseStringArray(row.budgetRationaleJson),
+    hardLimitCents: row.budgetHardLimitCents,
+    consumedCents: row.budgetConsumedCents,
+    warningPercent: row.budgetWarningPercent,
+  },
+  managedRetryCount: row.managedRetryCount,
   title: row.title,
   goal: row.goal,
   acceptanceCriteria: parseStringArray(row.acceptanceCriteriaJson),
@@ -282,6 +304,7 @@ export const mapTaskRevision = (row: TaskRevisionRow): TaskRevision => {
     revision: row.revision,
     taskType: spec.taskType,
     autoResolveConflicts: spec.autoResolveConflicts,
+    executionMode: spec.executionMode,
     title: spec.title,
     goal: spec.goal,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -314,6 +337,14 @@ export const mapRun = (row: TaskRunRow): TaskRun => ({
   pushedCommit: row.pushedCommit,
   skillSnapshot: parseRunSkillSnapshot(row.skillSnapshotJson),
   summary: row.summary,
+  budget: {
+    currency: "CNY",
+    estimatedCostCents: row.budgetEstimatedCostCents,
+    elapsedMs: row.budgetElapsedMs,
+    hardLimitCents: row.budgetHardLimitCents,
+    warningAtCents: row.budgetWarningAtCents,
+    source: row.budgetSource,
+  },
   startedAt: row.startedAt,
   finishedAt: row.finishedAt,
 });

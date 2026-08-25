@@ -1,5 +1,6 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import type { RunnerCapabilities } from "@devloop/shared";
 import { execa } from "execa";
 import { terminateProcessGroup } from "./process-group.js";
@@ -216,7 +217,8 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner 需要独立 Worktree");
     }
 
-    const outputPath = options.outputPath ?? this.getOutputPath(input);
+    const outputPath =
+      options.outputPath ?? join(input.worktreePath, ".devloop-runtime", `${input.runId}.json`);
     const argumentsList = [
       "exec",
       "--json",
@@ -285,13 +287,6 @@ export class CodexRunner implements AgentRunner {
     };
   }
 
-  private getOutputPath(input: RunnerInput): string {
-    if (!input.worktreePath) {
-      throw new Error("CodexRunner 需要独立 Worktree");
-    }
-    return join(input.worktreePath, ".devloop-runtime", `${input.runId}.json`);
-  }
-
   private async run(
     input: RunnerInput,
     emit: (event: RunnerEvent) => void,
@@ -305,13 +300,13 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner 需要 AgentResult Schema");
     }
     signal.throwIfAborted();
-    const outputPath = this.getOutputPath(input);
-    const repairOutputPath = join(dirname(outputPath), `${input.runId}.repair.json`);
     const outputSchema = await readFile(input.outputSchemaPath, "utf8");
     signal.throwIfAborted();
-    await mkdir(dirname(outputPath), { recursive: true });
-    signal.throwIfAborted();
+    const outputDirectory = await mkdtemp(join(tmpdir(), "devloop-codex-output-"));
+    const outputPath = join(outputDirectory, `${input.runId}.json`);
+    const repairOutputPath = join(outputDirectory, `${input.runId}.repair.json`);
     try {
+      signal.throwIfAborted();
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
         prompt: await buildCodexPrompt(input, outputSchema),
@@ -358,7 +353,7 @@ export class CodexRunner implements AgentRunner {
         }
       }
     } finally {
-      await rm(dirname(outputPath), { recursive: true, force: true });
+      await rm(outputDirectory, { recursive: true, force: true });
     }
   }
 

@@ -22,6 +22,7 @@ export function RealtimeSync() {
     let invalidateRuns = false;
     let invalidateProjects = false;
     let invalidateSkills = false;
+    let invalidateManagedSettings = false;
     const runIds = new Set<string>();
     const skillIds = new Set<string>();
     const storedEventId = Number.parseInt(
@@ -45,6 +46,11 @@ export function RealtimeSync() {
       if (invalidateSkills) {
         requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.skills }));
       }
+      if (invalidateManagedSettings) {
+        requests.push(
+          queryClient.invalidateQueries({ queryKey: queryKeys.managedDeliverySettings }),
+        );
+      }
       for (const runId of runIds) {
         requests.push(queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) }));
       }
@@ -56,6 +62,7 @@ export function RealtimeSync() {
       invalidateRuns = false;
       invalidateProjects = false;
       invalidateSkills = false;
+      invalidateManagedSettings = false;
       runIds.clear();
       skillIds.clear();
       void Promise.all(requests);
@@ -75,6 +82,9 @@ export function RealtimeSync() {
       if (event.aggregateType === "skill") {
         invalidateSkills = true;
         skillIds.add(event.aggregateId);
+      }
+      if (event.type === "managed.settings_changed") {
+        invalidateManagedSettings = true;
       }
       invalidateTimer ??= window.setTimeout(flushInvalidations, 50);
     };

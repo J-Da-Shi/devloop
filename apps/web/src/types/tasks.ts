@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { TaskType } from "@devloop/shared";
+import type { TaskExecutionMode, TaskType } from "@devloop/shared";
 
 export const taskFormSchema = z.object({
   projectId: z.string().uuid("请选择项目"),
@@ -10,6 +10,8 @@ export const taskFormSchema = z.object({
   criteriaText: z.string().trim().min(1, "请至少填写一条验收标准"),
   priority: z.number().int().min(0).max(100),
   autoResolveConflicts: z.boolean(),
+  executionMode: z.enum(["MANAGED", "STANDARD"]),
+  budgetHardLimitYuan: z.number().min(1).max(100_000).optional(),
 });
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -35,4 +37,12 @@ export const splitCriteria = (value: string): string[] =>
 export const taskTypeOptions: Array<{ label: string; value: TaskType }> = [
   { label: "代码开发", value: "DEVELOPMENT" },
   { label: "互联网研究", value: "RESEARCH" },
+];
+
+export const taskExecutionModeOptions: Array<{
+  label: string;
+  value: TaskExecutionMode;
+}> = [
+  { label: "AI 托管", value: "MANAGED" },
+  { label: "标准执行", value: "STANDARD" },
 ];

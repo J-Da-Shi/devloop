@@ -11,6 +11,10 @@
   display: grid;
 }
 
+.settings-section-wide {
+  grid-column: 1 / -1;
+}
+
 .setting-row {
   display: flex;
   min-height: 62px;
@@ -61,4 +65,26 @@
 
 .runner-setting svg {
   color: var(--success);
+}
+
+.managed-settings-form {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.managed-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 14px;
+}
+
+.managed-settings-grid .ant-input-number-group-wrapper,
+.managed-settings-grid .ant-input-number {
+  width: 100%;
+}
+
+.managed-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
 }

@@ -9,6 +9,7 @@ import type {
   Skill,
   SkillVersion,
   Task,
+  TaskExecutionMode,
   TaskRun,
   TaskType,
 } from "@devloop/shared";
@@ -49,6 +50,7 @@ export interface ClaimedTask {
   playwrightEnabled: boolean;
   playwrightTestCommand: string | null;
   autoResolveConflicts: boolean;
+  executionMode: TaskExecutionMode;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -122,6 +124,7 @@ export interface TaskRevisionSpecSnapshot {
   acceptanceCriteria: string[];
   reviewFeedback: string | null;
   autoResolveConflicts: boolean;
+  executionMode: TaskExecutionMode;
   retryContext: RetryContext | null;
   continuationBaseCommit: string | null;
   continuationResultCommit: string | null;
@@ -138,10 +141,25 @@ export interface UpdateDraftTaskInput {
   taskType?: TaskType | undefined;
   targetBranch?: string | undefined;
   autoResolveConflicts?: boolean | undefined;
+  executionMode?: TaskExecutionMode | undefined;
+  budgetHardLimitCents?: number | undefined;
   title?: string | undefined;
   goal?: string | undefined;
   acceptanceCriteria?: string[] | undefined;
   priority?: number | undefined;
   expectedVersion: number;
   idempotencyKey: string;
+}
+
+export interface CreateStoredTaskInput {
+  projectId: string;
+  taskType?: TaskType;
+  targetBranch: string;
+  autoResolveConflicts?: boolean;
+  executionMode?: TaskExecutionMode;
+  title: string;
+  goal: string;
+  acceptanceCriteria: string[];
+  priority: number;
+  budgetHardLimitCents?: number | undefined;
 }

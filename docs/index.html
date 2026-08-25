@@ -3,13 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="DevLoop：把 AI 编程任务变成可审核、可验证的本地交付。" />
+    <meta
+      name="description"
+      content="DevLoop：输入目标与验收标准，把预算、执行、重试、验证和交付托管给 AI。"
+    />
     <meta name="theme-color" content="#101014" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="DevLoop · AI 开发交付工作台" />
+    <meta property="og:title" content="DevLoop · AI 托管交付工作台" />
     <meta
       property="og:description"
-      content="从任务、隔离执行到 Diff、预览验证和人工审核，DevLoop 把交付过程放在同一条可追踪链路里。"
+      content="输入目标，DevLoop 负责预算估算、隔离执行、失败恢复和验证；结果写入始终由人决定。"
     />
     <meta property="og:image" content="shots/execution-overview.png" />
     <link rel="icon" href="brand/devloop-mark.svg" type="image/svg+xml" />
@@ -17,7 +20,7 @@
     <link rel="stylesheet" href="site.css" />
     <link rel="stylesheet" href="site-capabilities.css" />
     <script src="site.js" defer></script>
-    <title>DevLoop · AI 开发交付工作台</title>
+    <title>DevLoop · AI 托管交付工作台</title>
   </head>
   <body>
     <div class="scroll-progress" aria-hidden="true"></div>
@@ -55,12 +58,12 @@
         <div class="hero-shade" aria-hidden="true"></div>
         <div class="hero-grid" aria-hidden="true"></div>
         <div class="hero-content shell">
-          <p class="eyebrow">LOCAL-FIRST · REVIEWABLE DELIVERY</p>
+          <p class="eyebrow">MANAGED AI DELIVERY · LOCAL-FIRST</p>
           <h1 id="hero-title">DevLoop</h1>
-          <p class="hero-statement">让 AI 写代码，<em>人来决定交付。</em></p>
+          <p class="hero-statement">只管输入目标，<em>然后验收结果。</em></p>
           <p class="hero-copy">
-            从任务目标与验收标准开始，把 Codex CLI 或 Claude Code CLI 放进隔离 Worktree。结果变成
-            Commit，验证变成证据，写入分支始终经过你的审核。
+            写下任务目标与验收标准，DevLoop
+            负责预算估算、隔离执行、失败重试和结果验证。只在预算或交付边界需要决策时找你，写入分支始终经过人工审核。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/J-Da-Shi/devloop"
@@ -71,9 +74,9 @@
             >
           </div>
           <div class="hero-notes" aria-label="产品特性">
-            <span><i></i> 本机优先</span>
-            <span><i></i> Git Worktree 隔离</span>
-            <span><i></i> 人工审核闸门</span>
+            <span><i></i> AI 托管执行</span>
+            <span><i></i> 预算硬上限</span>
+            <span><i></i> 人工交付闸门</span>
           </div>
         </div>
         <div class="hero-bottom shell" aria-label="支持能力">
@@ -84,10 +87,10 @@
 
       <section class="signal-band" aria-label="产品定位">
         <div class="signal-grid shell">
-          <div><strong>01</strong><span>任务有目标</span></div>
-          <div><strong>02</strong><span>执行有隔离</span></div>
+          <div><strong>01</strong><span>输入目标</span></div>
+          <div><strong>02</strong><span>平台托管</span></div>
           <div><strong>03</strong><span>结果有证据</span></div>
-          <div><strong>04</strong><span>写入有人审</span></div>
+          <div><strong>04</strong><span>人工交付</span></div>
         </div>
       </section>
 
@@ -95,23 +98,25 @@
         <div class="section-heading split-heading">
           <div>
             <p class="eyebrow eyebrow-dark">A delivery control plane</p>
-            <h2 id="product-title">不是另一个聊天窗口。<br /><span>是一条完整交付链。</span></h2>
+            <h2 id="product-title">
+              不是另一个聊天窗口。<br /><span>是一套 AI 托管交付台。</span>
+            </h2>
           </div>
           <p>
-            DevLoop 把 Agent
-            擅长的执行能力，放进一套可观察、可暂停、可回溯的本地工作流。每个任务都有明确的输入、过程和交付边界。
+            用户负责目标和验收，DevLoop 接管预算保护、Agent
+            执行、失败恢复与结果验证。过程仍然可观察、可暂停、可回溯，交付边界始终由人控制。
           </p>
         </div>
         <div class="capability-grid">
           <article class="capability capability-wide">
-            <span class="capability-index">01 / PLAN</span>
-            <h3>先把“做什么”说清楚</h3>
+            <span class="capability-index">01 / MANAGE</span>
+            <h3>用户给目标，平台管执行</h3>
             <p>
-              标题、任务目标、验收标准和目标分支在执行前固定成
-              Revision。驳回后继续迭代，也不会丢掉上一轮上下文。
+              标题、目标、验收标准和目标分支固定成
+              Revision。平台给出预算范围和停止上限，然后托管后续执行与恢复。
             </p>
             <div class="mini-flow">
-              <span>目标</span><b>→</b><span>标准</span><b>→</b><span>Revision</span>
+              <span>目标</span><b>→</b><span>托管</span><b>→</b><span>验收</span>
             </div>
           </article>
           <article class="capability">
@@ -125,9 +130,10 @@
           </article>
           <article class="capability">
             <span class="capability-index">03 / OBSERVE</span>
-            <h3>日志、Diff、状态实时可见</h3>
+            <h3>预算、状态、日志实时可见</h3>
             <p>
-              并发 Worker、执行事件、基础 Commit 与结果 Commit 都在同一个任务记录里，过程不用靠猜。
+              预算预测、硬上限、并发 Worker、执行事件和结果 Commit
+              都在同一个任务记录里，长任务不必靠猜。
             </p>
             <div class="signal-line">
               <i></i><i></i><i></i><i></i><i></i><span>streaming events</span>
@@ -182,14 +188,21 @@
               </div>
             </div>
             <div class="scope-row" role="listitem">
-              <div class="scope-label"><span>04</span><strong>预览与验证</strong></div>
+              <div class="scope-label"><span>04</span><strong>托管与预算</strong></div>
+              <div class="scope-detail">
+                <strong>ESTIMATE · RETRY · BUDGET PAUSE</strong>
+                <p>根据任务目标估算时间与金额，失败后退避重试；达到硬上限时保存检查点并暂停。</p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>05</span><strong>预览与验证</strong></div>
               <div class="scope-detail">
                 <strong>AUTO PREVIEW · PLAYWRIGHT</strong>
                 <p>从结果 Commit 自动识别常见 Web 启动方式，附上截图、控制台错误和交互测试结果。</p>
               </div>
             </div>
             <div class="scope-row" role="listitem">
-              <div class="scope-label"><span>05</span><strong>交付控制</strong></div>
+              <div class="scope-label"><span>06</span><strong>交付控制</strong></div>
               <div class="scope-detail">
                 <strong>DIFF · CONFLICTS · ITERATION</strong>
                 <p>逐文件审核 Diff，处理或委托 Agent 解决冲突；驳回后从上一轮 Commit 继续迭代。</p>
@@ -213,14 +226,14 @@
           <div class="workflow-track">
             <div class="workflow-step">
               <span>01</span>
-              <h3>创建任务</h3>
-              <p>选择任务类型，写下目标、验收标准、项目与分支。</p>
+              <h3>提交目标</h3>
+              <p>写下目标和验收标准，确认平台给出的预算范围与硬上限。</p>
             </div>
             <div class="workflow-connector" aria-hidden="true"></div>
             <div class="workflow-step">
               <span>02</span>
-              <h3>Agent 执行</h3>
-              <p>在隔离 Worktree 中运行 Codex 或 Claude，可并发领取多个任务。</p>
+              <h3>托管执行</h3>
+              <p>在隔离 Worktree 运行 Codex 或 Claude，失败时保留上下文并自动重试。</p>
             </div>
             <div class="workflow-connector" aria-hidden="true"></div>
             <div class="workflow-step">
@@ -357,7 +370,7 @@
       <section class="closing-cta" aria-labelledby="cta-title">
         <div class="shell closing-inner">
           <p class="eyebrow">READY WHEN YOU ARE</p>
-          <h2 id="cta-title">让下一次 Agent 执行，<br /><em>真正接近交付。</em></h2>
+          <h2 id="cta-title">把下一个目标交给 DevLoop，<br /><em>等一个可验收结果。</em></h2>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/J-Da-Shi/devloop"
               >在 GitHub 开始 <span aria-hidden="true">→</span></a

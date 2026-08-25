@@ -14,6 +14,7 @@ import {
 import { useEffect, useState } from "react";
 import { api, queryKeys, useUiStore } from "../core/index.js";
 import { ErrorPanel, LoadingPanel, StatusBadge, useNotice } from "../components/common/index.js";
+import { ManagedDeliverySettingsPanel } from "../components/business/settings/index.js";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -82,6 +83,7 @@ export function SettingsPage() {
           <StatusBadge status="COMPLETED">单用户</StatusBadge>
         </div>
       </section>
+      <ManagedDeliverySettingsPanel canEdit={session.data?.identity.role === "editor"} />
       <section className="tool-panel settings-section">
         <div className="section-heading">
           <h2>任务调度</h2>

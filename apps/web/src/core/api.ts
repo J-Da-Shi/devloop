@@ -8,6 +8,8 @@ import type {
   CreateTaskInput,
   DashboardSnapshot,
   DomainEvent,
+  ManagedBudgetEstimateInput,
+  ManagedDeliverySettings,
   Project,
   RejectRunInput,
   ResolveRunConflictsInput,
@@ -17,10 +19,12 @@ import type {
   SkillDetails,
   SkillValidationResult,
   Task,
+  TaskBudget,
   TaskCommandInput,
   TaskRun,
   RunPreview,
   UpdateProjectRunnerInput,
+  UpdateManagedDeliverySettingsInput,
   UpdateProjectPreviewInput,
   UpdateSkillInput,
   UpdateTaskInput,
@@ -77,6 +81,9 @@ export const queryKeys = {
   run: (runId: string) => ["runs", runId] as const,
   runChangedFiles: (runId: string) => ["runs", runId, "changed-files"] as const,
   runFilePatch: (runId: string, path: string) => ["runs", runId, "patch", path] as const,
+  managedDeliverySettings: ["managed-delivery", "settings"] as const,
+  budgetEstimate: (input: ManagedBudgetEstimateInput) =>
+    ["managed-delivery", "budget-estimate", input] as const,
 };
 
 export const getDashboardRefetchInterval = (dashboard: DashboardSnapshot | undefined): number =>
@@ -133,6 +140,18 @@ export const api = {
   updateTask: (taskId: string, input: UpdateTaskInput) =>
     request<{ task: Task; replayed: boolean }>(`/api/tasks/${taskId}`, {
       method: "PATCH",
+      body: json(input),
+    }),
+  managedDeliverySettings: () =>
+    request<{ settings: ManagedDeliverySettings }>("/api/managed-delivery/settings"),
+  updateManagedDeliverySettings: (input: UpdateManagedDeliverySettingsInput) =>
+    request<{ settings: ManagedDeliverySettings }>("/api/managed-delivery/settings", {
+      method: "PATCH",
+      body: json(input),
+    }),
+  estimateTaskBudget: (input: ManagedBudgetEstimateInput) =>
+    request<{ budget: TaskBudget }>("/api/managed-delivery/budget-estimate", {
+      method: "POST",
       body: json(input),
     }),
   confirmTask: (taskId: string, input: ConfirmTaskInput) =>
@@ -213,9 +232,11 @@ export const eventNames: DomainEvent["type"][] = [
   "run.started",
   "run.step_changed",
   "run.finished",
+  "run.budget_changed",
   "run.applied",
   "run.pushed",
   "run.rejected",
   "worker.status_changed",
   "worker.concurrency_changed",
+  "managed.settings_changed",
 ];

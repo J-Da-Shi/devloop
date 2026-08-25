@@ -13,6 +13,7 @@ const columns: TaskStatus[] = [
   "RUNNING",
   "REVIEW",
   "BLOCKED",
+  "BUDGET_PAUSED",
   "FAILED",
   "COMPLETED",
   "CANCELLED",

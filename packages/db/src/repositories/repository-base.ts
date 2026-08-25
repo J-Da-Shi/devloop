@@ -170,8 +170,8 @@ export class RepositoryBase {
   }
 
   protected buildRetryContext(run: TaskRunRow): RetryContext {
-    if (run.status !== "FAILED" && run.status !== "BLOCKED") {
-      throw new Error("只有失败或阻塞的执行记录可以生成重试上下文");
+    if (run.status !== "FAILED" && run.status !== "BLOCKED" && run.status !== "BUDGET_PAUSED") {
+      throw new Error("只有失败、阻塞或预算暂停的执行记录可以生成重试上下文");
     }
     // 事件条数上限仍保留（避免历史累积无限增长），但单条 message 与 summary 都不再机械截断，
     // 交由 @devloop/context 的 pipeline 按预算和类型统一压缩（PR4）。
