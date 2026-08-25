@@ -39,8 +39,7 @@ export interface PipelineResult {
 /** 强级压缩最多重试次数；超过后进入硬切/异常兜底。 */
 const MAX_STRONG_ATTEMPTS = 3;
 
-const totalTokens = (frags: Fragment[]): number =>
-  frags.reduce((s, f) => s + f.currentTokens, 0);
+const totalTokens = (frags: Fragment[]): number => frags.reduce((s, f) => s + f.currentTokens, 0);
 
 const applyLevel = async (
   frags: Fragment[],

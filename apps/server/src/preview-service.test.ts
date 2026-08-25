@@ -8,6 +8,7 @@ import {
   findPreviewDependencyInstallation,
   PreviewService,
 } from "./preview-service.js";
+import { normalizePreviewCommand } from "./preview-configuration.js";
 
 const roots: string[] = [];
 
@@ -73,10 +74,84 @@ describe("PreviewService", () => {
 
     await expect(detectPreviewConfig(root)).resolves.toEqual({
       source: "detected",
-      command: "pnpm run dev -- --host 127.0.0.1 --port {{port}}",
+      command: "pnpm run dev --host 127.0.0.1 --port {{port}}",
       workingDirectory: "apps/web",
       healthPath: "/",
     });
+  });
+
+  it("规范化 pnpm 和 Bun 预览参数分隔符", () => {
+    expect(normalizePreviewCommand("pnpm run dev -- --host 127.0.0.1 --port {{port}}")).toBe(
+      "pnpm run dev --host 127.0.0.1 --port {{port}}",
+    );
+    expect(normalizePreviewCommand("bun dev -- --port {{port}}")).toBe("bun dev --port {{port}}");
+    expect(normalizePreviewCommand("npm run dev -- --port {{port}}")).toBe(
+      "npm run dev -- --port {{port}}",
+    );
+  });
+
+  it("项目覆盖指向聚合脚本时回退到单独的 Web 预览", async () => {
+    const root = join(tmpdir(), `devloop-preview-fallback-${crypto.randomUUID()}`);
+    roots.push(root);
+    const previewsRoot = join(root, "previews");
+    const removed: string[] = [];
+    const gitService = {
+      createDetachedWorktree: async (input: { worktreePath: string }) => {
+        const webDirectory = join(input.worktreePath, "apps", "web");
+        await mkdir(webDirectory, { recursive: true });
+        await writeFile(
+          join(input.worktreePath, "package.json"),
+          JSON.stringify({
+            name: "workspace-root",
+            scripts: {
+              dev: 'concurrently "npm --prefix apps/web run dev" "electron ."',
+            },
+          }),
+        );
+        await writeFile(
+          join(webDirectory, "package.json"),
+          JSON.stringify({
+            name: "web",
+            scripts: { dev: "node preview-server.cjs vite" },
+          }),
+        );
+        await writeFile(
+          join(webDirectory, "preview-server.cjs"),
+          [
+            'const http = require("node:http")',
+            'const server = http.createServer((_request, response) => response.end("ready"))',
+            'server.listen(Number(process.env.PORT), "127.0.0.1")',
+          ].join(";"),
+        );
+      },
+      removeManagedWorktree: async (input: { worktreePath: string }) => {
+        removed.push(input.worktreePath);
+        await rm(input.worktreePath, { recursive: true, force: true });
+      },
+    };
+    const service = new PreviewService(gitService as never, previewsRoot, 10_000);
+    const preview = await service.start({
+      runId: crypto.randomUUID(),
+      repositoryPath: root,
+      resultCommit: "result-commit",
+      command: "pnpm dev -- --host 127.0.0.1 --port {{port}}",
+      workingDirectory: ".",
+      healthPath: "/",
+      source: "project",
+    });
+
+    try {
+      expect(preview.configuration).toEqual({
+        source: "detected",
+        command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+        workingDirectory: "apps/web",
+        healthPath: "/",
+      });
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe("ready");
+    } finally {
+      await service.stop(preview.id);
+    }
+    expect(removed).toHaveLength(1);
   });
 
   it("不会仅因安装前端依赖而猜测非 Web 启动脚本", async () => {

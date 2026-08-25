@@ -28,7 +28,14 @@ try {
   const chunks = await Promise.all(
     iconChunks.map(async ({ type, size }) => {
       const imagePath = join(workingDirectory, `${type}.png`);
-      await execFileAsync("sips", ["-z", String(size), String(size), sourcePath, "--out", imagePath]);
+      await execFileAsync("sips", [
+        "-z",
+        String(size),
+        String(size),
+        sourcePath,
+        "--out",
+        imagePath,
+      ]);
       return { type, image: await readFile(imagePath) };
     }),
   );

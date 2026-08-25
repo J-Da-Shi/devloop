@@ -17,9 +17,7 @@ describe("迁移 0011 冒烟", () => {
         migrationsFolder,
       });
       const tables = handle.sqlite
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='context_scratchpad'",
-        )
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='context_scratchpad'")
         .all();
       expect(tables).toHaveLength(1);
 

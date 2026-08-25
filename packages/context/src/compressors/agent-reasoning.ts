@@ -29,7 +29,10 @@ export const agentReasoningCompressor: Compressor = {
         metadata: { ...fragment.metadata, scratchpadRef: key },
       };
     }
-    const truncated = headTail(fragment.text, Math.max(1000, Math.floor(fragment.text.length * 0.4)));
+    const truncated = headTail(
+      fragment.text,
+      Math.max(1000, Math.floor(fragment.text.length * 0.4)),
+    );
     return {
       ...fragment,
       text: truncated,

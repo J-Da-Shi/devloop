@@ -163,7 +163,7 @@ docker compose up --build
 
 ## 预览与自动验证
 
-大多数项目不需要手动填写预览命令。DevLoop 按“项目高级覆盖 → Agent 返回的 Web 启动建议 → 结果 Commit 的 `package.json` 自动识别”确定预览方式，保守支持 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见脚本。
+大多数项目不需要手动填写预览命令。DevLoop 按“项目高级覆盖 → Agent 返回的 Web 启动建议 → 结果 Commit 的 `package.json` 自动识别”确定预览方式，保守支持 Vite、Next.js、Nuxt、Astro、SvelteKit、Remix、Webpack、Parcel 与 Storybook 的常见脚本。若高级配置实际指向 `concurrently`、Electron 等多进程或桌面聚合脚本，DevLoop 会跳过该命令并自动寻找单独的 Web 启动入口。
 
 预览从结果 Commit 的隔离 Worktree 启动，并根据最近的 `pnpm-lock.yaml`、`package-lock.json`、`yarn.lock` 或 Bun 锁文件安装依赖。服务就绪后，DevLoop 会检查页面加载与控制台错误、生成截图，并可执行项目自定义的 Playwright 命令。审核页可直接在桌面独立窗口或浏览器中打开预览。
 
@@ -231,6 +231,8 @@ pnpm lint
 pnpm format
 git diff --check
 ```
+
+Pull Request 会在 Node.js 24 和 26 上执行 packages build、类型检查、Vitest、ESLint、Prettier 与空白错误检查，并分别验证 Server、Web 构建和 Desktop 类型检查。高危依赖变更会被依赖审查阻止；pnpm 与 GitHub Actions 依赖每周检查更新。
 
 目录职责：`apps/server` 提供 API 和 Worker，`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端；`packages/db`、`packages/git`、`packages/runners`、`packages/workflow` 和 `packages/shared` 分别承载数据库、Git、执行器、状态流转和共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。
 

@@ -1,0 +1,6 @@
+# Drizzle 元数据和 pnpm 锁文件由工具维护，不做手工格式化。
+packages/db/drizzle/meta/
+pnpm-lock.yaml
+
+# 超限旧模块将在职责拆分后重新纳入格式门禁。
+apps/server/src/agent-worker.ts

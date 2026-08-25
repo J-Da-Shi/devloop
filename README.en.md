@@ -163,7 +163,7 @@ The project page accepts an SSH remote repository or an existing local Git direc
 
 ## Preview and automatic validation
 
-Most projects do not need a manually configured preview command. DevLoop resolves one in this order: a project-level advanced override, the Agent's Web-start suggestion, then conservative detection from `package.json` files in the result commit. It recognizes common Vite, Next.js, Nuxt, Astro, SvelteKit, Remix, Webpack, Parcel, and Storybook scripts.
+Most projects do not need a manually configured preview command. DevLoop resolves one in this order: a project-level advanced override, the Agent's Web-start suggestion, then conservative detection from `package.json` files in the result commit. It recognizes common Vite, Next.js, Nuxt, Astro, SvelteKit, Remix, Webpack, Parcel, and Storybook scripts. If an advanced override resolves to a multi-process or desktop aggregate such as `concurrently` or Electron, DevLoop skips it and automatically searches for a standalone Web entry point.
 
 Every preview starts from an isolated worktree at the result commit. DevLoop installs dependencies using the nearest `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, or Bun lockfile, then checks page loading and console errors, captures screenshots, and can run a project-specific Playwright command. The review page can open the preview in a dedicated desktop window or browser.
 
@@ -231,6 +231,8 @@ pnpm lint
 pnpm format
 git diff --check
 ```
+
+Pull requests run the package build, typecheck, Vitest, ESLint, Prettier, and whitespace checks on Node.js 24 and 26, with separate Server and Web builds plus a Desktop typecheck. Dependency review blocks high-severity dependency changes, while pnpm and GitHub Actions dependencies are checked for updates weekly.
 
 Directory responsibilities: `apps/server` owns the API and Worker, `apps/web` owns the React UI, and `apps/desktop` owns the Electron client. `packages/db`, `packages/git`, `packages/runners`, `packages/workflow`, and `packages/shared` cover persistence, Git, runners, state transitions, and shared models. Development conventions live in [`AGENTS.md`](./AGENTS.md).
 

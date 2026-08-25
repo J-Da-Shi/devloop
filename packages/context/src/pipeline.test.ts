@@ -6,10 +6,11 @@ const store = () => new MemoryScratchpadStore();
 
 describe("compressUntilFits", () => {
   it("小于预算直接 pass 且拼接文本包含所有段", async () => {
-    const r = await compressUntilFits(
-      [{ text: "短", metadata: { source: "task.title" } }],
-      { budgetTokens: 1000, runId: "r1", scratchpad: store() },
-    );
+    const r = await compressUntilFits([{ text: "短", metadata: { source: "task.title" } }], {
+      budgetTokens: 1000,
+      runId: "r1",
+      scratchpad: store(),
+    });
     expect(r.stats.triggerLevels[0]).toBe("pass");
     expect(r.text).toContain("短");
   });
