@@ -4,6 +4,7 @@ import type { Project, Task } from "@devloop/shared";
 import type { UseFormReturn } from "react-hook-form";
 import { Controller } from "react-hook-form";
 import { taskTypeOptions, type TaskFormValues } from "../../../types/index.js";
+import { TaskBudgetConfigurator } from "./task-budget-configurator.js";
 
 interface TaskEditorFormProps {
   form: UseFormReturn<TaskFormValues>;
@@ -124,6 +125,7 @@ export function TaskEditorForm({
             )}
           />
         </Form.Item>
+        <TaskBudgetConfigurator form={form} task={task} canEdit={canEdit} />
         <Form.Item label="分数" className="field-compact">
           <Controller
             control={form.control}

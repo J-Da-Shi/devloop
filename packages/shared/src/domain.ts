@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunBudgetUsage, TaskBudget, TaskExecutionMode } from "./managed-delivery.js";
 
 export const taskStatuses = [
   "DRAFT",
@@ -6,6 +7,7 @@ export const taskStatuses = [
   "RUNNING",
   "REVIEW",
   "BLOCKED",
+  "BUDGET_PAUSED",
   "FAILED",
   "COMPLETED",
   "CANCELLED",
@@ -20,6 +22,7 @@ export const runStatuses = [
   "PREPARING_REVIEW",
   "SUCCEEDED",
   "BLOCKED",
+  "BUDGET_PAUSED",
   "FAILED",
   "INTERRUPTED",
   "CANCELLED",
@@ -127,6 +130,9 @@ export interface Task {
   taskType: TaskType;
   targetBranch: string;
   autoResolveConflicts: boolean;
+  executionMode: TaskExecutionMode;
+  budget: TaskBudget;
+  managedRetryCount: number;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -146,6 +152,7 @@ export interface TaskRevision {
   revision: number;
   taskType: TaskType;
   autoResolveConflicts: boolean;
+  executionMode: TaskExecutionMode;
   title: string;
   goal: string;
   acceptanceCriteria: string[];
@@ -190,7 +197,7 @@ export interface RetryContextEvent {
  */
 export interface RetryContext {
   sourceRunId: string;
-  sourceStatus: "BLOCKED" | "FAILED";
+  sourceStatus: "BLOCKED" | "BUDGET_PAUSED" | "FAILED";
   sourceRunner: string;
   sourceFinishedAt: string;
   summary: string;
@@ -215,6 +222,7 @@ export interface TaskRun {
   pushedCommit: string | null;
   skillSnapshot: RunSkillSnapshot[] | null;
   summary: string | null;
+  budget: RunBudgetUsage;
   startedAt: string;
   finishedAt: string | null;
 }

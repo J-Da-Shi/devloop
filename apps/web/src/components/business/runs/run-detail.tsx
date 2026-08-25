@@ -66,6 +66,15 @@ export function RunDetail({ details }: RunDetailProps) {
             {details.run.runnerVersion ? ` · ${details.run.runnerVersion}` : ""}
           </strong>
         </span>
+        {details.run.budget.hardLimitCents > 0 ? (
+          <span>
+            <small>预算用量</small>
+            <strong>
+              ¥{(details.run.budget.estimatedCostCents / 100).toFixed(2)} / ¥
+              {(details.run.budget.hardLimitCents / 100).toFixed(2)}
+            </strong>
+          </span>
+        ) : null}
         <span>
           <small>任务类型</small>
           <strong>

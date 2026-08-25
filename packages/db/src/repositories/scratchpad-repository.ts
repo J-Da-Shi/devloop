@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq, lt, sql } from "drizzle-orm";
 import { contextScratchpad } from "../schema.js";
-import { DeviceRepository } from "./device-repository.js";
+import { ManagedDeliveryRepository } from "./managed-delivery-repository.js";
 
 export interface ScratchpadRow {
   key: string;
@@ -23,7 +23,7 @@ export interface SaveScratchpadInput {
 
 const MAX_CONTENT_BYTES = 1_048_576; // 1 MB
 
-export class ScratchpadRepository extends DeviceRepository {
+export class ScratchpadRepository extends ManagedDeliveryRepository {
   saveScratchpad(input: SaveScratchpadInput): { key: string } {
     const sizeBytes = Buffer.byteLength(input.contentText, "utf8");
     if (sizeBytes > MAX_CONTENT_BYTES) {

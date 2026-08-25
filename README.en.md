@@ -8,7 +8,7 @@
 
 <h1 align="center">DevLoop</h1>
 
-<p align="center"><strong>Turn AI coding tasks into local, reviewable deliveries</strong></p>
+<p align="center"><strong>Define the objective, delegate execution, review the result</strong></p>
 
 <p align="center"><a href="https://j-da-shi.github.io/devloop/">Visit the DevLoop product site →</a></p>
 
@@ -33,6 +33,7 @@
   <a href="#how-it-delivers">How it delivers</a> ·
   <a href="#review-gate">Review gate</a> ·
   <a href="#quick-start">Get started</a> ·
+  <a href="#managed-execution">AI managed</a> ·
   <a href="#preview-validation">Preview and validation</a> ·
   <a href="#local-boundary">Local boundary</a> ·
   <a href="#development">Development</a> ·
@@ -45,9 +46,9 @@
 
 ## Why DevLoop
 
-Codex CLI and Claude Code CLI are excellent at completing an individual coding request. A real project also needs to answer what changed, whether acceptance criteria were met, whether the result runs, when it may reach the target branch, and how to continue from a rejected result.
+Codex CLI and Claude Code CLI are excellent at completing an individual coding request. Users should not have to supervise every Agent session: they should be able to provide an objective and acceptance criteria, delegate budgets, execution, retries, and validation to the platform, then receive a reviewable result.
 
-DevLoop is a local development-delivery console. It runs every Agent execution in an isolated Git worktree, pins the result as a commit, and keeps the diff, logs, automated validation, conflicts, and human review on one task record. You can move several projects forward in parallel while retaining human control over branch writes.
+DevLoop is a local-first AI-managed delivery workbench. It runs every Agent execution in an isolated Git worktree, pins the result as a commit, and keeps budgets, failure context, diffs, automated validation, conflicts, and human review on one task record. You can move several projects forward in parallel, intervene when a budget or review decision requires it, and retain human control over every branch write.
 
 <a id="capabilities"></a>
 
@@ -59,6 +60,7 @@ DevLoop is a local development-delivery console. It runs every Agent execution i
 | Project sources      | SSH remote repositories or an existing local Git directory on the desktop                                               |
 | Runners              | Codex CLI, Claude Code CLI, and Fake Runner; configure 1-10 concurrent workers                                          |
 | Context              | Skill version snapshots, revisions, failed-run context, and continued iterations after rejection                        |
+| Managed execution    | Creation-time estimates, 80% warnings, hard-limit pauses, backoff retries, and Git-checkpoint recovery                  |
 | Delivery control     | Isolated worktrees, result commits, per-file diffs, conflict previews, and human or Agent-assisted resolution           |
 | Automatic validation | Common Web start-command detection, isolated previews, Playwright, screenshots, console errors, and interaction results |
 
@@ -68,6 +70,9 @@ DevLoop is a local development-delivery console. It runs every Agent execution i
 
 ```text
 Task objective and acceptance criteria
+                |
+                v
+Estimated range + hard limit
                 |
                 v
 Codex CLI / Claude Code CLI in an isolated worktree
@@ -157,7 +162,31 @@ Open `http://127.0.0.1:4317` when the container is healthy. The default binding 
 
 ### Register projects and create tasks
 
-The project page accepts an SSH remote repository or an existing local Git directory on the desktop. When creating a task, provide a title, task type, target branch, objective, and acceptance criteria, then choose Codex or Claude, whether conflicts should be auto-resolved, and any project-level settings. Before approval, the result stays in an isolated worktree and result commit.
+The project page accepts an SSH remote repository or an existing local Git directory on the desktop. When creating a task, provide a title, task type, target branch, objective, and acceptance criteria, then choose Codex or Claude, whether conflicts should be auto-resolved, and any project-level settings. Tasks default to managed execution: DevLoop estimates time and cost from the objective, shows the automatic stop limit, and retries failures with backoff. At the hard limit it saves a Git checkpoint and enters Budget Paused; raise the limit to resume. Before approval, the result stays in an isolated worktree and result commit.
+
+<a id="managed-execution"></a>
+
+## AI-managed execution
+
+Each task can use one of two execution modes:
+
+- `AI Managed` (default): DevLoop handles budget estimation, execution monitoring, failure retries, checkpoint recovery, and budget protection. The user mainly provides the objective, decides on policy exceptions, and reviews the final result.
+- `Standard`: keeps the single-run Agent and human-review workflow without managed budgets or automatic retries.
+
+A managed task follows this loop:
+
+| Stage         | What DevLoop does                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Task creation | Estimates a time range, cost range, confidence level, and suggested hard limit from the task type, objective, and criteria     |
+| Running       | Runs the selected Runner in an isolated worktree, estimates consumption from elapsed time, and warns at 80% by default         |
+| Failure       | Attempts to save a Git checkpoint and failure context, then creates the next revision after a backoff delay                    |
+| Hard limit    | Cancels the active Runner, preserves available results, and moves the Task and Run to `BUDGET_PAUSED`                          |
+| Resume        | After the user raises the hard limit or narrows the objective, the next run continues from the latest checkpoint and context   |
+| Completion    | Creates a result commit, checks conflicts, runs available preview validation, and enters review without writing the target ref |
+
+The settings page controls the maximum per-task budget, warning percentage, estimation margin, automatic retry count, and hourly estimate rates for Codex and Claude Code. A CLI inactivity timeout only detects abnormal stalls; it is not a total task duration, so a healthy long-running task is not stopped merely for taking longer.
+
+Current cost values are estimates based on Runner elapsed time and configured rates, not provider invoices. Initial estimates use task-shape heuristics. They are marked low-confidence and intentionally conservative when complexity is unclear; use measured run consumption to tune later limits and rates.
 
 <a id="preview-validation"></a>
 

@@ -22,6 +22,7 @@ export class RunClaimRepository extends TaskRepository {
   claimNextTask(
     options: {
       readyBefore?: string;
+      resolveRunner?: (runnerId: string) => { id: string; version: string | null };
       resolveRunnerVersion?: (runnerId: string) => string | null;
     } = {},
   ): EventfulResult<ClaimedTask> | null {
@@ -55,8 +56,11 @@ export class RunClaimRepository extends TaskRepository {
       }
       const revisionSpec = parseTaskRevisionSpec(revision.specJson);
       const project = this.requireProjectRow(current.projectId);
-      const runner = project.runner;
-      const runnerVersion = options.resolveRunnerVersion?.(runner) ?? null;
+      const requestedRunner = project.runner;
+      const resolvedRunner = options.resolveRunner?.(requestedRunner);
+      const runner = resolvedRunner?.id ?? requestedRunner;
+      const runnerVersion =
+        resolvedRunner?.version ?? options.resolveRunnerVersion?.(runner) ?? null;
       assertTaskTransition(current.status, "RUNNING");
       const baseCommit =
         revision.baseStrategy === "LATEST_ACCEPTED"
@@ -94,6 +98,13 @@ export class RunClaimRepository extends TaskRepository {
           runInputHash,
           skillSnapshotJson: null,
           summary: null,
+          budgetEstimatedCostCents: 0,
+          budgetElapsedMs: 0,
+          budgetHardLimitCents: current.budgetHardLimitCents,
+          budgetWarningAtCents: Math.ceil(
+            (current.budgetHardLimitCents * current.budgetWarningPercent) / 100,
+          ),
+          budgetSource: "ELAPSED_TIME_ESTIMATE",
           startedAt: timestamp,
           finishedAt: null,
         })
@@ -104,6 +115,10 @@ export class RunClaimRepository extends TaskRepository {
         .set({
           status: "RUNNING",
           latestRunId: runId,
+          managedRetryCount:
+            current.executionMode === "MANAGED"
+              ? current.managedRetryCount + 1
+              : current.managedRetryCount,
           version: current.version + 1,
           updatedAt: timestamp,
         })
@@ -136,6 +151,7 @@ export class RunClaimRepository extends TaskRepository {
           playwrightEnabled: project.playwrightEnabled,
           playwrightTestCommand: project.playwrightTestCommand,
           autoResolveConflicts: revisionSpec.autoResolveConflicts,
+          executionMode: revisionSpec.executionMode,
           title: revisionSpec.title,
           goal: revisionSpec.goal,
           acceptanceCriteria: revisionSpec.acceptanceCriteria,

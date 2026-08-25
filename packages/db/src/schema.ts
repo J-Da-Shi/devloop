@@ -1,8 +1,11 @@
 import type {
   BaseStrategy,
+  BudgetConfidence,
+  BudgetMeasurementSource,
   DeviceRole,
   ReviewDecisionType,
   RunStatus,
+  TaskExecutionMode,
   TaskStatus,
   TaskType,
   WorkerStatus,
@@ -57,6 +60,17 @@ export const tasks = sqliteTable(
     autoResolveConflicts: integer("auto_resolve_conflicts", { mode: "boolean" })
       .notNull()
       .default(true),
+    executionMode: text("execution_mode").$type<TaskExecutionMode>().notNull().default("MANAGED"),
+    budgetEstimateLowCents: integer("budget_estimate_low_cents").notNull().default(0),
+    budgetEstimateHighCents: integer("budget_estimate_high_cents").notNull().default(0),
+    budgetEstimateLowMinutes: integer("budget_estimate_low_minutes").notNull().default(1),
+    budgetEstimateHighMinutes: integer("budget_estimate_high_minutes").notNull().default(1),
+    budgetConfidence: text("budget_confidence").$type<BudgetConfidence>().notNull().default("LOW"),
+    budgetHardLimitCents: integer("budget_hard_limit_cents").notNull().default(0),
+    budgetConsumedCents: integer("budget_consumed_cents").notNull().default(0),
+    budgetWarningPercent: integer("budget_warning_percent").notNull().default(80),
+    budgetRationaleJson: text("budget_rationale_json").notNull().default("[]"),
+    managedRetryCount: integer("managed_retry_count").notNull().default(0),
     title: text("title").notNull(),
     goal: text("goal").notNull(),
     acceptanceCriteriaJson: text("acceptance_criteria_json").notNull(),
@@ -121,6 +135,14 @@ export const taskRuns = sqliteTable(
     runInputHash: text("run_input_hash").notNull(),
     skillSnapshotJson: text("skill_snapshot_json"),
     summary: text("summary"),
+    budgetEstimatedCostCents: integer("budget_estimated_cost_cents").notNull().default(0),
+    budgetElapsedMs: integer("budget_elapsed_ms").notNull().default(0),
+    budgetHardLimitCents: integer("budget_hard_limit_cents").notNull().default(0),
+    budgetWarningAtCents: integer("budget_warning_at_cents").notNull().default(0),
+    budgetSource: text("budget_source")
+      .$type<BudgetMeasurementSource>()
+      .notNull()
+      .default("ELAPSED_TIME_ESTIMATE"),
     startedAt: text("started_at").notNull(),
     finishedAt: text("finished_at"),
   },
@@ -163,6 +185,19 @@ export const workerState = sqliteTable("worker_state", {
   activeRunId: text("active_run_id"),
   concurrencyLimit: integer("concurrency_limit").notNull().default(1),
   version: integer("version").notNull().default(0),
+});
+
+export const managedDeliverySettings = sqliteTable("managed_delivery_settings", {
+  id: text("id").primaryKey(),
+  maxTaskBudgetCents: integer("max_task_budget_cents").notNull().default(10_000),
+  warningPercent: integer("warning_percent").notNull().default(80),
+  budgetOverrunPercent: integer("budget_overrun_percent").notNull().default(25),
+  autoRetryLimit: integer("auto_retry_limit").notNull().default(2),
+  codexHourlyRateCents: integer("codex_hourly_rate_cents").notNull().default(2_000),
+  claudeCodeHourlyRateCents: integer("claude_code_hourly_rate_cents").notNull().default(2_000),
+  fakeHourlyRateCents: integer("fake_hourly_rate_cents").notNull().default(0),
+  version: integer("version").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
 });
 
 export const artifacts = sqliteTable(
@@ -308,6 +343,7 @@ export const schema = {
   runEvents,
   domainEvents,
   workerState,
+  managedDeliverySettings,
   artifacts,
   reviewDecisions,
   pairedDevices,
@@ -331,3 +367,4 @@ export type PairedDeviceRow = typeof pairedDevices.$inferSelect;
 export type SkillRow = typeof skills.$inferSelect;
 export type SkillVersionRow = typeof skillVersions.$inferSelect;
 export type ContextScratchpadRow = typeof contextScratchpad.$inferSelect;
+export type ManagedDeliverySettingsRow = typeof managedDeliverySettings.$inferSelect;

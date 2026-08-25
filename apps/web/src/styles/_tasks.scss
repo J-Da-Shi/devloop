@@ -63,6 +63,75 @@
   max-width: 150px;
 }
 
+.task-budget-configurator {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.task-budget-configurator .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.task-budget-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.task-budget-estimate {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-budget-estimate > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.task-budget-estimate strong,
+.task-budget-estimate small {
+  overflow-wrap: anywhere;
+}
+
+.task-budget-estimate strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.task-budget-estimate small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.task-budget-estimate-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border-emphasis);
+  border-radius: 6px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.task-budget-limit-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-budget-limit-control .ant-input-number-group-wrapper {
+  width: min(220px, 100%);
+}
+
 .field input,
 .field textarea,
 .field select,
@@ -276,9 +345,26 @@
 }
 
 .task-card-project {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--muted-dim);
   font-size: 11px;
   font-weight: 650;
+}
+
+.task-card-project > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-card-project > span:last-child {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .task-card strong {

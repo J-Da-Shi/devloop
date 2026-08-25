@@ -6,6 +6,7 @@ export const taskStatusLabels: Record<TaskStatus, string> = {
   RUNNING: "执行中",
   REVIEW: "待审核",
   BLOCKED: "已阻塞",
+  BUDGET_PAUSED: "预算已暂停",
   FAILED: "失败",
   COMPLETED: "已完成",
   CANCELLED: "已取消",
@@ -20,6 +21,7 @@ export const runStatusLabels: Record<RunStatus, string> = {
   PREPARING_REVIEW: "整理审核结果",
   SUCCEEDED: "执行成功",
   BLOCKED: "已阻塞",
+  BUDGET_PAUSED: "预算已暂停",
   FAILED: "失败",
   INTERRUPTED: "已中断",
   CANCELLED: "已取消",
@@ -31,5 +33,6 @@ export const boardStatuses: TaskStatus[] = [
   "RUNNING",
   "REVIEW",
   "BLOCKED",
+  "BUDGET_PAUSED",
   "COMPLETED",
 ];

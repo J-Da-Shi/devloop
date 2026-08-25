@@ -24,7 +24,15 @@ export function TaskCard({ task, onOpen }: TaskCardProps) {
         }
       }}
     >
-      <span className="task-card-project">{task.projectName}</span>
+      <span className="task-card-project">
+        <span>{task.projectName}</span>
+        {task.executionMode === "MANAGED" ? (
+          <span>
+            ¥{(task.budget.consumedCents / 100).toFixed(2)} / ¥
+            {(task.budget.hardLimitCents / 100).toFixed(2)}
+          </span>
+        ) : null}
+      </span>
       <strong>{task.title}</strong>
       <p>{task.goal}</p>
       <span className="task-card-meta">

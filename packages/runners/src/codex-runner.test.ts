@@ -118,7 +118,8 @@ describe("CodexRunner", () => {
     await writeFile(
       executablePath,
       `#!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
@@ -177,6 +178,12 @@ const output = !isRepair && prompt.includes("模拟格式错误")
           healthPath: "/"
         }
       });
+if (prompt.includes("清理运行时目录")) {
+  const runtimeDirectory = join(process.cwd(), ".devloop-runtime");
+  await mkdir(join(runtimeDirectory, "research"), { recursive: true });
+  await writeFile(join(runtimeDirectory, "research", "temporary.json"), "{}");
+  await rm(runtimeDirectory, { recursive: true, force: true });
+}
 await writeFile(args[outputIndex + 1], output);
 process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
 `,
@@ -229,6 +236,25 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
     expect(events).toContain("Codex 会话已启动");
     expect(events).toContain("Codex 正在执行：pnpm test");
     expect(events).toContain("Codex 已完成本轮开发");
+
+    const runtimeCleanupHandle = runner.start(
+      {
+        runId: "runtime-cleanup-run",
+        taskId: "task",
+        title: "真实执行",
+        goal: "实现真实执行并清理运行时目录",
+        acceptanceCriteria: ["完成开发"],
+        skills: [],
+        worktreePath,
+        outputSchemaPath,
+        signal: new AbortController().signal,
+      },
+      () => undefined,
+    );
+    await expect(runtimeCleanupHandle.result).resolves.toMatchObject({
+      outcome: "succeeded",
+      summary: "实现完成",
+    });
 
     const conflictHandle = runner.start(
       {

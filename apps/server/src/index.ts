@@ -11,6 +11,7 @@ import { SkillService } from "./skill-service.js";
 import { ArtifactService } from "./artifact-service.js";
 import { PlaywrightValidationService } from "./playwright-validation-service.js";
 import { PreviewService } from "./preview-service.js";
+import { registerManagedDeliveryRoutes } from "./managed-delivery-routes.js";
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
@@ -48,16 +49,20 @@ async function main(): Promise<void> {
     enabled: true,
     stallTimeoutMs: config.claudeCodeStallTimeoutMs,
   });
-  const runnerRegistry = new Map<string, AgentRunner>([
+  const availableRunnerRegistry = new Map<string, AgentRunner>([
     [codexRunner.id, codexRunner],
     [claudeCodeRunner.id, claudeCodeRunner],
     [fakeRunner.id, fakeRunner],
   ]);
+  const runnerRegistry =
+    config.runner === "fake"
+      ? new Map<string, AgentRunner>([[fakeRunner.id, fakeRunner]])
+      : availableRunnerRegistry;
   const defaultRunnerId = config.runner === "codex" ? codexRunner.id : fakeRunner.id;
   const runnerCapabilities = await Promise.all(
-    [...runnerRegistry.values()].map((runner) => runner.detectCapabilities()),
+    [...availableRunnerRegistry.values()].map((runner) => runner.detectCapabilities()),
   );
-  const runners = [codexRunner, claudeCodeRunner, fakeRunner];
+  const runners = [...availableRunnerRegistry.values()];
   const scratchpad = new DbScratchpadStore(repository);
   const llmCompressor = createLlmCompressor(config.context.compressor);
   // 启动时清理 7 天前遗留的 scratchpad 记录（幂等，失败不阻塞启动）。
@@ -90,6 +95,7 @@ async function main(): Promise<void> {
     previewService,
     artifactService,
   });
+  registerManagedDeliveryRoutes(app, repository, eventBus);
 
   app.addHook("onClose", async () => {
     await worker.stop();

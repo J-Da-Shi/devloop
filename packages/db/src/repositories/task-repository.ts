@@ -1,21 +1,62 @@
 import { randomUUID } from "node:crypto";
 import {
   assertTaskTransition,
-  type CreateTaskInput,
+  type ManagedDeliverySettings,
   type Task,
-  type TaskType,
+  type TaskBudget,
+  type TaskExecutionMode,
 } from "@devloop/shared";
 import { and, desc, eq, isNull, max } from "drizzle-orm";
 import { projects, reviewDecisions, taskRevisions, taskRuns, tasks } from "../schema.js";
+import { managedDeliverySettings } from "../schema.js";
+import { estimateTaskBudget } from "../task-budget-estimator.js";
 import {
   hash,
   mapTask,
   now,
+  parseProjectRunner,
   parseStringArray,
   parseTaskRevisionSpec,
 } from "./repository-codecs.js";
 import { SkillRepository } from "./skill-repository.js";
-import type { ConfirmTaskInput, EventfulResult, UpdateDraftTaskInput } from "./repository-types.js";
+import type {
+  ConfirmTaskInput,
+  CreateStoredTaskInput,
+  EventfulResult,
+  UpdateDraftTaskInput,
+} from "./repository-types.js";
+
+const settingsFromRow = (
+  row: typeof managedDeliverySettings.$inferSelect,
+): ManagedDeliverySettings => ({
+  maxTaskBudgetCents: row.maxTaskBudgetCents,
+  warningPercent: row.warningPercent,
+  budgetOverrunPercent: row.budgetOverrunPercent,
+  autoRetryLimit: row.autoRetryLimit,
+  runnerHourlyRatesCents: {
+    codex: row.codexHourlyRateCents,
+    "claude-code": row.claudeCodeHourlyRateCents,
+    fake: row.fakeHourlyRateCents,
+  },
+  version: row.version,
+  updatedAt: row.updatedAt,
+});
+
+const resolveBudgetHardLimit = (
+  executionMode: TaskExecutionMode,
+  requestedCents: number | undefined,
+  estimate: TaskBudget,
+  settings: ManagedDeliverySettings,
+): number => {
+  if (executionMode === "STANDARD") return 0;
+  const hardLimitCents = requestedCents ?? estimate.hardLimitCents;
+  if (hardLimitCents > settings.maxTaskBudgetCents) {
+    throw new Error(
+      `任务预算上限不能超过全局上限 ¥${(settings.maxTaskBudgetCents / 100).toFixed(2)}`,
+    );
+  }
+  return hardLimitCents;
+};
 
 export class TaskRepository extends SkillRepository {
   listTasks(): Task[] {
@@ -49,12 +90,7 @@ export class TaskRepository extends SkillRepository {
     return row ? mapTask(row.task, row.projectName) : null;
   }
 
-  createTask(
-    input: Omit<CreateTaskInput, "autoResolveConflicts" | "taskType"> & {
-      autoResolveConflicts?: boolean;
-      taskType?: TaskType;
-    },
-  ): EventfulResult<Task> {
+  createTask(input: CreateStoredTaskInput): EventfulResult<Task> {
     const id = randomUUID();
     const timestamp = now();
 
@@ -67,6 +103,31 @@ export class TaskRepository extends SkillRepository {
       if (!project) {
         throw new Error("项目不存在");
       }
+      const settingsRow = this.handle.db
+        .select()
+        .from(managedDeliverySettings)
+        .where(eq(managedDeliverySettings.id, "primary"))
+        .get();
+      if (!settingsRow) throw new Error("托管交付设置尚未初始化");
+      const settings = settingsFromRow(settingsRow);
+      const executionMode = input.executionMode ?? "MANAGED";
+      const estimate = estimateTaskBudget(
+        {
+          taskType: input.taskType ?? "DEVELOPMENT",
+          executionMode,
+          title: input.title,
+          goal: input.goal,
+          acceptanceCriteria: input.acceptanceCriteria,
+        },
+        parseProjectRunner(project.runner),
+        settings,
+      );
+      const budgetHardLimitCents = resolveBudgetHardLimit(
+        executionMode,
+        input.budgetHardLimitCents,
+        estimate,
+        settings,
+      );
 
       const row = this.handle.db
         .insert(tasks)
@@ -76,6 +137,17 @@ export class TaskRepository extends SkillRepository {
           taskType: input.taskType ?? "DEVELOPMENT",
           targetBranch: input.targetBranch,
           autoResolveConflicts: input.autoResolveConflicts ?? true,
+          executionMode,
+          budgetEstimateLowCents: estimate.lowCents,
+          budgetEstimateHighCents: estimate.highCents,
+          budgetEstimateLowMinutes: estimate.lowMinutes,
+          budgetEstimateHighMinutes: estimate.highMinutes,
+          budgetConfidence: estimate.confidence,
+          budgetHardLimitCents,
+          budgetConsumedCents: 0,
+          budgetWarningPercent: estimate.warningPercent,
+          budgetRationaleJson: JSON.stringify(estimate.rationale),
+          managedRetryCount: 0,
           title: input.title,
           goal: input.goal,
           acceptanceCriteriaJson: JSON.stringify(input.acceptanceCriteria),
@@ -114,18 +186,55 @@ export class TaskRepository extends SkillRepository {
         this.assertVersion(current.version, input.expectedVersion);
         const timestamp = now();
         const project = this.requireProjectRow(current.projectId);
+        const settingsRow = this.handle.db
+          .select()
+          .from(managedDeliverySettings)
+          .where(eq(managedDeliverySettings.id, "primary"))
+          .get();
+        if (!settingsRow) throw new Error("托管交付设置尚未初始化");
+        const settings = settingsFromRow(settingsRow);
+        const taskType = input.taskType ?? current.taskType;
+        const executionMode = input.executionMode ?? current.executionMode;
+        const title = input.title ?? current.title;
+        const goal = input.goal ?? current.goal;
+        const acceptanceCriteria =
+          input.acceptanceCriteria ?? parseStringArray(current.acceptanceCriteriaJson);
+        const estimate = estimateTaskBudget(
+          { taskType, executionMode, title, goal, acceptanceCriteria },
+          parseProjectRunner(project.runner),
+          settings,
+        );
+        const estimateInputsChanged =
+          input.taskType !== undefined ||
+          input.executionMode !== undefined ||
+          input.title !== undefined ||
+          input.goal !== undefined ||
+          input.acceptanceCriteria !== undefined;
+        const budgetHardLimitCents = resolveBudgetHardLimit(
+          executionMode,
+          input.budgetHardLimitCents ??
+            (estimateInputsChanged ? undefined : current.budgetHardLimitCents),
+          estimate,
+          settings,
+        );
         const row = this.handle.db
           .update(tasks)
           .set({
-            taskType: input.taskType ?? current.taskType,
+            taskType,
             targetBranch: input.targetBranch ?? current.targetBranch,
             autoResolveConflicts: input.autoResolveConflicts ?? current.autoResolveConflicts,
-            title: input.title ?? current.title,
-            goal: input.goal ?? current.goal,
-            acceptanceCriteriaJson:
-              input.acceptanceCriteria === undefined
-                ? current.acceptanceCriteriaJson
-                : JSON.stringify(input.acceptanceCriteria),
+            executionMode,
+            budgetEstimateLowCents: estimate.lowCents,
+            budgetEstimateHighCents: estimate.highCents,
+            budgetEstimateLowMinutes: estimate.lowMinutes,
+            budgetEstimateHighMinutes: estimate.highMinutes,
+            budgetConfidence: estimate.confidence,
+            budgetHardLimitCents,
+            budgetWarningPercent: estimate.warningPercent,
+            budgetRationaleJson: JSON.stringify(estimate.rationale),
+            title,
+            goal,
+            acceptanceCriteriaJson: JSON.stringify(acceptanceCriteria),
             priority: input.priority ?? current.priority,
             version: current.version + 1,
             updatedAt: timestamp,
@@ -152,6 +261,12 @@ export class TaskRepository extends SkillRepository {
         const current = this.requireTaskRow(taskId);
         assertTaskTransition(current.status, "READY");
         this.assertVersion(current.version, input.expectedVersion);
+        if (
+          current.executionMode === "MANAGED" &&
+          current.budgetHardLimitCents <= current.budgetConsumedCents
+        ) {
+          throw new Error("预算硬上限必须高于已消耗金额，提高预算后才能继续执行");
+        }
         const project = this.requireProjectRow(current.projectId);
         const revisionNumber =
           (this.handle.db
@@ -193,27 +308,32 @@ export class TaskRepository extends SkillRepository {
         const retryableLatestRun =
           latestRun &&
           latestRun.taskRevisionId === current.activeRevisionId &&
-          (latestRun.status === "FAILED" || latestRun.status === "BLOCKED")
+          (latestRun.status === "FAILED" ||
+            latestRun.status === "BLOCKED" ||
+            latestRun.status === "BUDGET_PAUSED")
             ? latestRun
             : null;
         const retryContext = retryableLatestRun ? this.buildRetryContext(retryableLatestRun) : null;
-        const resumesFailedDevelopmentCheckpoint = Boolean(
-          retryableLatestRun &&
-          continuesDevelopmentRevision &&
-          retryableLatestRun.baseCommit &&
-          retryableLatestRun.resultCommit,
-        );
+        const failedDevelopmentCheckpoint =
+          retryableLatestRun?.baseCommit &&
+          retryableLatestRun.resultCommit &&
+          continuesDevelopmentRevision
+            ? {
+                baseCommit: retryableLatestRun.baseCommit,
+                resultCommit: retryableLatestRun.resultCommit,
+              }
+            : null;
         const continuationBaseCommit =
           continuesAcceptedRevision || !continuesDevelopmentRevision
             ? null
-            : resumesFailedDevelopmentCheckpoint
-              ? retryableLatestRun!.baseCommit
+            : failedDevelopmentCheckpoint
+              ? failedDevelopmentCheckpoint.baseCommit
               : (previousSpec?.continuationBaseCommit ?? null);
         const continuationResultCommit =
           continuesAcceptedRevision || !continuesDevelopmentRevision
             ? null
-            : resumesFailedDevelopmentCheckpoint
-              ? retryableLatestRun!.resultCommit
+            : failedDevelopmentCheckpoint
+              ? failedDevelopmentCheckpoint.resultCommit
               : (previousSpec?.continuationResultCommit ?? null);
         const baseStrategy = continuationResultCommit ? "PINNED" : input.baseStrategy;
         const baseRef = continuationResultCommit ?? current.targetBranch;
@@ -224,6 +344,7 @@ export class TaskRepository extends SkillRepository {
           acceptanceCriteria: parseStringArray(current.acceptanceCriteriaJson),
           reviewFeedback: continuesAcceptedRevision ? null : (previousSpec?.reviewFeedback ?? null),
           autoResolveConflicts: current.autoResolveConflicts,
+          executionMode: current.executionMode,
           retryContext,
           continuationBaseCommit,
           continuationResultCommit,
@@ -354,7 +475,13 @@ export class TaskRepository extends SkillRepository {
         const timestamp = now();
         const row = this.handle.db
           .update(tasks)
-          .set({ status: "DRAFT", version: current.version + 1, updatedAt: timestamp })
+          .set({
+            status: "DRAFT",
+            managedRetryCount: 0,
+            budgetConsumedCents: 0,
+            version: current.version + 1,
+            updatedAt: timestamp,
+          })
           .where(
             and(
               eq(tasks.id, taskId),

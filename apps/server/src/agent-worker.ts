@@ -1,34 +1,26 @@
-import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 import {
   ContextBudgetExceededError,
-  type LlmCompressor,
-  type ScratchpadStore,
 } from "@devloop/context";
 import type { ClaimedTask, DevLoopRepository, EventfulResult } from "@devloop/db";
-import {
-  GitApplyError,
-  type GitService,
-  type ReconcileCommitInput,
-  type ReconcileCommitResult,
-} from "@devloop/git";
-import type {
-  RunPreviewConfig,
-  RunnerCapabilities,
-  RunStatus,
-  WorkerStatus,
-} from "@devloop/shared";
+import type { RunnerCapabilities, RunStatus, WorkerStatus } from "@devloop/shared";
 import {
   terminateProcessGroup as terminateRunnerProcessGroup,
   type AgentRunner,
   type RunnerEvent,
   type RunnerHandle,
-  type RunnerResult,
-  type RunnerSkill,
 } from "@devloop/runners";
+import {
+  AutoConflictResolutionError,
+  formatRunnerResult,
+  runnerRequiresWorktree,
+  type AgentWorkspace,
+} from "./agent-run-common.js";
+import { AgentReviewOperations } from "./agent-review-operations.js";
+import { AgentRunFinalizer } from "./agent-run-finalizer.js";
+import { AgentWorkspaceOperations } from "./agent-workspace-operations.js";
+import type { ActiveExecution, AgentWorkerOptions } from "./agent-worker-types.js";
 import type { DomainEventBus } from "./event-bus.js";
-import type { SkillService } from "./skill-service.js";
-import type { PlaywrightValidationService } from "./playwright-validation-service.js";
+import { AgentBudgetMonitor } from "./agent-budget-monitor.js";
 
 const phaseByEvent: Record<string, RunStatus> = {
   "runner.preparing": "PREPARING",
@@ -36,96 +28,6 @@ const phaseByEvent: Record<string, RunStatus> = {
   "runner.verifying": "VERIFYING",
   "runner.review": "PREPARING_REVIEW",
 };
-
-const runnersRequiringWorktree = new Set(["codex", "claude-code"]);
-const runnerRequiresWorktree = (runnerId: string): boolean =>
-  runnersRequiringWorktree.has(runnerId);
-
-const previewConfigurationEquals = (
-  left: RunPreviewConfig | null,
-  right: RunPreviewConfig | null,
-): boolean =>
-  left?.source === right?.source &&
-  left?.command === right?.command &&
-  left?.workingDirectory === right?.workingDirectory &&
-  left?.healthPath === right?.healthPath;
-
-const previewSourceLabel: Record<RunPreviewConfig["source"], string> = {
-  project: "项目高级覆盖",
-  agent: "Agent 识别",
-  detected: "自动识别",
-};
-
-export interface ContextBudgets {
-  codex: number;
-  "claude-code": number;
-  fake: number;
-  [key: string]: number;
-}
-
-export interface AgentWorkerOptions {
-  claimDelayMs?: number;
-  now?: () => number;
-  defaultRunnerId?: string;
-  runnerCapabilities?: RunnerCapabilities[];
-  gitService?: Pick<
-    GitService,
-    | "fetchRepository"
-    | "resolveRemoteTargetBase"
-    | "resolveTargetBase"
-    | "createWorktree"
-    | "commitWorktree"
-    | "reconcileCommitConflicts"
-    | "moveWorktreeToCommit"
-  >;
-  worktreesPath?: string;
-  terminateProcessGroup?: (processGroupId: number) => void;
-  skillService?: Pick<SkillService, "listEnabledForExecution">;
-  playwrightValidationService?: Pick<PlaywrightValidationService, "validate">;
-  /** 上下文管理：scratchpad 存储（可选；缺省则 pipeline 走内存实现或跳过 ref）。 */
-  scratchpad?: ScratchpadStore;
-  /** 上下文管理：LLM 压缩器（可选；未配置端点时使用 Noop 降级为规则型）。 */
-  llmCompressor?: LlmCompressor;
-  /** 上下文预算按 runner id 索引；缺省 undefined 则 pipeline 使用默认 100000。 */
-  contextBudgets?: ContextBudgets;
-}
-
-class AutoConflictResolutionError extends Error {
-  public constructor(
-    public readonly outcome: "blocked" | "failed",
-    message: string,
-  ) {
-    super(message);
-    this.name = "AutoConflictResolutionError";
-  }
-}
-
-const formatRunnerResult = (result: RunnerResult): string => {
-  const criteria = result.acceptanceCriteria?.map(
-    (item) =>
-      `${item.status === "passed" ? "通过" : item.status === "failed" ? "失败" : "无法验证"}：${item.criterion}（${item.evidence}）`,
-  );
-  return [
-    result.summary,
-    result.blockedReason ? `阻塞原因：${result.blockedReason}` : null,
-    criteria?.length ? `验收结果：\n${criteria.join("\n")}` : null,
-    result.risks.length ? `风险：\n${result.risks.join("\n")}` : null,
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join("\n\n");
-};
-
-type ConflictResolutionStage = "continuation" | "review";
-
-interface ActiveExecution {
-  taskId: string;
-  runId: string;
-  executionToken: string;
-  controller: AbortController;
-  handle: RunnerHandle | null;
-  processGroupId: number | null;
-  cancelled: boolean;
-}
 
 export class AgentWorker {
   private timer: NodeJS.Timeout | null = null;
@@ -135,6 +37,9 @@ export class AgentWorker {
   private readonly runners: Map<string, AgentRunner>;
   private readonly defaultRunnerId: string;
   private readonly runnerCapabilitiesById: Map<string, RunnerCapabilities>;
+  private readonly workspaceOperations: AgentWorkspaceOperations;
+  private readonly reviewOperations: AgentReviewOperations;
+  private readonly runFinalizer: AgentRunFinalizer;
   /** 按 taskId 递增的「轮」计数，用于 LLM 压缩器冷却门。 */
   private readonly turnCounters = new Map<string, number>();
 
@@ -159,7 +64,8 @@ export class AgentWorker {
     if (this.runners.size === 0) {
       throw new Error("AgentWorker 需要至少注册一个 runner");
     }
-    const defaultId = options.defaultRunnerId ?? this.runners.keys().next().value!;
+    const defaultId = options.defaultRunnerId ?? this.runners.keys().next().value;
+    if (!defaultId) throw new Error("AgentWorker 无法确定默认 runner");
     if (!this.runners.has(defaultId)) {
       throw new Error(`默认 runner ${defaultId} 未在注册表中`);
     }
@@ -167,6 +73,32 @@ export class AgentWorker {
     this.runnerCapabilitiesById = new Map(
       (options.runnerCapabilities ?? []).map((capability) => [capability.id, capability]),
     );
+    this.workspaceOperations = new AgentWorkspaceOperations(repository, {
+      ...(options.gitService ? { gitService: options.gitService } : {}),
+      ...(options.worktreesPath ? { worktreesPath: options.worktreesPath } : {}),
+      ...(options.skillService ? { skillService: options.skillService } : {}),
+      publish: (result) => this.publish(result),
+    });
+    this.reviewOperations = new AgentReviewOperations(repository, this.workspaceOperations, {
+      ...(options.gitService ? { gitService: options.gitService } : {}),
+      outputSchemaPath,
+      ...(options.playwrightValidationService
+        ? { playwrightValidationService: options.playwrightValidationService }
+        : {}),
+      publish: (result) => this.publish(result),
+      isExecutionActive: (runId, executionToken) =>
+        this.isExecutionActive(runId, executionToken),
+      setActiveHandle: (runId, handle) => {
+        const active = this.activeExecutions.get(runId);
+        if (active) active.handle = handle;
+      },
+    });
+    this.runFinalizer = new AgentRunFinalizer(repository, this.workspaceOperations, {
+      publish: (result) => this.publish(result),
+      isExecutionActive: (runId, executionToken) =>
+        this.isExecutionActive(runId, executionToken),
+      isInvalidExecutionError: (error) => this.isInvalidExecutionError(error),
+    });
   }
 
   private get defaultRunner(): AgentRunner {
@@ -294,16 +226,24 @@ export class AgentWorker {
       const claimDelayMs = this.options.claimDelayMs ?? 5_000;
       const currentTime = this.options.now?.() ?? Date.now();
       const readyBefore = new Date(currentTime - claimDelayMs).toISOString();
+      const managedRetryReadyBefore = new Date(
+        currentTime - (this.options.managedRetryDelayMs ?? 5_000),
+      ).toISOString();
+      for (const retry of this.repository.queueDueManagedRetries(managedRetryReadyBefore)) {
+        this.publish(retry);
+      }
       let claimedAny = false;
       while (this.executions.size < worker.concurrencyLimit) {
         const claimed = this.repository.claimNextTask({
           readyBefore,
-          resolveRunnerVersion: (runnerId) => {
+          resolveRunner: (runnerId) => {
             const { runner } = this.resolveRunnerForProject(runnerId);
-            return (
-              this.runnerCapabilitiesById.get(runner.id)?.version ??
-              (runner.id === "fake" ? "built-in" : null)
-            );
+            return {
+              id: runner.id,
+              version:
+                this.runnerCapabilitiesById.get(runner.id)?.version ??
+                (runner.id === "fake" ? "built-in" : null),
+            };
           },
         });
         if (!claimed) {
@@ -345,7 +285,9 @@ export class AgentWorker {
       handle: null as RunnerHandle | null,
       processGroupId: null,
       cancelled: false,
+      budgetExceeded: false,
     };
+    let budgetMonitor: AgentBudgetMonitor | null = null;
     this.activeExecutions.set(active.runId, active);
     const emit = (event: RunnerEvent) =>
       this.handleRunnerEvent(claimed.run.id, claimed.run.executionToken, event);
@@ -368,12 +310,12 @@ export class AgentWorker {
         // 事件记录失败不阻断执行。
       }
     }
-    let workspace: { path: string | null; baseCommit: string | null } = {
+    let workspace: AgentWorkspace = {
       path: null,
       baseCommit: claimed.run.baseCommit,
     };
     try {
-      const skills = await this.loadEnabledSkills(controller.signal);
+      const skills = await this.workspaceOperations.loadEnabledSkills(controller.signal);
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
@@ -389,7 +331,14 @@ export class AgentWorker {
         ),
       );
       workspace = runnerRequiresWorktree(runner.id)
-        ? await this.prepareWorkspace(claimed, runner, skills, controller.signal, onProcessGroupId)
+        ? await this.workspaceOperations.prepareWorkspace(
+            claimed,
+            runner,
+            skills,
+            controller.signal,
+            onProcessGroupId,
+            (...args) => this.reviewOperations.reconcileRunCommit(...args),
+          )
         : { path: null, baseCommit: claimed.run.baseCommit };
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
@@ -430,8 +379,37 @@ export class AgentWorker {
         },
         emit,
       );
+      budgetMonitor = new AgentBudgetMonitor(this.repository, claimed, {
+        runnerId: runner.id,
+        ...(this.options.budgetCheckIntervalMs !== undefined
+          ? { checkIntervalMs: this.options.budgetCheckIntervalMs }
+          : {}),
+        ...(this.options.budgetNow ? { now: this.options.budgetNow } : {}),
+        publish: (result) => this.publish(result),
+        onLimitReached: () => {
+          active.budgetExceeded = true;
+          this.abortExecution(active);
+        },
+        onError: (error) => {
+          try {
+            this.publish(
+              this.repository.recordRunEvent(
+                claimed.run.id,
+                "run.budget.measurement_failed",
+                "预算用量暂时无法更新，执行继续进行",
+                { error: error instanceof Error ? error.message : String(error) },
+              ),
+            );
+          } catch {
+            // 预算诊断事件失败不能中断正在运行的 Agent。
+          }
+        },
+      });
+      budgetMonitor.start();
 
       const result = await active.handle.result;
+      await budgetMonitor.stop();
+      budgetMonitor = null;
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
@@ -452,7 +430,7 @@ export class AgentWorker {
           );
           return;
         }
-        const committedResult = await this.commitWorkspace(
+        const committedResult = await this.workspaceOperations.commitWorkspace(
           claimed,
           workspace.path,
           workspace.baseCommit,
@@ -462,7 +440,7 @@ export class AgentWorker {
         if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
           return;
         }
-        const preparedResult = await this.prepareResultForReview(
+        const preparedResult = await this.reviewOperations.prepareResultForReview(
           claimed,
           runner,
           skills,
@@ -486,10 +464,10 @@ export class AgentWorker {
               `审核结果 Commit 已准备完成：${preparedResult.resultCommit.slice(0, 12)}`,
             ),
           );
-          await this.validateResultForReview(
+          await this.reviewOperations.validateResultForReview(
             claimed,
             preparedResult.resultCommit,
-            this.selectPreviewConfiguration(claimed, result),
+            this.reviewOperations.selectPreviewConfiguration(claimed, result),
             controller.signal,
           );
           if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -505,7 +483,7 @@ export class AgentWorker {
           ),
         );
       } else if (result.outcome === "blocked") {
-        await this.finalizeUnsuccessfulRun(
+        await this.runFinalizer.finalizeUnsuccessfulRun(
           claimed,
           "blocked",
           summary,
@@ -514,7 +492,7 @@ export class AgentWorker {
           onProcessGroupId,
         );
       } else {
-        await this.finalizeUnsuccessfulRun(
+        await this.runFinalizer.finalizeUnsuccessfulRun(
           claimed,
           "failed",
           summary,
@@ -524,6 +502,8 @@ export class AgentWorker {
         );
       }
     } catch (error) {
+      await budgetMonitor?.stop(!active.budgetExceeded);
+      budgetMonitor = null;
       if (
         active.cancelled ||
         !this.isExecutionActive(claimed.run.id, claimed.run.executionToken) ||
@@ -531,8 +511,12 @@ export class AgentWorker {
       ) {
         return;
       }
+      if (active.budgetExceeded) {
+        await this.runFinalizer.finalizeBudgetPausedRun(claimed, workspace, onProcessGroupId);
+        return;
+      }
       if (error instanceof ContextBudgetExceededError) {
-        await this.finalizeUnsuccessfulRun(
+        await this.runFinalizer.finalizeUnsuccessfulRun(
           claimed,
           "failed",
           `上下文超预算无法压缩至预算内（${error.detail.totalTokens}/${error.detail.budgetTokens} tokens）`,
@@ -543,7 +527,7 @@ export class AgentWorker {
         return;
       }
       if (error instanceof AutoConflictResolutionError) {
-        await this.finalizeUnsuccessfulRun(
+        await this.runFinalizer.finalizeUnsuccessfulRun(
           claimed,
           error.outcome,
           error.message,
@@ -560,7 +544,7 @@ export class AgentWorker {
             ? error.message
             : "执行器发生未知错误。";
       try {
-        await this.finalizeUnsuccessfulRun(
+        await this.runFinalizer.finalizeUnsuccessfulRun(
           claimed,
           "failed",
           message,
@@ -574,6 +558,7 @@ export class AgentWorker {
         }
       }
     } finally {
+      await budgetMonitor?.stop(false);
       // Run 结束（无论 succeed/fail/block/cancel）都清理该 run 的 scratchpad。
       const scratchpad = this.options.scratchpad;
       if (scratchpad) {
@@ -590,101 +575,6 @@ export class AgentWorker {
         }
       }
     }
-  }
-
-  private async validateResultForReview(
-    claimed: ClaimedTask,
-    resultCommit: string,
-    selectedPreviewConfiguration: RunPreviewConfig | null,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const validationService = this.options.playwrightValidationService;
-    if (!validationService) return;
-    if (selectedPreviewConfiguration) {
-      this.publish(
-        this.repository.recordRunEvent(
-          claimed.run.id,
-          "run.preview.configuration.selected",
-          `预览配置来源：${previewSourceLabel[selectedPreviewConfiguration.source]}`,
-          { ...selectedPreviewConfiguration },
-        ),
-      );
-    }
-    this.publish(
-      this.repository.recordRunEvent(
-        claimed.run.id,
-        "run.playwright.started",
-        "正在启动任务结果预览并执行 Playwright 自动验证",
-        {},
-      ),
-    );
-    try {
-      const report = await validationService.validate({
-        runId: claimed.run.id,
-        repositoryPath: claimed.projectPath,
-        resultCommit,
-        previewConfiguration: selectedPreviewConfiguration,
-        playwrightEnabled: claimed.playwrightEnabled,
-        playwrightTestCommand: claimed.playwrightTestCommand,
-        signal,
-      });
-      if (!previewConfigurationEquals(report.previewConfiguration, selectedPreviewConfiguration)) {
-        if (report.previewConfiguration) {
-          this.publish(
-            this.repository.recordRunEvent(
-              claimed.run.id,
-              "run.preview.configuration.selected",
-              `预览配置来源：${previewSourceLabel[report.previewConfiguration.source]}`,
-              { ...report.previewConfiguration },
-            ),
-          );
-        }
-      }
-      this.publish(
-        this.repository.recordRunEvent(
-          claimed.run.id,
-          "run.playwright.completed",
-          report.status === "passed"
-            ? "Playwright 自动验证通过，截图与交互结果已附在审核页"
-            : report.status === "failed"
-              ? "Playwright 自动验证发现问题，请在审核页检查结果"
-              : "Playwright 自动验证已跳过，请在审核页查看原因",
-          {
-            status: report.status,
-            checks: report.checks,
-            previewConfiguration: report.previewConfiguration,
-          },
-        ),
-      );
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw error;
-      this.publish(
-        this.repository.recordRunEvent(
-          claimed.run.id,
-          "run.playwright.failed",
-          "Playwright 自动验证未能生成完整报告，但任务结果仍可人工审核",
-          { error: error instanceof Error ? error.message : String(error) },
-        ),
-      );
-    }
-  }
-
-  private selectPreviewConfiguration(
-    claimed: ClaimedTask,
-    result: RunnerResult,
-  ): RunPreviewConfig | null {
-    if (claimed.previewCommand) {
-      return {
-        source: "project",
-        command: claimed.previewCommand,
-        workingDirectory: claimed.previewWorkingDirectory,
-        healthPath: claimed.previewHealthPath,
-      };
-    }
-    if (result.preview) {
-      return { source: "agent", ...result.preview };
-    }
-    return null;
   }
 
   private handleRunnerEvent(runId: string, executionToken: string, event: RunnerEvent): void {
@@ -708,538 +598,6 @@ export class AgentWorker {
         throw error;
       }
     }
-  }
-
-  private async prepareWorkspace(
-    claimed: ClaimedTask,
-    runner: AgentRunner,
-    skills: RunnerSkill[],
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-  ): Promise<{ path: string; baseCommit: string }> {
-    if (!runnerRequiresWorktree(runner.id)) {
-      throw new Error("当前执行器不需要 Git Worktree");
-    }
-    if (!this.options.gitService || !this.options.worktreesPath) {
-      throw new Error("真实执行器缺少 Git Worktree 配置");
-    }
-    if (claimed.taskType === "RESEARCH") {
-      const baseCommit = claimed.run.baseCommit;
-      if (!baseCommit) {
-        throw new Error("研究任务缺少可用于隔离工作区的项目基线 Commit");
-      }
-      this.publish(
-        this.repository.setRunPhase(
-          claimed.run.id,
-          claimed.run.executionToken,
-          "PREPARING",
-          "runner.preparing",
-          "正在准备互联网研究脚本的隔离工作区",
-        ),
-      );
-      const worktreePath = resolve(this.options.worktreesPath, claimed.run.id);
-      const branchName = `devloop/run/${claimed.run.id}`;
-      await this.options.gitService.createWorktree({
-        repositoryPath: claimed.projectPath,
-        worktreePath,
-        branchName,
-        baseCommit,
-        signal,
-        onProcessGroupId,
-      });
-      this.publish(
-        this.repository.setRunWorkspace(claimed.run.id, claimed.run.executionToken, {
-          worktreePath,
-          branchName,
-        }),
-      );
-      return { path: worktreePath, baseCommit };
-    }
-    this.publish(
-      this.repository.setRunPhase(
-        claimed.run.id,
-        claimed.run.executionToken,
-        "PREPARING",
-        "runner.preparing",
-        `正在从目标分支 ${claimed.run.targetBranch} 准备独立 Git Worktree`,
-      ),
-    );
-    const targetBase = await this.resolveCurrentTarget(claimed, signal, onProcessGroupId);
-    this.publish(
-      this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
-        targetBranch: targetBase.targetBranch,
-        baseCommit: targetBase.baseCommit,
-      }),
-    );
-    let workspaceBaseCommit = targetBase.baseCommit;
-    if (claimed.continuationBaseCommit && claimed.continuationResultCommit) {
-      this.publish(
-        this.repository.setRunPhase(
-          claimed.run.id,
-          claimed.run.executionToken,
-          "PREPARING",
-          "run.continuation.started",
-          "正在载入上一轮待审核结果，并与最新目标分支对齐",
-          {
-            previousBaseCommit: claimed.continuationBaseCommit,
-            previousResultCommit: claimed.continuationResultCommit,
-            targetCommit: targetBase.baseCommit,
-          },
-        ),
-      );
-
-      if (targetBase.baseCommit === claimed.continuationBaseCommit) {
-        workspaceBaseCommit = claimed.continuationResultCommit;
-      } else {
-        const { reconciled, agentSummary } = await this.reconcileRunCommit(
-          claimed,
-          runner,
-          skills,
-          {
-            repositoryPath: claimed.projectPath,
-            targetBranch: targetBase.targetBranch,
-            targetCommit: targetBase.baseCommit,
-            baseCommit: claimed.continuationBaseCommit,
-            resultCommit: claimed.continuationResultCommit,
-          },
-          signal,
-          onProcessGroupId,
-          "continuation",
-        );
-        workspaceBaseCommit = reconciled.resultCommit;
-        if (reconciled.status === "resolved") {
-          this.publish(
-            this.repository.recordRunEvent(
-              claimed.run.id,
-              "run.conflict_resolution.completed",
-              `Codex 已解决上一轮结果与目标分支的 ${reconciled.resolutions.length} 个冲突文件，继续执行本轮修改`,
-              {
-                automatic: true,
-                stage: "continuation",
-                targetCommit: reconciled.targetCommit,
-                resultCommit: reconciled.resultCommit,
-                resolutions: reconciled.resolutions,
-                summary: agentSummary,
-                completedAt: new Date().toISOString(),
-              },
-            ),
-          );
-        }
-      }
-
-      this.publish(
-        this.repository.setRunPhase(
-          claimed.run.id,
-          claimed.run.executionToken,
-          "PREPARING",
-          "run.continuation.prepared",
-          "上一轮待审核代码已载入，本轮将根据驳回意见继续修改",
-          {
-            previousResultCommit: claimed.continuationResultCommit,
-            targetCommit: targetBase.baseCommit,
-            workspaceBaseCommit,
-          },
-        ),
-      );
-    }
-    const worktreePath = resolve(this.options.worktreesPath, claimed.run.id);
-    const branchName = `devloop/run/${claimed.run.id}`;
-    await this.options.gitService.createWorktree({
-      repositoryPath: claimed.projectPath,
-      worktreePath,
-      branchName,
-      baseCommit: workspaceBaseCommit,
-      signal,
-      onProcessGroupId,
-    });
-    this.publish(
-      this.repository.setRunWorkspace(claimed.run.id, claimed.run.executionToken, {
-        worktreePath,
-        branchName,
-      }),
-    );
-    return { path: worktreePath, baseCommit: targetBase.baseCommit };
-  }
-
-  private async commitWorkspace(
-    claimed: ClaimedTask,
-    worktreePath: string | null,
-    baseCommit: string | null,
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-    purpose: "review" | "retry" = "review",
-  ): Promise<string | null> {
-    if (!worktreePath || !this.options.gitService) {
-      return baseCommit;
-    }
-    this.publish(
-      this.repository.setRunPhase(
-        claimed.run.id,
-        claimed.run.executionToken,
-        "VERIFYING",
-        purpose === "retry" ? "run.retry_checkpoint.started" : "runner.verifying",
-        purpose === "retry"
-          ? "执行未完成，正在保存可用于重试的 Git 恢复点"
-          : "Codex 执行完成，正在固化 Git 结果",
-      ),
-    );
-    const title = claimed.task.title.replace(/\s+/g, " ").trim().slice(0, 120);
-    const resultCommit = await this.options.gitService.commitWorktree({
-      worktreePath,
-      message: purpose === "retry" ? `DevLoop retry checkpoint: ${title}` : `DevLoop: ${title}`,
-      signal,
-      onProcessGroupId,
-    });
-    return resultCommit;
-  }
-
-  private async finalizeUnsuccessfulRun(
-    claimed: ClaimedTask,
-    outcome: "blocked" | "failed",
-    summary: string,
-    workspace: { path: string | null; baseCommit: string | null },
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-  ): Promise<void> {
-    let resultCommit: string | undefined;
-    let finalSummary = summary;
-
-    if (claimed.taskType === "DEVELOPMENT" && workspace.path) {
-      try {
-        const checkpoint = await this.commitWorkspace(
-          claimed,
-          workspace.path,
-          workspace.baseCommit,
-          signal,
-          onProcessGroupId,
-          "retry",
-        );
-        resultCommit = checkpoint ?? undefined;
-        if (checkpoint) {
-          this.publish(
-            this.repository.recordRunEvent(
-              claimed.run.id,
-              "run.retry_checkpoint.saved",
-              `已保存可用于重试的 Git 恢复点：${checkpoint.slice(0, 12)}`,
-              { baseCommit: workspace.baseCommit, resultCommit: checkpoint },
-            ),
-          );
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") throw error;
-        const message = error instanceof Error ? error.message : "未知 Git 错误";
-        finalSummary = `${summary}\n\n未能保存本轮 Worktree 进度，重试将仅携带失败诊断：${message}`;
-        try {
-          this.publish(
-            this.repository.recordRunEvent(
-              claimed.run.id,
-              "run.retry_checkpoint.failed",
-              "未能保存可用于重试的 Git 恢复点",
-              { error: message },
-            ),
-          );
-        } catch (recordError) {
-          if (!this.isInvalidExecutionError(recordError)) throw recordError;
-        }
-      }
-    }
-
-    if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) return;
-    this.publish(
-      outcome === "blocked"
-        ? this.repository.blockRun(
-            claimed.run.id,
-            claimed.run.executionToken,
-            finalSummary,
-            resultCommit,
-          )
-        : this.repository.failRun(
-            claimed.run.id,
-            claimed.run.executionToken,
-            finalSummary,
-            resultCommit,
-          ),
-    );
-  }
-
-  private async prepareResultForReview(
-    claimed: ClaimedTask,
-    runner: AgentRunner,
-    skills: RunnerSkill[],
-    worktreePath: string | null,
-    baseCommit: string | null,
-    resultCommit: string | null,
-    summary: string,
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-  ): Promise<{ resultCommit: string | null; summary: string }> {
-    if (
-      !claimed.autoResolveConflicts ||
-      !runnerRequiresWorktree(runner.id) ||
-      !worktreePath ||
-      !baseCommit ||
-      !resultCommit ||
-      !this.options.gitService
-    ) {
-      return { resultCommit, summary };
-    }
-
-    this.publish(
-      this.repository.setRunPhase(
-        claimed.run.id,
-        claimed.run.executionToken,
-        "VERIFYING",
-        "run.conflict_check.started",
-        `正在检查结果与目标分支 ${claimed.run.targetBranch} 的写入冲突`,
-      ),
-    );
-    const target = await this.resolveCurrentTarget(claimed, signal, onProcessGroupId);
-    if (!target.branchExists || target.baseCommit === baseCommit) {
-      this.publish(
-        this.repository.recordRunEvent(
-          claimed.run.id,
-          "run.conflict_check.completed",
-          "目标分支未发生冲突，无需自动解决",
-          { targetCommit: target.baseCommit, conflicted: false },
-        ),
-      );
-      return { resultCommit, summary };
-    }
-
-    const { reconciled, agentSummary } = await this.reconcileRunCommit(
-      claimed,
-      runner,
-      skills,
-      {
-        repositoryPath: claimed.projectPath,
-        targetBranch: target.targetBranch,
-        targetCommit: target.baseCommit,
-        baseCommit,
-        resultCommit,
-      },
-      signal,
-      onProcessGroupId,
-      "review",
-    );
-
-    if (reconciled.resultCommit !== resultCommit) {
-      signal.throwIfAborted();
-      await this.options.gitService.moveWorktreeToCommit({
-        worktreePath,
-        expectedCommit: resultCommit,
-        targetCommit: reconciled.resultCommit,
-      });
-      signal.throwIfAborted();
-    }
-    this.publish(
-      this.repository.setRunBaseCommit(claimed.run.id, claimed.run.executionToken, {
-        targetBranch: target.targetBranch,
-        baseCommit: reconciled.targetCommit,
-      }),
-    );
-    if (reconciled.status === "clean") {
-      this.publish(
-        this.repository.recordRunEvent(
-          claimed.run.id,
-          "run.conflict_check.completed",
-          "目标分支已更新，本次结果已无冲突地对齐到最新 Commit",
-          {
-            targetCommit: target.baseCommit,
-            resultCommit: reconciled.resultCommit,
-            conflicted: false,
-          },
-        ),
-      );
-      return {
-        resultCommit: reconciled.resultCommit,
-        summary: `${summary}\n\n目标分支已更新，本次结果已自动对齐且不存在冲突。`,
-      };
-    }
-
-    const completedAt = new Date().toISOString();
-    this.publish(
-      this.repository.recordRunEvent(
-        claimed.run.id,
-        "run.conflict_resolution.completed",
-        `Codex 已自动解决 ${reconciled.resolutions.length} 个冲突文件，等待人工审核`,
-        {
-          automatic: true,
-          targetCommit: reconciled.targetCommit,
-          resolutions: reconciled.resolutions,
-          summary: agentSummary ?? "Codex 已完成自动冲突解决。",
-          completedAt,
-        },
-      ),
-    );
-    return {
-      resultCommit: reconciled.resultCommit,
-      summary: `${summary}\n\n自动冲突解决：\n${agentSummary ?? "Codex 已完成自动冲突解决。"}`,
-    };
-  }
-
-  private async reconcileRunCommit(
-    claimed: ClaimedTask,
-    runner: AgentRunner,
-    skills: RunnerSkill[],
-    input: ReconcileCommitInput,
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-    stage: ConflictResolutionStage,
-  ): Promise<{ reconciled: ReconcileCommitResult; agentSummary: string | null }> {
-    if (!this.options.gitService) {
-      throw new Error("真实执行器缺少 Git 服务配置");
-    }
-    let agentSummary: string | null = null;
-    try {
-      signal.throwIfAborted();
-      const reconciled = await this.options.gitService.reconcileCommitConflicts(
-        input,
-        async ({ worktreePath: conflictWorktree, files }) => {
-          if (!claimed.autoResolveConflicts) {
-            throw new AutoConflictResolutionError(
-              "blocked",
-              "上一轮待审核结果与最新目标分支存在冲突，但任务已关闭自动解决冲突。请启用后重试。",
-            );
-          }
-          const continuation = stage === "continuation";
-          this.publish(
-            this.repository.setRunPhase(
-              claimed.run.id,
-              claimed.run.executionToken,
-              "REPAIRING",
-              "run.conflict_resolution.started",
-              continuation
-                ? `上一轮结果与最新目标分支存在 ${files.length} 个冲突文件，正在交给执行器自动解决`
-                : `检测到 ${files.length} 个冲突文件，正在交给执行器自动解决`,
-              {
-                stage,
-                targetCommit: input.targetCommit,
-                files: files.map((file) => file.path),
-              },
-            ),
-          );
-          const handle = runner.start(
-            {
-              runId: `conflict-${randomUUID()}`,
-              taskId: claimed.task.id,
-              title: claimed.title,
-              goal: claimed.goal,
-              acceptanceCriteria: claimed.acceptanceCriteria,
-              skills,
-              mode: "conflict-resolution",
-              conflictPaths: files.map((file) => file.path),
-              worktreePath: conflictWorktree,
-              outputSchemaPath: this.outputSchemaPath,
-              signal,
-              onProcessGroupId,
-            },
-            (event: RunnerEvent) =>
-              this.handleConflictRunnerEvent(claimed, input.targetCommit, event, stage),
-          );
-          const active = this.activeExecutions.get(claimed.run.id);
-          if (active) {
-            active.handle = handle;
-          }
-          const result = await handle.result;
-          agentSummary = formatRunnerResult(result);
-          if (result.outcome === "blocked") {
-            throw new AutoConflictResolutionError(
-              "blocked",
-              stage === "continuation"
-                ? `Codex 在对齐上一轮待审核结果时被阻塞。\n\n${agentSummary}`
-                : `Codex 已完成开发，但自动解决冲突被阻塞。\n\n${agentSummary}`,
-            );
-          }
-          if (result.outcome !== "succeeded") {
-            throw new AutoConflictResolutionError(
-              "failed",
-              stage === "continuation"
-                ? `Codex 无法把上一轮待审核结果与最新目标分支对齐。\n\n${agentSummary}`
-                : `Codex 已完成开发，但自动解决冲突失败。\n\n${agentSummary}`,
-            );
-          }
-        },
-      );
-      signal.throwIfAborted();
-      return { reconciled, agentSummary };
-    } catch (error) {
-      if (error instanceof GitApplyError && error.code === "APPLY_CONFLICT") {
-        throw new AutoConflictResolutionError(
-          "blocked",
-          stage === "continuation"
-            ? `上一轮待审核结果与最新目标分支对齐后仍存在冲突。\n\n${error.message}`
-            : `Codex 已完成开发，但自动解决后仍存在冲突。\n\n${error.message}`,
-        );
-      }
-      throw error;
-    }
-  }
-
-  private async resolveCurrentTarget(
-    claimed: ClaimedTask,
-    signal: AbortSignal,
-    onProcessGroupId: (processGroupId: number | null) => void,
-  ): Promise<{
-    targetBranch: string;
-    baseCommit: string;
-    branchExists: boolean;
-  }> {
-    if (!this.options.gitService) {
-      throw new Error("真实执行器缺少 Git 服务配置");
-    }
-    if (claimed.projectRepositoryUrl) {
-      await this.options.gitService.fetchRepository(claimed.projectPath, {
-        signal,
-        onProcessGroupId,
-      });
-      return this.options.gitService.resolveRemoteTargetBase({
-        repositoryPath: claimed.projectPath,
-        targetBranch: claimed.run.targetBranch,
-        fallbackRef: claimed.projectDefaultBaseRef,
-        signal,
-        onProcessGroupId,
-      });
-    }
-    return this.options.gitService.resolveTargetBase({
-      repositoryPath: claimed.projectPath,
-      targetBranch: claimed.run.targetBranch,
-      fallbackRef: claimed.projectDefaultBaseRef,
-      signal,
-      onProcessGroupId,
-    });
-  }
-
-  private async loadEnabledSkills(signal: AbortSignal): Promise<RunnerSkill[]> {
-    signal.throwIfAborted();
-    const skills = (await this.options.skillService?.listEnabledForExecution()) ?? [];
-    signal.throwIfAborted();
-    return skills;
-  }
-
-  private handleConflictRunnerEvent(
-    claimed: ClaimedTask,
-    targetCommit: string,
-    event: RunnerEvent,
-    stage: ConflictResolutionStage,
-  ): void {
-    if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
-      return;
-    }
-    this.publish(
-      this.repository.setRunPhase(
-        claimed.run.id,
-        claimed.run.executionToken,
-        "REPAIRING",
-        "run.conflict_resolution.progress",
-        event.message,
-        {
-          stage,
-          targetCommit,
-          runnerEventType: event.type,
-          ...(event.data ? { data: event.data } : {}),
-        },
-      ),
-    );
   }
 
   private isExecutionActive(runId: string, executionToken: string): boolean {

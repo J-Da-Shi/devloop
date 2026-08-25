@@ -3,9 +3,10 @@ import type { TaskStatus } from "./domain.js";
 const allowedTaskTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   DRAFT: new Set(["READY", "CANCELLED"]),
   READY: new Set(["DRAFT", "RUNNING", "CANCELLED"]),
-  RUNNING: new Set(["REVIEW", "BLOCKED", "FAILED", "CANCELLED"]),
+  RUNNING: new Set(["REVIEW", "BLOCKED", "BUDGET_PAUSED", "FAILED", "CANCELLED"]),
   REVIEW: new Set(["COMPLETED", "READY", "CANCELLED"]),
   BLOCKED: new Set(["DRAFT", "READY"]),
+  BUDGET_PAUSED: new Set(["DRAFT", "READY", "CANCELLED"]),
   FAILED: new Set(["DRAFT", "READY"]),
   COMPLETED: new Set(["DRAFT"]),
   CANCELLED: new Set(),

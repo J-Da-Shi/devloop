@@ -11,6 +11,7 @@ export const taskStatusText: Record<TaskStatus, string> = {
   RUNNING: "执行中",
   REVIEW: "待审核",
   BLOCKED: "已阻塞",
+  BUDGET_PAUSED: "预算已暂停",
   FAILED: "失败",
   COMPLETED: "已完成",
   CANCELLED: "已取消",
@@ -25,6 +26,7 @@ export const runStatusText: Record<RunStatus, string> = {
   PREPARING_REVIEW: "整理审核材料",
   SUCCEEDED: "执行成功",
   BLOCKED: "已阻塞",
+  BUDGET_PAUSED: "预算已暂停",
   FAILED: "执行失败",
   INTERRUPTED: "已中断",
   CANCELLED: "已取消",
@@ -72,7 +74,7 @@ export const statusTone = (status: string): string => {
   if (["READY", "REVIEW", "PREPARING_REVIEW", "CLAIMED"].includes(status)) {
     return "info";
   }
-  if (["BLOCKED", "PAUSED", "INTERRUPTED"].includes(status)) {
+  if (["BLOCKED", "BUDGET_PAUSED", "PAUSED", "INTERRUPTED"].includes(status)) {
     return "warning";
   }
   if (["FAILED", "CANCELLED", "DEGRADED", "STOPPED"].includes(status)) {
