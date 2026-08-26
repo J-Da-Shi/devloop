@@ -268,6 +268,8 @@ pnpm format
 git diff --check
 ```
 
+Installing dependencies automatically enables the repository's built-in `.githooks/pre-commit`. Every commit runs the Prettier format check, the full workspace typecheck, and the staged-file whitespace check; any failure blocks the commit. If dependencies were installed with `--ignore-scripts`, run `pnpm hooks:install` manually. The same checks are available at any time through `pnpm quality:pre-commit`.
+
 Pull requests run the package build, typecheck, Vitest, ESLint, Prettier, and whitespace checks on Node.js 24 and 26, with separate Server and Web builds plus a Desktop typecheck. Dependency review blocks high-severity dependency changes, while pnpm and GitHub Actions dependencies are checked for updates weekly.
 
 Directory responsibilities: `apps/server` owns the API and Worker, grouped into `agent`, `preview`, `skills`, `routes`, `config`, and `infrastructure`; `apps/web` owns the React UI, and `apps/desktop` owns the Electron client. `packages/context` is split into compression, LLM, and storage, while `packages/db` uses database, budget, and repository groups; `packages/git` uses commands, services, and types; `packages/runners` uses adapters, execution, output, prompts, and types. `packages/shared` contains shared models. Development conventions live in [`AGENTS.md`](./AGENTS.md).

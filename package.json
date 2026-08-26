@@ -20,6 +20,9 @@
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
+    "quality:pre-commit": "pnpm format && pnpm typecheck && git diff --cached --check",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "prepare": "pnpm hooks:install",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config drizzle.config.ts"
   },

@@ -268,6 +268,8 @@ pnpm format
 git diff --check
 ```
 
+安装依赖时会自动启用仓库内置的 `.githooks/pre-commit`。每次提交前会统一执行 Prettier 格式检查、全 workspace 类型检查和暂存区空白错误检查，任一检查失败都会阻止提交。若安装依赖时使用了 `--ignore-scripts`，请手动执行 `pnpm hooks:install`；也可以直接运行 `pnpm quality:pre-commit` 执行同一套检查。
+
 Pull Request 会在 Node.js 24 和 26 上执行 packages build、类型检查、Vitest、ESLint、Prettier 与空白错误检查，并分别验证 Server、Web 构建和 Desktop 类型检查。高危依赖变更会被依赖审查阻止；pnpm 与 GitHub Actions 依赖每周检查更新。
 
 目录职责：`apps/server` 提供 API 和 Worker，源码按 `agent`、`preview`、`skills`、`routes`、`config` 和 `infrastructure` 分组；`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端。`packages/context` 按压缩、LLM 和存储分组，`packages/db` 按数据库、预算和仓储分组，`packages/git` 按命令、服务和类型分组，`packages/runners` 按适配器、执行、输出、提示词和类型分组；`packages/shared` 承载共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。

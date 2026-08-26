@@ -66,6 +66,8 @@ pnpm test:watch          # Vitest 监听模式
 pnpm lint                # ESLint
 pnpm format              # Prettier 检查
 pnpm format:write        # Prettier 写入格式
+pnpm quality:pre-commit  # 提交前统一格式、类型和空白检查
+pnpm hooks:install       # 手动启用仓库内置 Git hook
 git diff --check
 
 # 数据库
@@ -83,6 +85,8 @@ pnpm --filter @devloop/web preview
 ```
 
 修改哪一层，就运行与影响范围相称的检查。跨包契约、数据库、Worker、Runner、状态流转或审核写入逻辑变更时，至少运行 `pnpm packages:build`、`pnpm typecheck`、相关测试和 `pnpm lint`。只修改 Markdown 或官网静态页面时，运行 Prettier、`git diff --check`，并检查桌面和移动视口布局。
+
+安装依赖时会通过根目录 `prepare` 脚本自动启用 `.githooks/pre-commit`。提交前统一执行 `pnpm quality:pre-commit`；如果使用 `pnpm install --ignore-scripts`，必须手动执行 `pnpm hooks:install`。
 
 ## 开发约定
 
