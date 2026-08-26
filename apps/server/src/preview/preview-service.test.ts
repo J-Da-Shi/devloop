@@ -277,6 +277,45 @@ describe("PreviewService", () => {
     await service.close();
   });
 
+  it("预览启动失败时保留完整命令日志", async () => {
+    const root = join(tmpdir(), `devloop-preview-full-log-${crypto.randomUUID()}`);
+    roots.push(root);
+    const previewsRoot = join(root, "previews");
+    const gitService = {
+      createDetachedWorktree: async (input: { worktreePath: string }) => {
+        await mkdir(input.worktreePath, { recursive: true });
+      },
+      removeManagedWorktree: async (input: { worktreePath: string }) => {
+        await rm(input.worktreePath, { recursive: true, force: true });
+      },
+    };
+    const service = new PreviewService(gitService as never, previewsRoot, 10_000);
+    const script = [
+      'process.stderr.write("LOG_START")',
+      'process.stderr.write("x".repeat(30_000))',
+      'process.stderr.write("LOG_END")',
+      "process.exit(2)",
+    ].join(";");
+
+    let failure: unknown;
+    try {
+      await service.start({
+        runId: crypto.randomUUID(),
+        repositoryPath: root,
+        resultCommit: "result-commit",
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        workingDirectory: ".",
+        healthPath: "/",
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("LOG_START");
+    expect((failure as Error).message).toContain("LOG_END");
+    expect((failure as Error).message.length).toBeGreaterThan(30_000);
+  });
+
   it("拒绝超出隔离 Worktree 的工作目录并执行清理", async () => {
     const root = join(tmpdir(), `devloop-preview-path-${crypto.randomUUID()}`);
     roots.push(root);

@@ -12,7 +12,6 @@ import {
   isBlockedFailure,
   parseAgentResult,
   sanitizeEventData,
-  truncate,
 } from "../output/runner-output.js";
 import { buildTaskPrompt } from "../prompts/task-prompt.js";
 import type {
@@ -108,9 +107,7 @@ const describeJsonEvent = (event: Record<string, unknown>): string | null => {
   if (type === "turn.completed") return "Codex 已完成本轮开发";
   if (type === "turn.failed" || type === "error") {
     const error = asRecord(event.error);
-    return truncate(
-      redact(getString(event, "message") ?? getString(error, "message") ?? "Codex 执行失败"),
-    );
+    return redact(getString(event, "message") ?? getString(error, "message") ?? "Codex 执行失败");
   }
   if (type !== "item.started" && type !== "item.completed" && type !== "item.updated") {
     return null;
@@ -122,9 +119,7 @@ const describeJsonEvent = (event: Record<string, unknown>): string | null => {
     const command = getString(item, "command");
     const exitCode = getNumber(item, "exit_code");
     if (type === "item.started") {
-      return command
-        ? `Codex 正在执行：${truncate(redact(command), 280)}`
-        : "Codex 正在执行检查命令";
+      return command ? `Codex 正在执行：${redact(command)}` : "Codex 正在执行检查命令";
     }
     if (type === "item.completed") {
       return exitCode === null ? "Codex 命令执行完成" : `Codex 命令执行完成，退出码 ${exitCode}`;
@@ -335,7 +330,7 @@ export class CodexRunner implements AgentRunner {
         emit({
           type: "runner.agent",
           message: "Codex 最终结果格式不符合要求，正在进行一次 JSON 修复",
-          data: { validationError: truncate(redact(validationError), 1_000) },
+          data: { validationError: redact(validationError) },
         });
 
         const repairAttempt = await this.runAttempt(input, emit, signal, {
@@ -358,7 +353,7 @@ export class CodexRunner implements AgentRunner {
             repairError instanceof Error ? repairError.message : "修复结果仍然无法解析";
           return {
             outcome: "failed",
-            summary: `Codex 两次返回均不符合 AgentResult JSON 格式。首次错误：${truncate(redact(validationError), 500)}；修复后错误：${truncate(redact(repairValidationError), 500)}`,
+            summary: `Codex 两次返回均不符合 AgentResult JSON 格式。首次错误：${redact(validationError)}；修复后错误：${redact(repairValidationError)}`,
             risks: ["任务文件修改已保留在 Worktree 中，但没有可信的结构化执行结果。"],
           };
         }
@@ -399,7 +394,7 @@ export class CodexRunner implements AgentRunner {
         detached: true,
         cancelSignal: signal,
         forceKillAfterDelay: 5_000,
-        maxBuffer: 10 * 1024 * 1024,
+        buffer: false,
       },
     );
     const processGroupId = subprocess.pid ?? null;
@@ -420,6 +415,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     let pending = "";
+    let stderrOutput = "";
     let stalled = false;
     let stallTimer: NodeJS.Timeout | null = null;
     const resetStallWatchdog = () => {
@@ -444,7 +440,16 @@ export class CodexRunner implements AgentRunner {
         lastCliError = parsedLine ?? lastCliError;
       }
     });
-    subprocess.stderr?.on("data", resetStallWatchdog);
+    subprocess.stderr?.setEncoding("utf8");
+    subprocess.stderr?.on("data", (chunk: string) => {
+      resetStallWatchdog();
+      stderrOutput += chunk;
+      emit({
+        type: "runner.stderr",
+        message: redact(chunk),
+        data: { stream: "stderr" },
+      });
+    });
 
     emit({ type: "runner.agent", message: options.startMessage });
     resetStallWatchdog();
@@ -465,13 +470,13 @@ export class CodexRunner implements AgentRunner {
       lastCliError = this.handleJsonLine(pending, emit) ?? lastCliError;
     }
     if (stalled) {
-      const stderr = typeof processResult.stderr === "string" ? processResult.stderr.trim() : "";
+      const stderr = stderrOutput.trim();
       const lastMessage = lastCliError ?? stderr;
       return {
         kind: "result",
         result: {
           outcome: "failed",
-          summary: `Codex 连续 ${this.formatStallTimeout()} 没有产生任何输出，疑似卡死，已自动终止。${lastMessage ? ` 最后信息：${truncate(redact(lastMessage), 500)}` : ""}`,
+          summary: `Codex 连续 ${this.formatStallTimeout()} 没有产生任何输出，疑似卡死，已自动终止。${lastMessage ? ` 最后信息：${redact(lastMessage)}` : ""}`,
           risks: ["Worktree 已保留，可在运行详情中继续诊断。"],
         },
       };
@@ -480,8 +485,7 @@ export class CodexRunner implements AgentRunner {
       throw new DOMException("Codex execution cancelled", "AbortError");
     }
     if (processResult.failed || processResult.exitCode !== 0) {
-      const stderr = typeof processResult.stderr === "string" ? processResult.stderr : "";
-      const message = truncate(redact(lastCliError ?? (stderr.trim() || "Codex CLI 异常退出")));
+      const message = redact(lastCliError ?? (stderrOutput.trim() || "Codex CLI 异常退出"));
       const blocked = isBlockedFailure(message);
       return {
         kind: "result",
@@ -502,7 +506,7 @@ export class CodexRunner implements AgentRunner {
         kind: "result",
         result: {
           outcome: "failed",
-          summary: `Codex 未生成可读取的最终结果：${truncate(redact(message), 500)}`,
+          summary: `Codex 未生成可读取的最终结果：${redact(message)}`,
           risks: ["Worktree 已保留，可在运行详情中继续诊断。"],
         },
       };
@@ -523,13 +527,11 @@ export class CodexRunner implements AgentRunner {
       const event = asRecord(JSON.parse(trimmed) as unknown);
       if (!event) return null;
       const message = describeJsonEvent(event);
-      if (message) {
-        emit({
-          type: "runner.agent",
-          message,
-          data: { event: sanitizeEventData(event, redact) },
-        });
-      }
+      emit({
+        type: "runner.agent",
+        message: message ?? `Codex 事件：${getString(event, "type") ?? "未知事件"}`,
+        data: { event: sanitizeEventData(event, redact) },
+      });
       const type = getString(event, "type");
       if (type === "turn.failed" || type === "error") {
         return message ?? "Codex 执行失败";
@@ -539,7 +541,7 @@ export class CodexRunner implements AgentRunner {
       emit({
         type: "runner.agent",
         message: "Codex 输出了一条无法解析的事件",
-        data: { raw: truncate(redact(trimmed), 8_000) },
+        data: { raw: redact(trimmed) },
       });
       return null;
     }

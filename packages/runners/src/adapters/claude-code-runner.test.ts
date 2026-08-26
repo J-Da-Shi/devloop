@@ -168,6 +168,7 @@ if (!isRepair && message.includes("处理审核反馈") && (!message.includes("�
 if (!isRepair && message.includes("一次性 Git Worktree") && (!message.includes("- README.md") || !message.includes("不要运行 git add、git rm") || !message.includes("统一暂存并校验冲突文件") || !message.includes("不要创建 Git commit") || !message.includes("Skill 1: frontend-quality (v2)") || !message.includes("检查响应式布局"))) process.exit(6);
 if (!isRepair && !message.includes("实现真实执行")) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "session-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "future.event", payload: { retained: true } }) + "\\n");
 if (message.includes("上游失败")) {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "error", error: "502 Bad Gateway: upstream unavailable" }) + "\\n");
   process.exit(1);
@@ -175,6 +176,9 @@ if (message.includes("上游失败")) {
 if (message.includes("等待取消")) {
   setInterval(() => undefined, 1000);
   await new Promise(() => undefined);
+}
+if (message.includes("大量日志")) {
+  process.stderr.write("x".repeat(11 * 1024 * 1024));
 }
 if (message.includes("持续进展")) {
   for (let index = 0; index < 4; index += 1) {
@@ -249,8 +253,29 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result
       preview: { workingDirectory: "apps/web" },
     });
     expect(events).toContain("Claude Code 会话已启动");
+    expect(events).toContain("Claude Code 事件：future.event");
     expect(events).toContain("Claude Code 正在执行：pnpm test");
     expect(events).toContain("Claude Code 已完成本轮开发");
+
+    let stderrCharacters = 0;
+    const largeOutputHandle = runner.start(
+      {
+        runId: "large-output-run",
+        taskId: "task",
+        title: "真实执行",
+        goal: "实现真实执行并产生大量日志",
+        acceptanceCriteria: ["完成开发"],
+        skills: [],
+        worktreePath,
+        outputSchemaPath,
+        signal: new AbortController().signal,
+      },
+      (event) => {
+        if (event.type === "runner.stderr") stderrCharacters += event.message.length;
+      },
+    );
+    await expect(largeOutputHandle.result).resolves.toMatchObject({ outcome: "succeeded" });
+    expect(stderrCharacters).toBe(11 * 1024 * 1024);
 
     const conflictHandle = runner.start(
       {

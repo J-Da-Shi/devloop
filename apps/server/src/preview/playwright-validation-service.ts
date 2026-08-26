@@ -23,8 +23,6 @@ export interface ValidateRunInput {
   signal?: AbortSignal;
 }
 
-const maxCommandOutputLength = 48_000;
-
 const asMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -304,7 +302,7 @@ export class PlaywrightValidationService {
       let terminationError: Error | null = null;
       let hardStopTimer: NodeJS.Timeout | null = null;
       const append = (source: string, value: unknown) => {
-        output = `${output}${source}: ${String(value)}`.slice(-maxCommandOutputLength);
+        output += `${source}: ${String(value)}`;
       };
       child.stdout?.on("data", (chunk) => append("stdout", chunk));
       child.stderr?.on("data", (chunk) => append("stderr", chunk));

@@ -18,7 +18,7 @@ import {
   type TaskRow,
   type TaskRunRow,
 } from "../database/schema.js";
-import { mapDomainEvent, mapRunEvent, now, retryContextLimits } from "./repository-codecs.js";
+import { mapDomainEvent, mapRunEvent, now } from "./repository-codecs.js";
 import type { EventfulResult } from "./repository-types.js";
 
 export class RepositoryBase {
@@ -173,24 +173,23 @@ export class RepositoryBase {
     if (run.status !== "FAILED" && run.status !== "BLOCKED" && run.status !== "BUDGET_PAUSED") {
       throw new Error("只有失败、阻塞或预算暂停的执行记录可以生成重试上下文");
     }
-    // 事件条数上限仍保留（避免历史累积无限增长），但单条 message 与 summary 都不再机械截断，
-    // 交由 @devloop/context 的 pipeline 按预算和类型统一压缩（PR4）。
     const events = this.handle.db
       .select({
         type: runEvents.type,
         message: runEvents.message,
         createdAt: runEvents.createdAt,
+        payloadJson: runEvents.payloadJson,
       })
       .from(runEvents)
       .where(eq(runEvents.runId, run.id))
       .orderBy(desc(runEvents.sequence))
-      .limit(retryContextLimits.eventCount)
       .all()
       .reverse()
       .map((event) => ({
         type: event.type,
         message: event.message,
         createdAt: event.createdAt,
+        payload: JSON.parse(event.payloadJson) as unknown,
       }));
     return {
       sourceRunId: run.id,

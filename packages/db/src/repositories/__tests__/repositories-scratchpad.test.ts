@@ -157,17 +157,16 @@ describe("ScratchpadRepository.purgeScratchpadOlderThan", () => {
   });
 });
 
-describe("ScratchpadRepository 单条 1 MB 上限", () => {
-  it("拒绝 > 1 MB 的 content", () => {
+describe("ScratchpadRepository 长内容", () => {
+  it("完整保存超过 1 MB 的 content", () => {
     const { repo, seed } = createRepositoryWithRun();
     const huge = "x".repeat(1_048_577);
-    expect(() =>
-      repo.saveScratchpad({
-        runId: seed.runId,
-        contentType: "TOOL_CALL",
-        contentText: huge,
-        originalTokens: 1,
-      }),
-    ).toThrow(/1 MB/);
+    const { key } = repo.saveScratchpad({
+      runId: seed.runId,
+      contentType: "TOOL_CALL",
+      contentText: huge,
+      originalTokens: 1,
+    });
+    expect(repo.loadScratchpad(key)?.contentText).toBe(huge);
   });
 });

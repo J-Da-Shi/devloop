@@ -11,7 +11,6 @@ import {
   isBlockedFailure,
   parseAgentResult,
   sanitizeEventData,
-  truncate,
 } from "../output/runner-output.js";
 import { buildTaskPrompt } from "../prompts/task-prompt.js";
 import type {
@@ -101,7 +100,7 @@ const describeStreamEvent = (event: Record<string, unknown>): string | null => {
           const inputRecord = asRecord(record?.input);
           const command = getString(inputRecord, "command");
           if (command) {
-            return `Claude Code 正在执行：${truncate(redact(command), 280)}`;
+            return `Claude Code 正在执行：${redact(command)}`;
           }
           return `Claude Code 正在调用工具：${name}`;
         }
@@ -117,29 +116,20 @@ const describeStreamEvent = (event: Record<string, unknown>): string | null => {
     if (subtype === "success") return "Claude Code 已完成本轮开发";
     if (subtype === "error_max_turns") return "Claude Code 达到最大轮次";
     const errorMessage = getString(event, "error") ?? getString(event, "message");
-    return truncate(redact(errorMessage ?? "Claude Code 执行失败"));
+    return redact(errorMessage ?? "Claude Code 执行失败");
   }
   return null;
 };
 
-const extractResultFromStream = (lines: string[]): string | null => {
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const trimmed = lines[index]?.trim();
-    if (!trimmed) continue;
-    try {
-      const event = asRecord(JSON.parse(trimmed) as unknown);
-      if (!event) continue;
-      if (getString(event, "type") === "result") {
-        const result = getString(event, "result");
-        if (typeof result === "string" && result.trim()) {
-          return result;
-        }
-      }
-    } catch {
-      // 忽略无法解析的行，继续向前找。
-    }
+const extractResultFromLine = (line: string): string | null => {
+  try {
+    const event = asRecord(JSON.parse(line.trim()) as unknown);
+    if (!event || getString(event, "type") !== "result") return null;
+    const result = getString(event, "result");
+    return result && result.trim() ? result : null;
+  } catch {
+    return null;
   }
-  return null;
 };
 
 interface ClaudeCodeAttemptOptions {
@@ -306,7 +296,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         emit({
           type: "runner.agent",
           message: "Claude Code 最终结果格式不符合要求，正在进行一次 JSON 修复",
-          data: { validationError: truncate(redact(validationError), 1_000) },
+          data: { validationError: redact(validationError) },
         });
 
         const repairAttempt = await this.runAttempt(input, emit, signal, {
@@ -332,7 +322,7 @@ export class ClaudeCodeRunner implements AgentRunner {
             repairError instanceof Error ? repairError.message : "修复结果仍然无法解析";
           return {
             outcome: "failed",
-            summary: `Claude Code 两次返回均不符合 AgentResult JSON 格式。首次错误：${truncate(redact(validationError), 500)}；修复后错误：${truncate(redact(repairValidationError), 500)}`,
+            summary: `Claude Code 两次返回均不符合 AgentResult JSON 格式。首次错误：${redact(validationError)}；修复后错误：${redact(repairValidationError)}`,
             risks: ["任务文件修改已保留在 Worktree 中，但没有可信的结构化执行结果。"],
           };
         }
@@ -354,7 +344,6 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
     signal.throwIfAborted();
     let lastCliError: string | null = null;
-    const streamLines: string[] = [];
     const streamInput = `${JSON.stringify({
       type: "user",
       message: { role: "user", content: options.prompt },
@@ -377,7 +366,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         detached: true,
         cancelSignal: signal,
         forceKillAfterDelay: 5_000,
-        maxBuffer: 10 * 1024 * 1024,
+        buffer: false,
       },
     );
     const processGroupId = subprocess.pid ?? null;
@@ -398,6 +387,8 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
 
     let pending = "";
+    let streamedResult: string | null = null;
+    let stderrOutput = "";
     let stalled = false;
     let stallTimer: NodeJS.Timeout | null = null;
     const resetStallWatchdog = () => {
@@ -418,12 +409,21 @@ export class ClaudeCodeRunner implements AgentRunner {
       const lines = pending.split(/\r?\n/);
       pending = lines.pop() ?? "";
       for (const line of lines) {
-        streamLines.push(line);
+        streamedResult = extractResultFromLine(line) ?? streamedResult;
         const parsedLine = this.handleStreamLine(line, emit);
         lastCliError = parsedLine ?? lastCliError;
       }
     });
-    subprocess.stderr?.on("data", resetStallWatchdog);
+    subprocess.stderr?.setEncoding("utf8");
+    subprocess.stderr?.on("data", (chunk: string) => {
+      resetStallWatchdog();
+      stderrOutput += chunk;
+      emit({
+        type: "runner.stderr",
+        message: redact(chunk),
+        data: { stream: "stderr" },
+      });
+    });
 
     emit({ type: "runner.agent", message: options.startMessage });
     resetStallWatchdog();
@@ -441,17 +441,17 @@ export class ClaudeCodeRunner implements AgentRunner {
       }
     })();
     if (pending.trim()) {
-      streamLines.push(pending);
+      streamedResult = extractResultFromLine(pending) ?? streamedResult;
       lastCliError = this.handleStreamLine(pending, emit) ?? lastCliError;
     }
     if (stalled) {
-      const stderr = typeof processResult.stderr === "string" ? processResult.stderr.trim() : "";
+      const stderr = stderrOutput.trim();
       const lastMessage = lastCliError ?? stderr;
       return {
         kind: "result",
         result: {
           outcome: "failed",
-          summary: `Claude Code 连续 ${this.formatStallTimeout()} 没有产生任何输出，疑似卡死，已自动终止。${lastMessage ? ` 最后信息：${truncate(redact(lastMessage), 500)}` : ""}`,
+          summary: `Claude Code 连续 ${this.formatStallTimeout()} 没有产生任何输出，疑似卡死，已自动终止。${lastMessage ? ` 最后信息：${redact(lastMessage)}` : ""}`,
           risks: ["Worktree 已保留，可在运行详情中继续诊断。"],
         },
       };
@@ -460,10 +460,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       throw new DOMException("Claude Code execution cancelled", "AbortError");
     }
     if (processResult.failed || processResult.exitCode !== 0) {
-      const stderr = typeof processResult.stderr === "string" ? processResult.stderr : "";
-      const message = truncate(
-        redact(lastCliError ?? (stderr.trim() || "Claude Code CLI 异常退出")),
-      );
+      const message = redact(lastCliError ?? (stderrOutput.trim() || "Claude Code CLI 异常退出"));
       const blocked = isBlockedFailure(message);
       return {
         kind: "result",
@@ -476,7 +473,6 @@ export class ClaudeCodeRunner implements AgentRunner {
       };
     }
 
-    const streamedResult = extractResultFromStream(streamLines);
     if (streamedResult !== null) {
       return { kind: "completed", output: streamedResult };
     }
@@ -488,7 +484,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         kind: "result",
         result: {
           outcome: "failed",
-          summary: `Claude Code 未生成可读取的最终结果：${truncate(redact(message), 500)}`,
+          summary: `Claude Code 未生成可读取的最终结果：${redact(message)}`,
           risks: ["Worktree 已保留，可在运行详情中继续诊断。"],
         },
       };
@@ -509,13 +505,11 @@ export class ClaudeCodeRunner implements AgentRunner {
       const event = asRecord(JSON.parse(trimmed) as unknown);
       if (!event) return null;
       const message = describeStreamEvent(event);
-      if (message) {
-        emit({
-          type: "runner.agent",
-          message,
-          data: { event: sanitizeEventData(event, redact) },
-        });
-      }
+      emit({
+        type: "runner.agent",
+        message: message ?? `Claude Code 事件：${getString(event, "type") ?? "未知事件"}`,
+        data: { event: sanitizeEventData(event, redact) },
+      });
       const type = getString(event, "type");
       const subtype = getString(event, "subtype");
       if (type === "result" && subtype && subtype !== "success") {
@@ -530,7 +524,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       emit({
         type: "runner.agent",
         message: "Claude Code 输出了一条无法解析的事件",
-        data: { raw: truncate(redact(trimmed), 8_000) },
+        data: { raw: redact(trimmed) },
       });
       return null;
     }

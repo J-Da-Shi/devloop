@@ -37,11 +37,6 @@ import type {
 } from "../database/schema.js";
 import type { TaskRevisionSpecSnapshot } from "./repository-types.js";
 
-const maxRetryContextEvents = 16;
-const maxRetryContextSummaryCharacters = 12_000;
-const maxRetryContextEventCharacters = 1_200;
-const maxRetryContextCharacters = 30_000;
-
 export const now = (): string => new Date().toISOString();
 
 export const parseProjectRunner = (value: unknown): ProjectRunner =>
@@ -142,11 +137,9 @@ export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["ret
     (sourceStatus !== "BLOCKED" && sourceStatus !== "BUDGET_PAUSED" && sourceStatus !== "FAILED") ||
     typeof record.summary !== "string" ||
     !record.summary ||
-    record.summary.length > maxRetryContextSummaryCharacters ||
     (baseCommit !== null && (typeof baseCommit !== "string" || !baseCommit.trim())) ||
     (resultCommit !== null && (typeof resultCommit !== "string" || !resultCommit.trim())) ||
-    !Array.isArray(events) ||
-    events.length > maxRetryContextEvents
+    !Array.isArray(events)
   ) {
     throw new Error("任务 Revision 重试上下文格式无效");
   }
@@ -160,7 +153,6 @@ export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["ret
       !eventRecord.type ||
       typeof eventRecord.message !== "string" ||
       !eventRecord.message ||
-      eventRecord.message.length > maxRetryContextEventCharacters ||
       typeof eventRecord.createdAt !== "string" ||
       !eventRecord.createdAt
     ) {
@@ -170,6 +162,7 @@ export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["ret
       type: eventRecord.type,
       message: eventRecord.message,
       createdAt: eventRecord.createdAt,
+      ...(eventRecord.payload === undefined ? {} : { payload: eventRecord.payload }),
     };
   });
   const sourceRunId = record.sourceRunId as string;
@@ -178,20 +171,6 @@ export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["ret
   const summary = record.summary as string;
   const normalizedBaseCommit = baseCommit as string | null;
   const normalizedResultCommit = resultCommit as string | null;
-  const characterCount =
-    sourceRunId.length +
-    sourceRunner.length +
-    sourceFinishedAt.length +
-    summary.length +
-    (normalizedBaseCommit?.length ?? 0) +
-    (normalizedResultCommit?.length ?? 0) +
-    parsedEvents.reduce(
-      (total, event) => total + event.type.length + event.message.length + event.createdAt.length,
-      0,
-    );
-  if (characterCount > maxRetryContextCharacters) {
-    throw new Error("任务 Revision 重试上下文超过大小限制");
-  }
   return {
     sourceRunId,
     sourceStatus,
@@ -430,9 +409,3 @@ export const mapDomainEvent = (row: DomainEventRow): DomainEvent => ({
   payload: JSON.parse(row.payloadJson) as unknown,
   createdAt: row.createdAt,
 });
-
-export const retryContextLimits = {
-  eventCount: maxRetryContextEvents,
-  eventCharacters: maxRetryContextEventCharacters,
-  summaryCharacters: maxRetryContextSummaryCharacters,
-} as const;
