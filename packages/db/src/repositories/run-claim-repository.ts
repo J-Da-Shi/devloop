@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  agentPlanSchema,
+  agentVerificationSchema,
   assertTaskTransition,
+  type AgentPlan,
+  type AgentVerification,
   type RunSkillSnapshot,
   type RunStatus,
   type TaskRun,
@@ -97,6 +101,8 @@ export class RunClaimRepository extends TaskRepository {
           pushedCommit: null,
           runInputHash,
           skillSnapshotJson: null,
+          planJson: null,
+          verificationJson: null,
           summary: null,
           budgetEstimatedCostCents: 0,
           budgetElapsedMs: 0,
@@ -377,6 +383,90 @@ export class RunClaimRepository extends TaskRepository {
         runId,
         status,
         message,
+      });
+      return { value: mapRun(row), events: [event], replayed: false };
+    })();
+  }
+
+  setRunPlan(runId: string, executionToken: string, plan: AgentPlan): EventfulResult<TaskRun> {
+    return this.handle.sqlite.transaction(() => {
+      const normalizedPlan = agentPlanSchema.parse(plan);
+      const current = this.requireRunRow(runId);
+      if (current.executionToken !== executionToken || current.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
+      if (current.planJson !== null) {
+        throw new Error("当前 Run 的 Agent 计划已经固定");
+      }
+      const row = this.handle.db
+        .update(taskRuns)
+        .set({ planJson: JSON.stringify(normalizedPlan) })
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.planJson),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) throw new Error("当前 Run 的执行令牌已经失效");
+      this.insertRunEvent(runId, "run.agent.planning.completed", "规划 Agent 已生成执行计划", {
+        role: "planner",
+        plan: normalizedPlan,
+      });
+      const event = this.insertDomainEvent("run", runId, "run.step_changed", {
+        runId,
+        status: row.status,
+        role: "planner",
+        message: "规划 Agent 已完成",
+      });
+      return { value: mapRun(row), events: [event], replayed: false };
+    })();
+  }
+
+  setRunVerification(
+    runId: string,
+    executionToken: string,
+    verification: AgentVerification,
+  ): EventfulResult<TaskRun> {
+    return this.handle.sqlite.transaction(() => {
+      const normalizedVerification = agentVerificationSchema.parse(verification);
+      const current = this.requireRunRow(runId);
+      if (current.executionToken !== executionToken || current.finishedAt !== null) {
+        throw new Error("当前 Run 的执行令牌已经失效");
+      }
+      const row = this.handle.db
+        .update(taskRuns)
+        .set({ verificationJson: JSON.stringify(normalizedVerification) })
+        .where(
+          and(
+            eq(taskRuns.id, runId),
+            eq(taskRuns.executionToken, executionToken),
+            isNull(taskRuns.finishedAt),
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) throw new Error("当前 Run 的执行令牌已经失效");
+      this.insertRunEvent(
+        runId,
+        "run.agent.verification.completed",
+        current.verificationJson === null
+          ? "验收 Agent 已生成验收报告"
+          : "验收 Agent 已更新验收报告",
+        {
+          role: "verifier",
+          verification: normalizedVerification,
+          updated: current.verificationJson !== null,
+        },
+      );
+      const event = this.insertDomainEvent("run", runId, "run.step_changed", {
+        runId,
+        status: row.status,
+        role: "verifier",
+        message: "验收 Agent 已完成",
       });
       return { value: mapRun(row), events: [event], replayed: false };
     })();

@@ -134,7 +134,7 @@ const describeJsonEvent = (event: Record<string, unknown>): string | null => {
 interface CodexAttemptOptions {
   outputPath: string;
   prompt: string;
-  sandbox: "workspace-write" | "read-only";
+  sandbox?: "workspace-write" | "read-only";
   disableTools?: boolean;
   startMessage: string;
 }
@@ -217,6 +217,12 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner 需要独立 Worktree");
     }
 
+    const role = input.role ?? "executor";
+    const sandbox =
+      options.sandbox ??
+      (input.mode === "conflict-resolution" || role === "executor"
+        ? "workspace-write"
+        : "read-only");
     const outputPath =
       options.outputPath ?? join(input.worktreePath, ".devloop-runtime", `${input.runId}.json`);
     const argumentsList = [
@@ -225,7 +231,7 @@ export class CodexRunner implements AgentRunner {
       "--output-last-message",
       outputPath,
       "--sandbox",
-      options.sandbox ?? "workspace-write",
+      sandbox,
       "--ephemeral",
       "--ignore-rules",
       "--config",
@@ -310,7 +316,6 @@ export class CodexRunner implements AgentRunner {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
         prompt: await buildCodexPrompt(input, outputSchema),
-        sandbox: "workspace-write",
         startMessage: "正在启动 Codex CLI",
       });
       if (initialAttempt.kind === "result") {
@@ -318,7 +323,7 @@ export class CodexRunner implements AgentRunner {
       }
 
       try {
-        return parseAgentResult("Codex", initialAttempt.output);
+        return parseAgentResult("Codex", initialAttempt.output, input.role ?? "executor");
       } catch (error) {
         const validationError = error instanceof Error ? error.message : "Codex 最终结果无法解析";
         emit({
@@ -339,7 +344,7 @@ export class CodexRunner implements AgentRunner {
         }
 
         try {
-          const result = parseAgentResult("Codex", repairAttempt.output);
+          const result = parseAgentResult("Codex", repairAttempt.output, input.role ?? "executor");
           emit({ type: "runner.agent", message: "Codex JSON 格式修复完成" });
           return result;
         } catch (repairError) {
@@ -375,7 +380,7 @@ export class CodexRunner implements AgentRunner {
         ...this.executableArguments,
         ...this.buildArguments(input, {
           outputPath: options.outputPath,
-          sandbox: options.sandbox,
+          ...(options.sandbox ? { sandbox: options.sandbox } : {}),
           disableTools: options.disableTools ?? false,
         }),
       ],

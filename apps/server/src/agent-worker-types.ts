@@ -13,6 +13,8 @@ export interface ContextBudgets {
 }
 
 export interface AgentWorkerOptions {
+  /** 启用规划、执行、验收三个 Agent 阶段；关闭时保持历史单阶段兼容行为。 */
+  rolePipelineEnabled?: boolean;
   claimDelayMs?: number;
   now?: () => number;
   defaultRunnerId?: string;
@@ -34,6 +36,8 @@ export interface AgentWorkerOptions {
   scratchpad?: ScratchpadStore;
   llmCompressor?: LlmCompressor;
   contextBudgets?: ContextBudgets;
+  /** 验收失败后在同一 Run 内回退执行阶段的最大修复轮次。 */
+  rolePipelineMaxRepairAttempts?: number;
   budgetCheckIntervalMs?: number;
   budgetNow?: () => number;
   managedRetryDelayMs?: number;

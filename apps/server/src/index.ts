@@ -72,6 +72,7 @@ async function main(): Promise<void> {
     // 忽略：不影响主流程
   }
   const worker = new AgentWorker(repository, runnerRegistry, eventBus, config.outputSchemaPath, {
+    rolePipelineEnabled: true,
     claimDelayMs: config.agentClaimDelayMs,
     defaultRunnerId,
     runnerCapabilities,

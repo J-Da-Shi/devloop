@@ -1,5 +1,13 @@
 import type { LlmCompressor, ScratchpadStore } from "@devloop/context";
-import type { PreviewConfig, RetryContext, RunnerCapabilities, TaskType } from "@devloop/shared";
+import type {
+  AgentPlan,
+  AgentRole,
+  AgentVerification,
+  PreviewConfig,
+  RetryContext,
+  RunnerCapabilities,
+  TaskType,
+} from "@devloop/shared";
 
 export interface RunnerSkill {
   id: string;
@@ -30,6 +38,14 @@ export interface RunnerInput {
   goal: string;
   acceptanceCriteria: string[];
   skills: RunnerSkill[];
+  /** 当前调用的 Agent 职责；省略时兼容为执行 Agent。 */
+  role?: AgentRole;
+  /** 规划 Agent 已确认的实施方案，只有执行和验收阶段会携带。 */
+  plan?: AgentPlan | null;
+  /** 执行 Agent 的结构化结果，验收 Agent 用它作为待核对的声明。 */
+  executionResult?: RunnerResult | null;
+  /** 验收失败后回传给修复执行 Agent 的结构化报告。 */
+  verificationFeedback?: AgentVerification | null;
   reviewFeedback?: string | null;
   retryContext?: RetryContext | null;
   mode?: "implementation" | "conflict-resolution";
@@ -61,6 +77,8 @@ export interface RunnerResult {
   }>;
   blockedReason?: string | null;
   preview?: PreviewConfig | null;
+  plan?: AgentPlan | null;
+  verification?: AgentVerification | null;
 }
 
 export interface RunnerHandle {

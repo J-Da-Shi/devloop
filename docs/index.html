@@ -116,7 +116,7 @@
               Revision。平台给出预算范围和停止上限，然后托管后续执行与恢复。
             </p>
             <div class="mini-flow">
-              <span>目标</span><b>→</b><span>托管</span><b>→</b><span>验收</span>
+              <span>规划</span><b>→</b><span>执行</span><b>→</b><span>验收</span>
             </div>
           </article>
           <article class="capability">
@@ -195,14 +195,24 @@
               </div>
             </div>
             <div class="scope-row" role="listitem">
-              <div class="scope-label"><span>05</span><strong>预览与验证</strong></div>
+              <div class="scope-label"><span>05</span><strong>Agent 职责</strong></div>
+              <div class="scope-detail">
+                <strong>PLAN · EXECUTE · VERIFY</strong>
+                <p>
+                  规划 Agent 只读生成计划和规划验收标准，执行 Agent 修改 Worktree，验收 Agent
+                  独立检查两组标准；失败时把报告回传执行 Agent 修复并重新验收。
+                </p>
+              </div>
+            </div>
+            <div class="scope-row" role="listitem">
+              <div class="scope-label"><span>06</span><strong>预览与验证</strong></div>
               <div class="scope-detail">
                 <strong>AUTO PREVIEW · PLAYWRIGHT</strong>
                 <p>从结果 Commit 自动识别常见 Web 启动方式，附上截图、控制台错误和交互测试结果。</p>
               </div>
             </div>
             <div class="scope-row" role="listitem">
-              <div class="scope-label"><span>06</span><strong>交付控制</strong></div>
+              <div class="scope-label"><span>07</span><strong>交付控制</strong></div>
               <div class="scope-detail">
                 <strong>DIFF · CONFLICTS · ITERATION</strong>
                 <p>逐文件审核 Diff，处理或委托 Agent 解决冲突；驳回后从上一轮 Commit 继续迭代。</p>

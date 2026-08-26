@@ -108,6 +108,28 @@ describe("CodexRunner", () => {
     expect(await buildCodexPrompt(researchInput, "{}")).toContain("最终 summary 必须直接包含完整");
   });
 
+  it("为规划和验收 Agent 默认启用只读沙箱", () => {
+    const runner = new CodexRunner({ ignoreUserConfig: true });
+    const controller = new AbortController();
+    const base = {
+      runId: "run",
+      taskId: "task",
+      title: "Task",
+      goal: "Goal",
+      acceptanceCriteria: ["Done"],
+      skills: [],
+      worktreePath: "/tmp/worktree",
+      outputSchemaPath: "/tmp/schema.json",
+      signal: controller.signal,
+    };
+    expect(runner.buildArguments({ ...base, role: "planner" })).toContain("read-only");
+    expect(runner.buildArguments({ ...base, role: "verifier" })).toContain("read-only");
+    expect(runner.buildArguments({ ...base, role: "executor" })).toContain("workspace-write");
+    expect(
+      runner.buildArguments({ ...base, role: "verifier", mode: "conflict-resolution" }),
+    ).toContain("workspace-write");
+  });
+
   it("解析 Codex JSONL 事件和结构化最终结果", async () => {
     const root = await mkdtemp(join(tmpdir(), "devloop-codex-runner-"));
     temporaryDirectories.push(root);

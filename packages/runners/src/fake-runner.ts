@@ -54,14 +54,19 @@ export class FakeRunner implements AgentRunner {
     signal: AbortSignal,
     emit: (event: RunnerEvent) => void,
   ): Promise<RunnerResult> {
+    const role = input.role ?? "executor";
     const steps: RunnerEvent[] = [
       { type: "runner.preparing", message: "Preparing isolated execution context" },
       {
         type: "runner.agent",
         message:
-          input.taskType === "RESEARCH"
-            ? `Researching ${input.title}`
-            : `Implementing ${input.title}`,
+          role === "planner"
+            ? `Planning ${input.title}`
+            : role === "verifier"
+              ? `Verifying ${input.title}`
+              : input.taskType === "RESEARCH"
+                ? `Researching ${input.title}`
+                : `Implementing ${input.title}`,
       },
       { type: "runner.verifying", message: "Running configured verification checks" },
       { type: "runner.review", message: "Preparing review package" },
@@ -75,7 +80,7 @@ export class FakeRunner implements AgentRunner {
       await wait(this.stepDelayMs, signal);
     }
 
-    return {
+    const result: RunnerResult = {
       outcome: "succeeded",
       summary:
         input.taskType === "RESEARCH"
@@ -83,5 +88,37 @@ export class FakeRunner implements AgentRunner {
           : `FakeRunner completed the architecture pass for ${input.title}.`,
       risks: ["No repository files were changed by the fake runner."],
     };
+    if (role === "planner") {
+      result.plan = {
+        summary: `FakeRunner planned ${input.title}.`,
+        steps: [
+          {
+            id: "step-1",
+            description: "完成任务目标并保持现有行为兼容",
+            files: [],
+            verification: "运行现有测试并核对验收标准",
+          },
+        ],
+        acceptanceCriteria: input.acceptanceCriteria.length
+          ? [...input.acceptanceCriteria]
+          : ["任务目标已完成并有对应验证证据"],
+        assumptions: ["FakeRunner 不会修改仓库文件"],
+        risks: [],
+      };
+    }
+    if (role === "verifier") {
+      result.verification = {
+        status: "passed",
+        summary: `FakeRunner verified ${input.title}.`,
+        criteria: input.acceptanceCriteria.map((criterion) => ({
+          criterion,
+          status: "passed" as const,
+          evidence: "FakeRunner verification",
+        })),
+        checks: [],
+        issues: [],
+      };
+    }
+    return result;
   }
 }

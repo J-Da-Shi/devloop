@@ -60,6 +60,7 @@ DevLoop is a local-first AI-managed delivery workbench. It runs every Agent exec
 | Project sources      | SSH remote repositories or an existing local Git directory on the desktop                                               |
 | Runners              | Codex CLI, Claude Code CLI, and Fake Runner; configure 1-10 concurrent workers                                          |
 | Context              | Skill version snapshots, revisions, failed-run context, and continued iterations after rejection                        |
+| Agent roles          | Planner, executor, and verifier stages; plans and verification reports persist with each Run                            |
 | Managed execution    | Creation-time estimates, 80% warnings, hard-limit pauses, backoff retries, and Git-checkpoint recovery                  |
 | Delivery control     | Isolated worktrees, result commits, per-file diffs, conflict previews, and human or Agent-assisted resolution           |
 | Automatic validation | Common Web start-command detection, isolated previews, Playwright, screenshots, console errors, and interaction results |
@@ -75,7 +76,7 @@ Task objective and acceptance criteria
 Estimated range + hard limit
                 |
                 v
-Codex CLI / Claude Code CLI in an isolated worktree
+Planner Agent → Executor Agent → Verifier Agent (one isolated worktree)
                 |
                 v
 Result commit + diff + execution log
@@ -91,16 +92,20 @@ Apply and push the target branch, or continue from this result
 
 Choose Codex CLI or Claude Code CLI per project. The worker supports 1-10 concurrent tasks. Development tasks run in their own worktrees, while research tasks enter review with structured conclusions. DevLoop also retains task revisions, Skill snapshots, and run events, so later investigation does not depend on a terminal transcript.
 
+In managed mode, the same project Runner (Codex CLI, Claude Code CLI, or Fake Runner) executes the three roles in order: the read-only Planner produces a plan and planning acceptance criteria, the Executor applies changes in the worktree, and the read-only Verifier checks the diff, tests, and both original and planning criteria. When verification fails or omits any criterion, its report is sent back to the Executor for repair and re-verification in the same Run, up to three repair attempts by default. Only a blocked result or an exhausted repair loop ends the Run without review.
+
 <a id="review-gate"></a>
 
 ## Review is the delivery gate
 
-| Stage        | DevLoop owns                                         | You own                                            |
-| ------------ | ---------------------------------------------------- | -------------------------------------------------- |
-| Execution    | CLI scheduling, event capture, result commits        | Objectives, acceptance criteria, runner choice     |
-| Validation   | Isolated previews, Playwright, screenshots, reports  | Product-level judgment                             |
-| Review       | Changed files, patches, conflicts, Agent resolutions | Approval, rejection, or manual conflict resolution |
-| Branch write | Target-state verification, application, safe push    | When a result may enter the branch                 |
+| Stage        | DevLoop owns                                                  | You own                                            |
+| ------------ | ------------------------------------------------------------- | -------------------------------------------------- |
+| Planning     | Read-only analysis, an actionable plan, and planning criteria | Objectives, acceptance criteria, runner choice     |
+| Execution    | Run the CLI from the plan, capture events, commit results     | Objectives, acceptance criteria, runner choice     |
+| Validation   | Isolated previews, Playwright, screenshots, reports           | Product-level judgment                             |
+| Verification | Independently check the diff, tests, and each criterion       | Decide whether to approve delivery                 |
+| Review       | Changed files, patches, conflicts, Agent resolutions          | Approval, rejection, or manual conflict resolution |
+| Branch write | Target-state verification, application, safe push             | When a result may enter the branch                 |
 
 When the target branch changes during execution, DevLoop produces a conflict preview. Resolve it in the UI or ask the Agent for a proposal before review; unresolved conflicts cannot be written to the target branch. A rejected task continues from the previous result commit and realigns with the latest target branch.
 
