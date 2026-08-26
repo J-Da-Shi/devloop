@@ -225,6 +225,7 @@ export interface RetryContextEvent {
   type: string;
   message: string;
   createdAt: string;
+  payload?: unknown;
 }
 
 /**

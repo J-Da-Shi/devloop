@@ -18,7 +18,6 @@ const rendererUrl =
   process.env.DEVLOOP_WEB_URL ?? (app.isPackaged ? serviceUrl : "http://127.0.0.1:5173");
 const trustedOrigins = new Set([new URL(serviceUrl).origin, new URL(rendererUrl).origin]);
 const bundledRuntimeDirectoryName = "runtime-bundle";
-const maxServiceLogLength = 12_000;
 const desktopIconPath = fileURLToPath(
   new URL("../../assets/devloop-app-icon.png", import.meta.url),
 );
@@ -34,7 +33,7 @@ const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function appendServiceLog(source: string, value: unknown): void {
-  bundledServiceLog = `${bundledServiceLog}${source}: ${String(value)}`.slice(-maxServiceLogLength);
+  bundledServiceLog += `${source}: ${String(value)}`;
 }
 
 function buildBundledServiceEnvironment(runtimeRoot: string): NodeJS.ProcessEnv {

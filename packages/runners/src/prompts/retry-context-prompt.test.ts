@@ -11,7 +11,12 @@ const sampleRetryContext = {
   resultCommit: null,
   events: [
     { type: "run.playwright.failed", message: "断言失败", createdAt: "2026-08-20T00:00:01Z" },
-    { type: "runner.command", message: "npm test", createdAt: "2026-08-20T00:00:00Z" },
+    {
+      type: "runner.command",
+      message: "npm test",
+      createdAt: "2026-08-20T00:00:00Z",
+      payload: { command: "npm test", output: "完整命令输出" },
+    },
   ],
 };
 
@@ -29,6 +34,7 @@ describe("buildRetryContextFragments", () => {
     expect(failedFrag?.metadata?.source).toBe("event:run.playwright.failed");
     const cmdFrag = specs.find((s) => s.text.includes("npm test"));
     expect(cmdFrag?.metadata?.source).toBe("event:runner.command");
+    expect(cmdFrag?.text).toContain('"output": "完整命令输出"');
   });
 
   it("头尾说明段带 template.rules", () => {

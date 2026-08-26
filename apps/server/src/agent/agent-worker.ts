@@ -25,6 +25,7 @@ import { executeRolePipeline, runAgentStage } from "./agent-role-pipeline.js";
 const phaseByEvent: Record<string, RunStatus> = {
   "runner.preparing": "PREPARING",
   "runner.agent": "AGENT_RUNNING",
+  "runner.stderr": "AGENT_RUNNING",
   "runner.verifying": "VERIFYING",
   "runner.review": "PREPARING_REVIEW",
   "run.agent.planning.started": "AGENT_RUNNING",

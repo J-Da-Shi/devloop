@@ -59,7 +59,7 @@ DevLoop is a local-first AI-managed delivery workbench. It runs every Agent exec
 | Task types           | `DEVELOPMENT` code delivery and `RESEARCH` structured findings                                                          |
 | Project sources      | SSH remote repositories or an existing local Git directory on the desktop                                               |
 | Runners              | Codex CLI, Claude Code CLI, and Fake Runner; configure 1-10 concurrent workers                                          |
-| Context              | Skill version snapshots, revisions, failed-run context, and continued iterations after rejection                        |
+| Context              | Skill version snapshots, revisions, complete failed-run events, and continued iterations after rejection                |
 | Agent roles          | Planner, executor, and verifier stages; plans and verification reports persist with each Run                            |
 | Managed execution    | Creation-time estimates, 80% warnings, hard-limit pauses, backoff retries, and Git-checkpoint recovery                  |
 | Delivery control     | Isolated worktrees, result commits, per-file diffs, conflict previews, and human or Agent-assisted resolution           |
@@ -90,7 +90,7 @@ Human review / conflict resolution
 Apply and push the target branch, or continue from this result
 ```
 
-Choose Codex CLI or Claude Code CLI per project. The worker supports 1-10 concurrent tasks. Development tasks run in their own worktrees, while research tasks enter review with structured conclusions. DevLoop also retains task revisions, Skill snapshots, and run events, so later investigation does not depend on a terminal transcript.
+Choose Codex CLI or Claude Code CLI per project. The worker supports 1-10 concurrent tasks. Development tasks run in their own worktrees, while research tasks enter review with structured conclusions. DevLoop also retains task revisions, Skill snapshots, and complete run events, so later investigation does not depend on a terminal transcript. Runner stdout/stderr, event messages and payloads, preview command output, and Playwright output are not truncated by character count, array length, or nesting depth.
 
 In managed mode, the same project Runner (Codex CLI, Claude Code CLI, or Fake Runner) executes the three roles in order: the read-only Planner produces a plan and planning acceptance criteria, the Executor applies changes in the worktree, and the read-only Verifier checks the diff, tests, and both original and planning criteria. When verification fails or omits any criterion, its report is sent back to the Executor for repair and re-verification in the same Run, up to three repair attempts by default. Only a blocked result or an exhausted repair loop ends the Run without review.
 
@@ -191,7 +191,7 @@ A managed task follows this loop:
 | Resume        | After the user raises the hard limit or narrows the objective, the next run continues from the latest checkpoint and context   |
 | Completion    | Creates a result commit, checks conflicts, runs available preview validation, and enters review without writing the target ref |
 
-The settings page controls the maximum per-task budget, warning percentage, estimation margin, automatic retry count, and hourly estimate rates for Codex and Claude Code. A CLI inactivity timeout only detects abnormal stalls; it is not a total task duration, so a healthy long-running task is not stopped merely for taking longer.
+The settings page controls the maximum per-task budget, warning percentage, estimation margin, automatic retry count, and hourly estimate rates for Codex and Claude Code. A CLI inactivity timeout only detects abnormal stalls; it is not a total task duration, so a healthy long-running task is not stopped for taking longer or exceeding a fixed output size. An automatic retry revision preserves every event and payload from the failed Run. The prompt sent to the next Agent may still be compressed to fit the Codex or Claude model context window, while the original database content remains intact and temporary scratchpad entries have no per-item content-size limit while in use.
 
 Current cost values are estimates based on Runner elapsed time and configured rates, not provider invoices. Initial estimates use task-shape heuristics. They are marked low-confidence and intentionally conservative when complexity is unclear; use measured run consumption to tune later limits and rates.
 

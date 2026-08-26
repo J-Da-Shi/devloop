@@ -43,7 +43,14 @@ export const buildRetryContextFragments = (
       ageTurns = Math.max(0, Math.floor(hours / 24));
     }
     specs.push({
-      text: `[${event.createdAt}] ${event.type}: ${event.message}`,
+      text: [
+        `[${event.createdAt}] ${event.type}: ${event.message}`,
+        event.payload === undefined
+          ? null
+          : `事件数据：\n${JSON.stringify(event.payload, null, 2)}`,
+      ]
+        .filter((value): value is string => value !== null)
+        .join("\n"),
       metadata: { source: `event:${event.type}`, ageTurns },
       id: `retry-event-${index}`,
     });

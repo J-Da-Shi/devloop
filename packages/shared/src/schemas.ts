@@ -50,37 +50,37 @@ export const runPreviewConfigSchema = previewConfigSchema.extend({
 
 export const agentPlanStepSchema = z.object({
   id: z.string().trim().min(1).max(80),
-  description: z.string().trim().min(1).max(2_000),
-  files: z.array(z.string().trim().min(1).max(1_024)).max(50),
-  verification: z.string().trim().min(1).max(1_000),
+  description: z.string().trim().min(1),
+  files: z.array(z.string().trim().min(1)),
+  verification: z.string().trim().min(1),
 });
 
 export const agentPlanSchema: z.ZodType<AgentPlan> = z.object({
-  summary: z.string().trim().min(1).max(8_000),
-  steps: z.array(agentPlanStepSchema).min(1).max(30),
-  acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).min(1).max(20),
-  assumptions: z.array(z.string().trim().min(1).max(1_000)).max(20),
-  risks: z.array(z.string().trim().min(1).max(1_000)).max(20),
+  summary: z.string().trim().min(1),
+  steps: z.array(agentPlanStepSchema).min(1),
+  acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
+  assumptions: z.array(z.string().trim().min(1)),
+  risks: z.array(z.string().trim().min(1)),
 });
 
 export const agentVerificationCheckSchema = z.object({
-  command: z.string().trim().min(1).max(2_000),
+  command: z.string().trim().min(1),
   status: z.enum(["passed", "failed", "not_run"]),
-  evidence: z.string().trim().min(1).max(4_000),
+  evidence: z.string().trim().min(1),
 });
 
 export const agentVerificationSchema: z.ZodType<AgentVerification> = z.object({
   status: z.enum(["passed", "failed", "blocked"]),
-  summary: z.string().trim().min(1).max(8_000),
+  summary: z.string().trim().min(1),
   criteria: z.array(
     z.object({
-      criterion: z.string().trim().min(1).max(1_000),
+      criterion: z.string().trim().min(1),
       status: z.enum(["passed", "failed", "not_verifiable"]),
-      evidence: z.string().trim().min(1).max(4_000),
+      evidence: z.string().trim().min(1),
     }),
   ),
-  checks: z.array(agentVerificationCheckSchema).max(30),
-  issues: z.array(z.string().trim().min(1).max(2_000)).max(30),
+  checks: z.array(agentVerificationCheckSchema),
+  issues: z.array(z.string().trim().min(1)),
 });
 
 export const playwrightValidationReportSchema: z.ZodType<PlaywrightValidationReport> = z.object({

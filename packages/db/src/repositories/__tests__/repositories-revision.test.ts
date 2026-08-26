@@ -124,6 +124,14 @@ it("失败重试会冻结失败诊断，并从已保存的结果 Commit 继续",
   repository.recordRunEvent(firstClaim!.value.run.id, "runner.command", "pnpm test 退出码 1", {
     command: "pnpm test",
   });
+  for (let index = 0; index < 120; index += 1) {
+    repository.recordRunEvent(
+      firstClaim!.value.run.id,
+      "runner.chunk",
+      `完整日志 ${index} ${"x".repeat(2_000)}`,
+      { index, output: `原始输出 ${index}` },
+    );
+  }
   const failed = repository.failRun(
     firstClaim!.value.run.id,
     firstClaim!.value.run.executionToken,
@@ -155,6 +163,14 @@ it("失败重试会冻结失败诊断，并从已保存的结果 Commit 继续",
       expect.objectContaining({ type: "runner.command", message: "pnpm test 退出码 1" }),
       expect.objectContaining({ type: "run.failed", message: "测试失败：缺少异常路径断言" }),
     ]),
+  );
+  expect(retryRevision?.retryContext?.events.length).toBeGreaterThan(120);
+  expect(retryRevision?.retryContext?.events).toContainEqual(
+    expect.objectContaining({
+      type: "runner.chunk",
+      message: `完整日志 119 ${"x".repeat(2_000)}`,
+      payload: { index: 119, output: "原始输出 119" },
+    }),
   );
 
   const retryClaim = repository.claimNextTask({ readyBefore: "9999-12-31T23:59:59.999Z" });

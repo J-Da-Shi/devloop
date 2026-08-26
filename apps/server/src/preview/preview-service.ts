@@ -47,8 +47,6 @@ interface PreviewSession extends ActivePreview {
   cleanupPromise: Promise<void> | null;
 }
 
-const maxPreviewLogLength = 24_000;
-
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 
@@ -236,9 +234,7 @@ export class PreviewService {
       };
       session = createdSession;
       const appendLog = (source: string, value: unknown): void => {
-        createdSession.logs = `${createdSession.logs}${source}: ${String(value)}`.slice(
-          -maxPreviewLogLength,
-        );
+        createdSession.logs += `${source}: ${String(value)}`;
       };
       child.stdout?.on("data", (chunk) => appendLog("stdout", chunk));
       child.stderr?.on("data", (chunk) => appendLog("stderr", chunk));
@@ -375,7 +371,7 @@ export class PreviewService {
       let pendingError: Error | null = null;
 
       const appendOutput = (source: string, value: unknown): void => {
-        output = `${output}${source}: ${String(value)}`.slice(-maxPreviewLogLength);
+        output += `${source}: ${String(value)}`;
       };
       const abort = (): void => {
         const reason = signal?.reason;

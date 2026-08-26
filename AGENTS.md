@@ -121,6 +121,7 @@ pnpm --filter @devloop/web preview
 - Worker 的领取、并发、取消、重试和进程组终止必须保持可观测；不要吞掉 AbortSignal、退出码或原始日志。
 - Runner 适配必须通过 `packages/runners` 的统一接口，Codex、Claude 和 Fake Runner 不得在页面或 API 路由中直接调用。
 - CLI 的“无输出停滞时间”不是任务总时限。除非检测到异常、死循环、取消或配置的停滞超时，否则不要提前终止正常执行。
+- Runner stdout/stderr、运行事件 message/payload、失败上下文和预览验证输出在处理和记录时不得按字符数、数组条数或嵌套深度截断；展示层需要控制性能时使用按需展开或虚拟滚动，不修改原始数据。
 - 执行结果、失败上下文、Skill 快照和 Revision 要保持可追溯；重试和连续迭代不能丢失上一轮结果 Commit。
 - 预览与 Playwright 运行在结果 Commit 的隔离环境中，不要把 DevLoop 的密钥、Token 或私有环境变量透传给项目进程。
 

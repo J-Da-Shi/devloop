@@ -166,6 +166,7 @@ if (!isRepair && prompt.includes("处理审核反馈") && (!prompt.includes("必
 if (!isRepair && prompt.includes("一次性 Git Worktree") && (!prompt.includes("- README.md") || !prompt.includes("不要运行 git add、git rm") || !prompt.includes("统一暂存并校验冲突文件") || !prompt.includes("不要创建 Git commit") || !prompt.includes("Skill 1: frontend-quality (v2)") || !prompt.includes("检查响应式布局"))) process.exit(6);
 if ((!isRepair && !prompt.includes("实现真实执行")) || outputIndex < 0) process.exit(2);
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "future.event", payload: { retained: true } }) + "\\n");
 if (prompt.includes("上游失败")) {
   process.stdout.write(JSON.stringify({ type: "error", message: "502 Bad Gateway: upstream unavailable" }) + "\\n");
   process.exit(1);
@@ -173,6 +174,9 @@ if (prompt.includes("上游失败")) {
 if (prompt.includes("等待取消")) {
   setInterval(() => undefined, 1000);
   await new Promise(() => undefined);
+}
+if (prompt.includes("大量日志")) {
+  process.stderr.write("x".repeat(11 * 1024 * 1024));
 }
 if (prompt.includes("持续进展")) {
   for (let index = 0; index < 4; index += 1) {
@@ -256,8 +260,29 @@ process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
       preview: { workingDirectory: "apps/web" },
     });
     expect(events).toContain("Codex 会话已启动");
+    expect(events).toContain("Codex 事件：future.event");
     expect(events).toContain("Codex 正在执行：pnpm test");
     expect(events).toContain("Codex 已完成本轮开发");
+
+    let stderrCharacters = 0;
+    const largeOutputHandle = runner.start(
+      {
+        runId: "large-output-run",
+        taskId: "task",
+        title: "真实执行",
+        goal: "实现真实执行并产生大量日志",
+        acceptanceCriteria: ["完成开发"],
+        skills: [],
+        worktreePath,
+        outputSchemaPath,
+        signal: new AbortController().signal,
+      },
+      (event) => {
+        if (event.type === "runner.stderr") stderrCharacters += event.message.length;
+      },
+    );
+    await expect(largeOutputHandle.result).resolves.toMatchObject({ outcome: "succeeded" });
+    expect(stderrCharacters).toBe(11 * 1024 * 1024);
 
     const runtimeCleanupHandle = runner.start(
       {

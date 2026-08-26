@@ -21,14 +21,9 @@ export interface SaveScratchpadInput {
   now?: number;
 }
 
-const MAX_CONTENT_BYTES = 1_048_576; // 1 MB
-
 export class ScratchpadRepository extends ManagedDeliveryRepository {
   saveScratchpad(input: SaveScratchpadInput): { key: string } {
     const sizeBytes = Buffer.byteLength(input.contentText, "utf8");
-    if (sizeBytes > MAX_CONTENT_BYTES) {
-      throw new Error("scratchpad 单条 content 超过 1 MB 上限");
-    }
     const now = input.now ?? Date.now();
     return this.handle.sqlite.transaction(() => {
       const row = this.handle.db

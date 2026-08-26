@@ -107,4 +107,52 @@ describe("PlaywrightValidationService", () => {
     expect(stopped).toEqual([previewId]);
     expect(reports).toEqual([report]);
   });
+
+  it("完整保留超过 48,000 字符的自定义测试输出", async () => {
+    const reports: PlaywrightValidationReport[] = [];
+    const artifactService = {
+      writeValidationReport: async (_runId: string, report: PlaywrightValidationReport) => {
+        reports.push(report);
+        return {};
+      },
+    } as unknown as ArtifactService;
+    const previewService = {
+      start: async () => ({
+        id: crypto.randomUUID(),
+        runId: "run-id",
+        url: "http://127.0.0.1:45678",
+        status: "running",
+        startedAt: new Date().toISOString(),
+        workingDirectory: "/tmp",
+        configuration: {
+          source: "detected",
+          command: "npm run dev -- --host 127.0.0.1 --port {{port}}",
+          workingDirectory: ".",
+          healthPath: "/",
+        },
+      }),
+      stop: async () => true,
+    } as unknown as PreviewService;
+    const service = new PlaywrightValidationService(
+      previewService,
+      artifactService,
+      "/path/that/does/not/exist/chromium",
+      500,
+      5_000,
+    );
+    const expectedOutput = "x".repeat(60_000);
+    const script = 'process.stdout.write("x".repeat(60000))';
+
+    const report = await service.validate({
+      runId: crypto.randomUUID(),
+      repositoryPath: "/tmp/repository",
+      resultCommit: "result-commit",
+      previewConfiguration: null,
+      playwrightEnabled: true,
+      playwrightTestCommand: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+    });
+
+    expect(report.customTestOutput).toBe(`stdout: ${expectedOutput}`);
+    expect(reports).toEqual([report]);
+  });
 });
