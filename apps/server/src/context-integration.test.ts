@@ -67,6 +67,38 @@ describe("context pipeline 端到端集成", () => {
     expect(prompt).toContain("目标");
   });
 
+  it("验收失败后的修复执行会收到结构化反馈", async () => {
+    const prompt = await buildTaskPrompt(
+      baseInput({
+        plan: {
+          summary: "修复计划",
+          steps: [
+            {
+              id: "step-1",
+              description: "修复问题",
+              files: ["src/app.ts"],
+              verification: "运行测试",
+            },
+          ],
+          acceptanceCriteria: ["错误已修复"],
+          assumptions: [],
+          risks: [],
+        },
+        verificationFeedback: {
+          status: "failed",
+          summary: "验收发现回归",
+          criteria: [{ criterion: "错误已修复", status: "failed", evidence: "测试失败" }],
+          checks: [],
+          issues: ["需要修复空值处理"],
+        },
+      }),
+      "{}",
+    );
+    expect(prompt).toContain("上一轮验收 Agent 的反馈");
+    expect(prompt).toContain("需要修复空值处理");
+    expect(prompt).toContain("验收失败后的修复轮次");
+  });
+
   it("MEDIUM 阶段写入 scratchpad 后可以从 scratchpad 读回原文", async () => {
     const scratchpad = new MemoryScratchpadStore();
     // 触发 medium 需要 llm 就绪；构造一个 always-ready 的假 llm。

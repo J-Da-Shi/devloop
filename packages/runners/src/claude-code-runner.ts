@@ -139,7 +139,7 @@ const extractResultFromStream = (lines: string[]): string | null => {
 interface ClaudeCodeAttemptOptions {
   outputPath: string;
   prompt: string;
-  permissionMode: "acceptEdits" | "plan";
+  permissionMode?: "acceptEdits" | "plan";
   startMessage: string;
 }
 
@@ -212,7 +212,10 @@ export class ClaudeCodeRunner implements AgentRunner {
       throw new Error("ClaudeCodeRunner 需要独立 Worktree");
     }
 
-    const permissionMode = options.permissionMode ?? "acceptEdits";
+    const role = input.role ?? "executor";
+    const permissionMode =
+      options.permissionMode ??
+      (input.mode === "conflict-resolution" || role === "executor" ? "acceptEdits" : "plan");
     return [
       "--print",
       "--output-format",
@@ -283,7 +286,6 @@ export class ClaudeCodeRunner implements AgentRunner {
       const initialAttempt = await this.runAttempt(input, emit, signal, {
         outputPath,
         prompt: await buildClaudeCodePrompt(input, outputSchema),
-        permissionMode: "acceptEdits",
         startMessage: "正在启动 Claude Code CLI",
       });
       if (initialAttempt.kind === "result") {
@@ -291,7 +293,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       }
 
       try {
-        return parseAgentResult("Claude Code", initialAttempt.output);
+        return parseAgentResult("Claude Code", initialAttempt.output, input.role ?? "executor");
       } catch (error) {
         const validationError =
           error instanceof Error ? error.message : "Claude Code 最终结果无法解析";
@@ -312,7 +314,11 @@ export class ClaudeCodeRunner implements AgentRunner {
         }
 
         try {
-          const result = parseAgentResult("Claude Code", repairAttempt.output);
+          const result = parseAgentResult(
+            "Claude Code",
+            repairAttempt.output,
+            input.role ?? "executor",
+          );
           emit({ type: "runner.agent", message: "Claude Code JSON 格式修复完成" });
           return result;
         } catch (repairError) {
@@ -351,9 +357,10 @@ export class ClaudeCodeRunner implements AgentRunner {
       this.executable,
       [
         ...this.executableArguments,
-        ...this.buildArguments(input, {
-          permissionMode: options.permissionMode,
-        }),
+        ...this.buildArguments(
+          input,
+          options.permissionMode ? { permissionMode: options.permissionMode } : {},
+        ),
       ],
       {
         input: streamInput,

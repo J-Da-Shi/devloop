@@ -107,6 +107,30 @@ describe("ClaudeCodeRunner", () => {
     expect(researchPrompt).toContain("不要修改项目的受版本控制文件");
   });
 
+  it("为规划和验收 Agent 默认使用 plan 权限模式", () => {
+    const runner = new ClaudeCodeRunner();
+    const controller = new AbortController();
+    const base = {
+      runId: "run",
+      taskId: "task",
+      title: "Task",
+      goal: "Goal",
+      acceptanceCriteria: ["Done"],
+      skills: [],
+      worktreePath: "/tmp/worktree",
+      outputSchemaPath: "/tmp/schema.json",
+      signal: controller.signal,
+    };
+    const permission = (role: "planner" | "executor" | "verifier") => {
+      const args = runner.buildArguments({ ...base, role });
+      const index = args.indexOf("--permission-mode");
+      return args[index + 1];
+    };
+    expect(permission("planner")).toBe("plan");
+    expect(permission("verifier")).toBe("plan");
+    expect(permission("executor")).toBe("acceptEdits");
+  });
+
   it("解析 Claude Code stream-json 事件和结构化最终结果", async () => {
     const root = await mkdtemp(join(tmpdir(), "devloop-claude-runner-"));
     temporaryDirectories.push(root);

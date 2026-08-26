@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { projectRunnerSchema } from "@devloop/shared";
+import {
+  agentPlanSchema,
+  agentVerificationSchema,
+  projectRunnerSchema,
+  type AgentPlan,
+  type AgentVerification,
+} from "@devloop/shared";
 import type {
   ProjectRunner,
   DomainEvent,
@@ -85,6 +91,26 @@ export const parseRunSkillSnapshot = (value: string | null): RunSkillSnapshot[] 
     throw new Error("数据库中的 Run Skill 快照包含重复 Skill");
   }
   return snapshot;
+};
+
+export const parseRunPlan = (value: string | null): AgentPlan | null => {
+  if (value === null) return null;
+  const raw = JSON.parse(value) as unknown;
+  // 旧版本计划没有规划验收标准，读取时保留旧 Run 并补充兼容值。
+  const normalized =
+    raw !== null && typeof raw === "object" && !Array.isArray(raw) && !("acceptanceCriteria" in raw)
+      ? { ...raw, acceptanceCriteria: ["规划步骤可按各自 verification 逐项验证"] }
+      : raw;
+  const parsed = agentPlanSchema.safeParse(normalized);
+  if (!parsed.success) throw new Error("数据库中的 Agent 计划格式无效");
+  return parsed.data;
+};
+
+export const parseRunVerification = (value: string | null): AgentVerification | null => {
+  if (value === null) return null;
+  const parsed = agentVerificationSchema.safeParse(JSON.parse(value) as unknown);
+  if (!parsed.success) throw new Error("数据库中的 Agent 验收报告格式无效");
+  return parsed.data;
 };
 
 export const buildRunInputHash = (input: {
@@ -336,6 +362,8 @@ export const mapRun = (row: TaskRunRow): TaskRun => ({
   pushedAt: row.pushedAt,
   pushedCommit: row.pushedCommit,
   skillSnapshot: parseRunSkillSnapshot(row.skillSnapshotJson),
+  plan: parseRunPlan(row.planJson),
+  verification: parseRunVerification(row.verificationJson),
   summary: row.summary,
   budget: {
     currency: "CNY",

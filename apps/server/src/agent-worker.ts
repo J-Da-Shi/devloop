@@ -8,6 +8,7 @@ import {
   type AgentRunner,
   type RunnerEvent,
   type RunnerHandle,
+  type RunnerResult,
 } from "@devloop/runners";
 import {
   AutoConflictResolutionError,
@@ -21,12 +22,16 @@ import { AgentWorkspaceOperations } from "./agent-workspace-operations.js";
 import type { ActiveExecution, AgentWorkerOptions } from "./agent-worker-types.js";
 import type { DomainEventBus } from "./event-bus.js";
 import { AgentBudgetMonitor } from "./agent-budget-monitor.js";
+import { executeRolePipeline, runAgentStage } from "./agent-role-pipeline.js";
 
 const phaseByEvent: Record<string, RunStatus> = {
   "runner.preparing": "PREPARING",
   "runner.agent": "AGENT_RUNNING",
   "runner.verifying": "VERIFYING",
   "runner.review": "PREPARING_REVIEW",
+  "run.agent.planning.started": "AGENT_RUNNING",
+  "run.agent.execution.started": "AGENT_RUNNING",
+  "run.agent.verification.started": "VERIFYING",
 };
 
 export class AgentWorker {
@@ -343,42 +348,6 @@ export class AgentWorker {
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
         return;
       }
-      const contextBudget = this.options.contextBudgets?.[runner.id];
-      const scratchpad = this.options.scratchpad;
-      const llm = this.options.llmCompressor ?? null;
-      const turn = this.incrementTurn(claimed.task.id);
-      // 若配置了 setCurrentTurn（OpenAI 兼容压缩器实现），把当前轮号传入以驱动冷却门。
-      if (llm && typeof (llm as { setCurrentTurn?: (turn: number) => void }).setCurrentTurn === "function") {
-        (llm as unknown as { setCurrentTurn: (turn: number) => void }).setCurrentTurn(turn);
-      }
-      const contextPipeline = scratchpad
-        ? {
-            scratchpad,
-            llm,
-            runId: claimed.run.id,
-            turn,
-          }
-        : null;
-      active.handle = runner.start(
-        {
-          runId: claimed.run.id,
-          taskId: claimed.task.id,
-          taskType: claimed.taskType,
-          title: claimed.title,
-          goal: claimed.goal,
-          acceptanceCriteria: claimed.acceptanceCriteria,
-          skills,
-          reviewFeedback: claimed.reviewFeedback,
-          retryContext: claimed.retryContext,
-          worktreePath: workspace.path,
-          outputSchemaPath: this.outputSchemaPath,
-          signal: controller.signal,
-          onProcessGroupId,
-          ...(contextBudget !== undefined ? { contextBudget } : {}),
-          ...(contextPipeline ? { contextPipeline } : {}),
-        },
-        emit,
-      );
       budgetMonitor = new AgentBudgetMonitor(this.repository, claimed, {
         runnerId: runner.id,
         ...(this.options.budgetCheckIntervalMs !== undefined
@@ -407,7 +376,28 @@ export class AgentWorker {
       });
       budgetMonitor.start();
 
-      const result = await active.handle.result;
+      const roleContext = {
+        claimed,
+        runner,
+        skills,
+        workspace,
+        active,
+        emit,
+        onProcessGroupId,
+        repository: this.repository,
+        publish: (value: EventfulResult<unknown>) => this.publish(value),
+        outputSchemaPath: this.outputSchemaPath,
+        options: this.options,
+        incrementTurn: (taskId: string) => this.incrementTurn(taskId),
+      };
+      let result: RunnerResult;
+      if (this.options.rolePipelineEnabled) {
+        const pipelineResult = await executeRolePipeline(roleContext, this.runFinalizer);
+        if (!pipelineResult) return;
+        result = pipelineResult;
+      } else {
+        result = await runAgentStage(roleContext, "executor", claimed.run.plan, null);
+      }
       await budgetMonitor.stop();
       budgetMonitor = null;
       if (!this.isExecutionActive(claimed.run.id, claimed.run.executionToken)) {
@@ -578,7 +568,10 @@ export class AgentWorker {
   }
 
   private handleRunnerEvent(runId: string, executionToken: string, event: RunnerEvent): void {
-    const status = phaseByEvent[event.type];
+    const status =
+      event.type === "runner.agent" && event.data?.role === "verifier"
+        ? "VERIFYING"
+        : phaseByEvent[event.type];
     if (!status || !this.isExecutionActive(runId, executionToken)) {
       return;
     }

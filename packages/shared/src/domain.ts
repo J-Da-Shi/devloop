@@ -35,6 +35,7 @@ export const deviceRoles = ["viewer", "operator", "editor"] as const;
 export const baseStrategies = ["LATEST_ACCEPTED", "PINNED"] as const;
 export const projectRunners = ["codex", "claude-code"] as const;
 export const taskTypes = ["DEVELOPMENT", "RESEARCH"] as const;
+export const agentRoles = ["planner", "executor", "verifier"] as const;
 
 export const taskStatusSchema = z.enum(taskStatuses);
 export const runStatusSchema = z.enum(runStatuses);
@@ -51,6 +52,41 @@ export type DeviceRole = z.infer<typeof deviceRoleSchema>;
 export type BaseStrategy = z.infer<typeof baseStrategySchema>;
 export type ProjectRunner = z.infer<typeof projectRunnerSchema>;
 export type TaskType = z.infer<typeof taskTypeSchema>;
+export type AgentRole = (typeof agentRoles)[number];
+
+export interface AgentPlanStep {
+  id: string;
+  description: string;
+  files: string[];
+  verification: string;
+}
+
+export interface AgentPlan {
+  summary: string;
+  steps: AgentPlanStep[];
+  /** 规划阶段将任务目标细化为后续可以逐项核对的完成条件。 */
+  acceptanceCriteria: string[];
+  assumptions: string[];
+  risks: string[];
+}
+
+export interface AgentVerificationCheck {
+  command: string;
+  status: "passed" | "failed" | "not_run";
+  evidence: string;
+}
+
+export interface AgentVerification {
+  status: "passed" | "failed" | "blocked";
+  summary: string;
+  criteria: Array<{
+    criterion: string;
+    status: "passed" | "failed" | "not_verifiable";
+    evidence: string;
+  }>;
+  checks: AgentVerificationCheck[];
+  issues: string[];
+}
 
 export const previewConfigSources = ["project", "agent", "detected"] as const;
 export const previewConfigSourceSchema = z.enum(previewConfigSources);
@@ -221,6 +257,8 @@ export interface TaskRun {
   pushedAt: string | null;
   pushedCommit: string | null;
   skillSnapshot: RunSkillSnapshot[] | null;
+  plan: AgentPlan | null;
+  verification: AgentVerification | null;
   summary: string | null;
   budget: RunBudgetUsage;
   startedAt: string;

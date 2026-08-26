@@ -134,6 +134,8 @@ export const taskRuns = sqliteTable(
     pushedCommit: text("pushed_commit"),
     runInputHash: text("run_input_hash").notNull(),
     skillSnapshotJson: text("skill_snapshot_json"),
+    planJson: text("plan_json"),
+    verificationJson: text("verification_json"),
     summary: text("summary"),
     budgetEstimatedCostCents: integer("budget_estimated_cost_cents").notNull().default(0),
     budgetElapsedMs: integer("budget_elapsed_ms").notNull().default(0),

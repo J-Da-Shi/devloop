@@ -1,4 +1,9 @@
-import { agentPreviewConfigSchema } from "@devloop/shared";
+import {
+  agentPlanSchema,
+  agentPreviewConfigSchema,
+  agentVerificationSchema,
+  type AgentRole,
+} from "@devloop/shared";
 import type { RunnerResult } from "./types.js";
 
 const agentResultKeys = new Set([
@@ -8,6 +13,8 @@ const agentResultKeys = new Set([
   "risks",
   "blockedReason",
   "preview",
+  "plan",
+  "verification",
 ]);
 const acceptanceCriterionKeys = new Set(["criterion", "status", "evidence"]);
 
@@ -35,7 +42,11 @@ export const stripCodeFence = (value: string): string => {
   return match?.[1]?.trim() ?? trimmed;
 };
 
-export const parseAgentResult = (runnerName: string, value: string): RunnerResult => {
+export const parseAgentResult = (
+  runnerName: string,
+  value: string,
+  role: AgentRole = "executor",
+): RunnerResult => {
   const parsed = asRecord(JSON.parse(stripCodeFence(value)) as unknown);
   if (!parsed) throw new Error(`${runnerName} 最终结果不是 JSON 对象`);
   const unknownKeys = Object.keys(parsed).filter((key) => !agentResultKeys.has(key));
@@ -96,6 +107,35 @@ export const parseAgentResult = (runnerName: string, value: string): RunnerResul
     throw new Error(
       `${runnerName} 返回了无效的预览配置：${preview.error.issues[0]?.message ?? "格式错误"}`,
     );
+  const planValue = parsed.plan;
+  const plan =
+    planValue === undefined || planValue === null
+      ? planValue
+      : agentPlanSchema.safeParse(planValue);
+  if (role === "planner" && (plan === undefined || plan === null || !plan.success)) {
+    throw new Error(`${runnerName} 规划结果缺少有效的 plan 字段`);
+  }
+  if (plan !== undefined && plan !== null && !plan.success) {
+    throw new Error(
+      `${runnerName} 返回了无效的规划结果：${plan.error.issues[0]?.message ?? "格式错误"}`,
+    );
+  }
+  const verificationValue = parsed.verification;
+  const verification =
+    verificationValue === undefined || verificationValue === null
+      ? verificationValue
+      : agentVerificationSchema.safeParse(verificationValue);
+  if (
+    role === "verifier" &&
+    (verification === undefined || verification === null || !verification.success)
+  ) {
+    throw new Error(`${runnerName} 验收结果缺少有效的 verification 字段`);
+  }
+  if (verification !== undefined && verification !== null && !verification.success) {
+    throw new Error(
+      `${runnerName} 返回了无效的验收结果：${verification.error.issues[0]?.message ?? "格式错误"}`,
+    );
+  }
   return {
     outcome: outcome as RunnerResult["outcome"],
     summary,
@@ -103,6 +143,10 @@ export const parseAgentResult = (runnerName: string, value: string): RunnerResul
     acceptanceCriteria,
     blockedReason: blockedReasonValue ?? null,
     ...(preview === undefined ? {} : { preview: preview === null ? null : preview.data }),
+    ...(plan === undefined ? {} : { plan: plan === null ? null : plan.data }),
+    ...(verification === undefined
+      ? {}
+      : { verification: verification === null ? null : verification.data }),
   };
 };
 
