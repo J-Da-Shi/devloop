@@ -92,9 +92,6 @@ importers:
       '@devloop/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@devloop/workflow':
-        specifier: workspace:*
-        version: link:../../packages/workflow
       '@fastify/cors':
         specifier: 11.3.0
         version: 11.3.0
@@ -107,10 +104,7 @@ importers:
       pino:
         specifier: 10.3.1
         version: 10.3.1
-      pino-pretty:
-        specifier: 13.1.3
-        version: 13.1.3
-      playwright:
+      playwright-core:
         specifier: 1.62.1
         version: 1.62.1
       yaml:
@@ -216,15 +210,6 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
-
-  packages/workflow:
-    dependencies:
-      '@devloop/shared':
-        specifier: workspace:*
-        version: link:../shared
-      xstate:
-        specifier: 5.32.5
-        version: 5.32.5
 
 packages:
 
@@ -4822,9 +4807,6 @@ packages:
   xmlbuilder@15.1.1:
     resolution: {integrity: sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg==}
     engines: {node: '>=8.0'}
-
-  xstate@5.32.5:
-    resolution: {integrity: sha512-ULazi1oe6wGrXl0Frb6otSlkm5HLifbbVTkMk5kkSKqz4TkxJaVpnl6jOJwKeid3ORPxYyZQgNLUSYX9q65SIA==}
 
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
@@ -9467,8 +9449,6 @@ snapshots:
   wrappy@1.0.2: {}
 
   xmlbuilder@15.1.1: {}
-
-  xstate@5.32.5: {}
 
   xtend@4.0.2:
     optional: true

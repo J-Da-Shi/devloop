@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, lt, sql } from "drizzle-orm";
-import { contextScratchpad } from "../schema.js";
+import { contextScratchpad } from "../database/schema.js";
 import { ManagedDeliveryRepository } from "./managed-delivery-repository.js";
 
 export interface ScratchpadRow {

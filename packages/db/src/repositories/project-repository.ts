@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Project, UpdateProjectPreviewInput } from "@devloop/shared";
 import { and, eq } from "drizzle-orm";
-import { projects } from "../schema.js";
+import { projects } from "../database/schema.js";
 import { mapProject, now } from "./repository-codecs.js";
 import { RepositoryBase } from "./repository-base.js";
 import type {

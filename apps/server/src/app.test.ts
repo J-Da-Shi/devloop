@@ -17,11 +17,11 @@ import type {
 import type { RunnerCapabilities } from "@devloop/shared";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
-import type { AgentWorker } from "./agent-worker.js";
-import { DomainEventBus } from "./event-bus.js";
-import type { RuntimeConfig } from "./runtime-config.js";
-import { SkillService } from "./skill-service.js";
-import type { PreviewService, StartPreviewInput } from "./preview-service.js";
+import type { AgentWorker } from "./agent/agent-worker.js";
+import { DomainEventBus } from "./infrastructure/event-bus.js";
+import type { RuntimeConfig } from "./config/runtime-config.js";
+import { SkillService } from "./skills/skill-service.js";
+import type { PreviewService, StartPreviewInput } from "./preview/preview-service.js";
 
 const migrationsFolder = fileURLToPath(new URL("../../../packages/db/drizzle", import.meta.url));
 const targetCommit = "a".repeat(40);

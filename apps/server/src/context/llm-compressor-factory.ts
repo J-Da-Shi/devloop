@@ -3,7 +3,7 @@ import {
   OpenAiCompatibleLlmCompressor,
   type LlmCompressor,
 } from "@devloop/context";
-import type { RuntimeConfig } from "../runtime-config.js";
+import type { RuntimeConfig } from "../config/runtime-config.js";
 
 /**
  * 从 runtime-config 读取压缩器配置；未配置 endpoint/apiKey 时返回 Noop 实现。

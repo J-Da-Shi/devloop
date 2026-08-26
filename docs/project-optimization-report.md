@@ -22,19 +22,18 @@ DevLoop 已具备一条完整的本地 AI 开发交付链路，不是需要从�
 
 ### 2.1 仓库规模
 
-| 模块                | 非测试 TS/TSX 文件 | 测试文件 | 非测试 TS/TSX 行数 | 观察                               |
-| ------------------- | -----------------: | -------: | -----------------: | ---------------------------------- |
-| `apps/server`       |                 12 |        8 |              4,378 | 执行链覆盖较集中，但核心文件偏大   |
-| `apps/web`          |                 64 |        2 |              5,583 | 业务界面完整，自动化测试明显不足   |
-| `apps/desktop`      |                  1 |        0 |                500 | 主进程职责集中，无自动化测试       |
-| `packages/context`  |                 20 |        9 |                954 | 新增能力拆分和测试较好             |
-| `packages/db`       |                 17 |        6 |              3,617 | 仓储已按职责拆分，长期数据治理不足 |
-| `packages/git`      |                  9 |        3 |              2,005 | Worktree、远程和冲突路径有测试     |
-| `packages/runners`  |                 10 |        5 |              1,679 | Runner 契约清晰，隔离策略不一致    |
-| `packages/shared`   |                  5 |        1 |                732 | 领域模型集中，契约测试较少         |
-| `packages/workflow` |                  2 |        1 |                 26 | 状态机小而集中                     |
+| 模块               | 非测试 TS/TSX 文件 | 测试文件 | 非测试 TS/TSX 行数 | 观察                               |
+| ------------------ | -----------------: | -------: | -----------------: | ---------------------------------- |
+| `apps/server`      |                 12 |        8 |              4,378 | 执行链覆盖较集中，但核心文件偏大   |
+| `apps/web`         |                 64 |        2 |              5,583 | 业务界面完整，自动化测试明显不足   |
+| `apps/desktop`     |                  1 |        0 |                500 | 主进程职责集中，无自动化测试       |
+| `packages/context` |                 20 |        9 |                954 | 新增能力拆分和测试较好             |
+| `packages/db`      |                 17 |        6 |              3,617 | 仓储已按职责拆分，长期数据治理不足 |
+| `packages/git`     |                  9 |        3 |              2,005 | Worktree、远程和冲突路径有测试     |
+| `packages/runners` |                 10 |        5 |              1,679 | Runner 契约清晰，隔离策略不一致    |
+| `packages/shared`  |                  5 |        1 |                732 | 领域模型集中，契约测试较少         |
 
-仓库共有 35 个测试文件。现有测试重点覆盖 Server、DB、Git、Runner 和 Context；Web 只有 unified diff 与冲突解析单元测试，Desktop 没有测试。
+仓库共有 34 个测试文件。现有测试重点覆盖 Server、DB、Git、Runner 和 Context；Web 只有 unified diff 与冲突解析单元测试，Desktop 没有测试。
 
 ### 2.2 已有能力，避免重复建设
 
@@ -55,7 +54,7 @@ DevLoop 已具备一条完整的本地 AI 开发交付链路，不是需要从�
 
 **证据**
 
-- `apps/server/src/http.ts` 的 `resolveIdentity()` 始终返回 `instance-owner/editor`，请求没有凭据校验。
+- `apps/server/src/infrastructure/http.ts` 的 `resolveIdentity()` 始终返回 `instance-owner/editor`，请求没有凭据校验。
 - `paired_devices`、`pairing_sessions`、`remote_commands` 和 `audit_events` 已存在于 Schema，`DeviceRepository` 也实现了配对、角色调整和撤销，但 Server 路由与 Web 路由没有消费这些能力。
 - `audit_events` 当前只有表定义，没有写入或查询实现。
 - 服务允许在显式设置 `DEVLOOP_ALLOW_LAN=true` 后监听非回环地址；部署文档依赖 Nginx Basic Auth、IP 白名单或 Tailscale 提供外层访问控制。
@@ -124,9 +123,9 @@ DevLoop 已具备一条完整的本地 AI 开发交付链路，不是需要从�
 
 **证据**
 
-- `apps/server/src/agent-worker.ts` 为 1,307 行，混合领取、准备、上下文、Runner、Git、验证、恢复和收尾。
+- `apps/server/src/agent/agent-worker.ts` 仍承担领取、准备、上下文、Runner、Git、验证、恢复和收尾等多个阶段。
 - `apps/server/src/app.ts` 为 1,087 行，集中注册全部 API、冲突任务、预览与 SSE。
-- `apps/server/src/preview-service.ts` 为 743 行，混合配置检测、依赖安装、进程生命周期和健康检查。
+- `apps/server/src/preview/preview-service.ts` 仍混合配置检测、依赖安装、进程生命周期和健康检查。
 - `_dashboard.scss` 为 850 行，`_diff.scss` 为 750 行，已超过仓库约定的 700 行上限。
 - `mapRepositoryError()` 通过匹配错误消息文本映射 HTTP 状态，新增或翻译错误容易改变协议行为。
 

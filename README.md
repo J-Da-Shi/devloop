@@ -153,6 +153,8 @@ pnpm --filter @devloop/desktop make
 
 产物位于 `apps/desktop/out/make/`。打包客户端默认启动内置服务；设置 `DEVLOOP_SERVICE_URL` 后可改为连接已有服务。
 
+打包会自动清理旧的 workspace 编译产物，只携带当前平台所需的生产依赖、Web 构建文件和数据库迁移；无需手动维护 `apps/desktop/runtime-bundle/`。
+
 ### Docker Compose
 
 服务端部署需要 Docker、Docker Compose，以及可写的数据和配置目录：
@@ -255,7 +257,7 @@ Docker Compose 的完整示例及每个变量的注释见 [`.env.example`](./.en
 
 ## 开发
 
-DevLoop 使用 pnpm workspace：Fastify 服务端、React Web、Electron 桌面端，以及数据库、Git、Runner、工作流和共享模型包。
+DevLoop 使用 pnpm workspace：Fastify 服务端、React Web、Electron 桌面端，以及数据库、Git、Runner 和共享模型包。
 
 ```bash
 pnpm typecheck
@@ -268,7 +270,7 @@ git diff --check
 
 Pull Request 会在 Node.js 24 和 26 上执行 packages build、类型检查、Vitest、ESLint、Prettier 与空白错误检查，并分别验证 Server、Web 构建和 Desktop 类型检查。高危依赖变更会被依赖审查阻止；pnpm 与 GitHub Actions 依赖每周检查更新。
 
-目录职责：`apps/server` 提供 API 和 Worker，`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端；`packages/db`、`packages/git`、`packages/runners`、`packages/workflow` 和 `packages/shared` 分别承载数据库、Git、执行器、状态流转和共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。
+目录职责：`apps/server` 提供 API 和 Worker，源码按 `agent`、`preview`、`skills`、`routes`、`config` 和 `infrastructure` 分组；`apps/web` 提供 React 界面，`apps/desktop` 提供 Electron 客户端。`packages/context` 按压缩、LLM 和存储分组，`packages/db` 按数据库、预算和仓储分组，`packages/git` 按命令、服务和类型分组，`packages/runners` 按适配器、执行、输出、提示词和类型分组；`packages/shared` 承载共享模型。开发约定见 [`AGENTS.md`](./AGENTS.md)。
 
 欢迎提交 Issue 和 Pull Request。请勿提交 API Key、Git 凭据、`.devloop-data` 中的个人数据，或任务生成的本地运行产物。
 

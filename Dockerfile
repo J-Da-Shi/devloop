@@ -16,7 +16,6 @@ COPY packages/db/package.json packages/db/package.json
 COPY packages/git/package.json packages/git/package.json
 COPY packages/runners/package.json packages/runners/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/workflow/package.json packages/workflow/package.json
 
 RUN pnpm install --frozen-lockfile --filter . --filter @devloop/server... --filter @devloop/web...
 

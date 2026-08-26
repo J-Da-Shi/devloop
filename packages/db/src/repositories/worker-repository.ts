@@ -5,7 +5,7 @@ import {
   workerConcurrencyMin,
 } from "@devloop/shared";
 import { eq, gt, isNull } from "drizzle-orm";
-import { domainEvents, taskRuns, workerState } from "../schema.js";
+import { domainEvents, taskRuns, workerState } from "../database/schema.js";
 import { mapDomainEvent, now } from "./repository-codecs.js";
 import { RunRecordsRepository } from "./run-records-repository.js";
 import type { EventfulResult } from "./repository-types.js";

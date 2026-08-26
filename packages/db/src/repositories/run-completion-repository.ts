@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertTaskTransition, type Task, type TaskRun } from "@devloop/shared";
 import { and, eq, isNull } from "drizzle-orm";
-import { taskRuns, tasks } from "../schema.js";
+import { taskRuns, tasks } from "../database/schema.js";
 import { mapRun, mapTask, now } from "./repository-codecs.js";
 import { RunClaimRepository } from "./run-claim-repository.js";
 import type { EventfulResult } from "./repository-types.js";

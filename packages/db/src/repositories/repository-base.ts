@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DomainEvent, RetryContext, RunEvent } from "@devloop/shared";
 import { and, desc, eq, isNull, max } from "drizzle-orm";
-import type { DatabaseHandle } from "../client.js";
+import type { DatabaseHandle } from "../database/client.js";
 import {
   domainEvents,
   projects,
@@ -17,7 +17,7 @@ import {
   type SkillVersionRow,
   type TaskRow,
   type TaskRunRow,
-} from "../schema.js";
+} from "../database/schema.js";
 import { mapDomainEvent, mapRunEvent, now, retryContextLimits } from "./repository-codecs.js";
 import type { EventfulResult } from "./repository-types.js";
 
@@ -230,7 +230,3 @@ export class RepositoryBase {
       .run();
   }
 }
-
-export type RepositoryConstructor<T extends RepositoryBase = RepositoryBase> = new (
-  handle: DatabaseHandle,
-) => T;

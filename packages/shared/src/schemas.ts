@@ -1,18 +1,16 @@
 import { z } from "zod";
 import {
   baseStrategySchema,
-  agentRoles,
   previewConfigSourceSchema,
   type PlaywrightValidationReport,
   projectRunnerSchema,
   taskTypeSchema,
-  taskStatusSchema,
   workerConcurrencyMax,
   workerConcurrencyMin,
   type AgentPlan,
   type AgentVerification,
 } from "./domain.js";
-import { budgetConfidenceSchema, taskExecutionModeSchema } from "./managed-delivery.js";
+import { taskExecutionModeSchema } from "./managed-delivery.js";
 
 const previewCommandSchema = z.string().trim().min(1).max(4_000);
 
@@ -49,8 +47,6 @@ export const agentPreviewConfigSchema = previewConfigSchema.extend({
 export const runPreviewConfigSchema = previewConfigSchema.extend({
   source: previewConfigSourceSchema,
 });
-
-export const agentRoleSchema = z.enum(agentRoles);
 
 export const agentPlanStepSchema = z.object({
   id: z.string().trim().min(1).max(80),
@@ -244,16 +240,6 @@ export const updateManagedDeliverySettingsInputSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
 });
 
-export const taskBudgetEstimateSchema = z.object({
-  currency: z.literal("CNY"),
-  lowCents: z.number().int().nonnegative(),
-  highCents: z.number().int().nonnegative(),
-  lowMinutes: z.number().int().positive(),
-  highMinutes: z.number().int().positive(),
-  confidence: budgetConfidenceSchema,
-  rationale: z.array(z.string().min(1).max(300)).max(10),
-});
-
 const conflictPathSchema = z.string().min(1).max(1024);
 const commitHashSchema = z
   .string()
@@ -340,11 +326,6 @@ export const updateSkillInputSchema = z.object({
   idempotencyKey: z.string().uuid(),
 });
 
-export const taskQuerySchema = z.object({
-  status: taskStatusSchema.optional(),
-  projectId: z.string().uuid().optional(),
-});
-
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type CreateLocalProjectInput = z.infer<typeof createLocalProjectInputSchema>;
 export type UpdateProjectRunnerInput = z.infer<typeof updateProjectRunnerInputSchema>;
@@ -361,7 +342,6 @@ export type ApproveRunInput = z.infer<typeof approveRunInputSchema>;
 export type ResolveRunConflictsInput = z.infer<typeof resolveRunConflictsInputSchema>;
 export type ConfirmTaskInput = z.infer<typeof confirmTaskInputSchema>;
 export type RejectRunInput = z.infer<typeof rejectRunInputSchema>;
-export type ValidateSkillInput = z.infer<typeof validateSkillInputSchema>;
 export type CreateSkillInput = z.infer<typeof createSkillInputSchema>;
 export type CreateSkillVersionInput = z.infer<typeof createSkillVersionInputSchema>;
 export type UpdateSkillInput = z.infer<typeof updateSkillInputSchema>;
