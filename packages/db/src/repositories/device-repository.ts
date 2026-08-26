@@ -1,7 +1,7 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import type { DeviceRole, DomainEvent, PairedDevice } from "@devloop/shared";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { pairedDevices, pairingSessions } from "../schema.js";
+import { pairedDevices, pairingSessions } from "../database/schema.js";
 import { hash, mapDevice, now } from "./repository-codecs.js";
 import { WorkerRepository } from "./worker-repository.js";
 import type { EventfulResult } from "./repository-types.js";

@@ -1,17 +1,17 @@
 import { DevLoopRepository, openDatabase } from "@devloop/db";
 import { GitService } from "@devloop/git";
 import { ClaudeCodeRunner, CodexRunner, FakeRunner, type AgentRunner } from "@devloop/runners";
-import { AgentWorker } from "./agent-worker.js";
+import { AgentWorker } from "./agent/agent-worker.js";
 import { createApp } from "./app.js";
 import { DbScratchpadStore } from "./context/db-scratchpad-store.js";
 import { createLlmCompressor } from "./context/llm-compressor-factory.js";
-import { DomainEventBus } from "./event-bus.js";
-import { loadRuntimeConfig } from "./runtime-config.js";
-import { SkillService } from "./skill-service.js";
-import { ArtifactService } from "./artifact-service.js";
-import { PlaywrightValidationService } from "./playwright-validation-service.js";
-import { PreviewService } from "./preview-service.js";
-import { registerManagedDeliveryRoutes } from "./managed-delivery-routes.js";
+import { DomainEventBus } from "./infrastructure/event-bus.js";
+import { loadRuntimeConfig } from "./config/runtime-config.js";
+import { SkillService } from "./skills/skill-service.js";
+import { ArtifactService } from "./preview/artifact-service.js";
+import { PlaywrightValidationService } from "./preview/playwright-validation-service.js";
+import { PreviewService } from "./preview/preview-service.js";
+import { registerManagedDeliveryRoutes } from "./routes/managed-delivery-routes.js";
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();

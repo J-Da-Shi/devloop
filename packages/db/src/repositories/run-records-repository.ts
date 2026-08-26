@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { ReviewDecision, RunArtifact, RunEvent, TaskRevision, TaskRun } from "@devloop/shared";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { artifacts, reviewDecisions, runEvents, taskRevisions, taskRuns } from "../schema.js";
+import {
+  artifacts,
+  reviewDecisions,
+  runEvents,
+  taskRevisions,
+  taskRuns,
+} from "../database/schema.js";
 import {
   mapArtifact,
   mapReviewDecision,

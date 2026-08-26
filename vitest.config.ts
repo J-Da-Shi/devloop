@@ -8,7 +8,6 @@ export default defineConfig({
     alias: {
       "@devloop/shared": fromRoot("./packages/shared/src/index.ts"),
       "@devloop/db": fromRoot("./packages/db/src/index.ts"),
-      "@devloop/workflow": fromRoot("./packages/workflow/src/index.ts"),
       "@devloop/git": fromRoot("./packages/git/src/index.ts"),
       "@devloop/runners": fromRoot("./packages/runners/src/index.ts"),
     },

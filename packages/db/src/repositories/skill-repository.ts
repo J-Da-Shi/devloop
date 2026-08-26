@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Skill } from "@devloop/shared";
 import { and, desc, eq } from "drizzle-orm";
-import { skillVersions, skills } from "../schema.js";
+import { skillVersions, skills } from "../database/schema.js";
 import { mapSkill, mapSkillVersion, now } from "./repository-codecs.js";
 import { ProjectRepository } from "./project-repository.js";
 import type {

@@ -1,5 +1,3 @@
-import type { SkillValidationResult } from "@devloop/shared";
-
 export type SkillValidationState = "idle" | "waiting" | "checking";
 
 export interface SkillEditorState {
@@ -9,5 +7,3 @@ export interface SkillEditorState {
   expectedVersion: number | null;
   currentVersionId: string | null;
 }
-
-export type SkillValidation = SkillValidationResult | null;

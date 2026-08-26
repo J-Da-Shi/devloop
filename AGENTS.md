@@ -22,27 +22,27 @@ DevLoop 是一个本地优先的 AI 开发交付工作台。它把 Codex CLI、C
 
 ## 架构与目录职责
 
-| 路径                                | 职责                                                                  |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `apps/server/src/`                  | Fastify API、Worker 调度、任务执行、预览、Playwright 验证和运行时配置 |
-| `apps/web/src/`                     | React Web 界面、路由、API 客户端、页面和业务组件                      |
-| `apps/web/src/components/common/`   | 与具体业务无关的通用 UI 和交互组件                                    |
-| `apps/web/src/components/layout/`   | 应用壳、固定 Header、侧边菜单和页面布局                               |
-| `apps/web/src/components/business/` | 项目、任务、运行记录、审核、冲突和验证等业务组件                      |
-| `apps/web/src/core/`                | API、状态、Diff、事件和浏览器端基础能力                               |
-| `apps/web/src/routes/`              | 路由定义和路由遍历入口；新增页面先更新路由数组                        |
-| `apps/web/src/types/`               | Web 端共享类型；不要在页面中重复定义跨组件类型                        |
-| `apps/web/src/styles/`              | SCSS、设计令牌和按职责拆分的样式文件                                  |
-| `apps/desktop/src/main/`            | Electron 主进程、内置服务生命周期和窗口管理                           |
-| `apps/desktop/src/preload/`         | 主进程与渲染进程之间的最小安全桥接                                    |
-| `packages/db/`                      | SQLite、Drizzle schema、迁移和仓储实现                                |
-| `packages/git/`                     | Git 仓库、镜像、Worktree、Diff、冲突和分支写入操作                    |
-| `packages/runners/`                 | Codex、Claude、Fake Runner 适配和执行结果类型                         |
-| `packages/workflow/`                | 任务状态流转、状态守卫和工作流规则                                    |
-| `packages/shared/`                  | 服务端、Web 和 Runner 共同使用的领域模型、Schema 和常量               |
-| `schemas/`                          | Agent 结果 JSON Schema 等外部契约                                     |
-| `docs/`                             | 官网静态页面、截图和展示资源                                          |
-| `deploy/`                           | 反向代理和部署示例                                                    |
+| 路径                                | 职责                                                                                                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/`                  | Fastify API、Worker 调度、任务执行、预览、Playwright 验证和运行时配置；源码按 `agent/`、`preview/`、`skills/`、`routes/`、`config/`、`infrastructure/` 分组 |
+| `apps/web/src/`                     | React Web 界面、路由、API 客户端、页面和业务组件                                                                                                            |
+| `apps/web/src/components/common/`   | 与具体业务无关的通用 UI 和交互组件                                                                                                                          |
+| `apps/web/src/components/layout/`   | 应用壳、固定 Header、侧边菜单和页面布局                                                                                                                     |
+| `apps/web/src/components/business/` | 项目、任务、运行记录、审核、冲突和验证等业务组件                                                                                                            |
+| `apps/web/src/core/`                | API、状态、Diff、事件和浏览器端基础能力                                                                                                                     |
+| `apps/web/src/routes/`              | 路由定义和路由遍历入口；新增页面先更新路由数组                                                                                                              |
+| `apps/web/src/types/`               | Web 端共享类型；不要在页面中重复定义跨组件类型                                                                                                              |
+| `apps/web/src/styles/`              | SCSS、设计令牌和按职责拆分的样式文件                                                                                                                        |
+| `apps/desktop/src/main/`            | Electron 主进程、内置服务生命周期和窗口管理                                                                                                                 |
+| `apps/desktop/src/preload/`         | 主进程与渲染进程之间的最小安全桥接                                                                                                                          |
+| `packages/context/`                 | 上下文压缩、LLM 压缩器、Scratchpad 存储和共享类型；按职责分组                                                                                               |
+| `packages/db/`                      | SQLite、Drizzle schema、迁移、预算估算和仓储实现；按数据库/预算/仓储分组                                                                                    |
+| `packages/git/`                     | Git 命令、仓库/Worktree/冲突服务和共享类型；按命令/服务/类型分组                                                                                            |
+| `packages/runners/`                 | Codex、Claude、Fake Runner 适配、进程执行、输出、提示词和类型；按职责分组                                                                                   |
+| `packages/shared/`                  | 服务端、Web 和 Runner 共同使用的领域模型、Schema 和常量                                                                                                     |
+| `schemas/`                          | Agent 结果 JSON Schema 等外部契约                                                                                                                           |
+| `docs/`                             | 官网静态页面、截图和展示资源                                                                                                                                |
+| `deploy/`                           | 反向代理和部署示例                                                                                                                                          |
 
 核心执行链是：创建任务 → 创建隔离 Worktree → Worker 领取任务 → Runner 执行 → 生成结果 Commit → 自动预览/验证 → 待审核 → 批准写入、驳回迭代或解决冲突。任何写入目标分支的操作都必须经过状态校验，并且不能绕过未解决冲突检查。
 

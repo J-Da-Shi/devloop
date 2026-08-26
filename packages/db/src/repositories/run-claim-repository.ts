@@ -10,7 +10,7 @@ import {
   type TaskRun,
 } from "@devloop/shared";
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
-import { projects, taskRevisions, taskRuns, tasks } from "../schema.js";
+import { projects, taskRevisions, taskRuns, tasks } from "../database/schema.js";
 import {
   buildRunInputHash,
   mapRun,

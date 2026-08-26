@@ -32,17 +32,17 @@ import {
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { DomainEventBus } from "./event-bus.js";
-import type { AgentWorker } from "./agent-worker.js";
-import { HttpError, requireLocalRole, requireRole } from "./http.js";
-import type { RuntimeConfig } from "./runtime-config.js";
-import { SkillValidationError, type SkillService } from "./skill-service.js";
-import type { ArtifactService } from "./artifact-service.js";
+import type { DomainEventBus } from "./infrastructure/event-bus.js";
+import type { AgentWorker } from "./agent/agent-worker.js";
+import { HttpError, requireLocalRole, requireRole } from "./infrastructure/http.js";
+import type { RuntimeConfig } from "./config/runtime-config.js";
+import { SkillValidationError, type SkillService } from "./skills/skill-service.js";
+import type { ArtifactService } from "./preview/artifact-service.js";
 import {
   PreviewNotDetectedError,
   PreviewStartError,
   type PreviewService,
-} from "./preview-service.js";
+} from "./preview/preview-service.js";
 
 export interface CreateAppOptions {
   config: RuntimeConfig;

@@ -34,7 +34,7 @@ import type {
   TaskRevisionRow,
   TaskRow,
   TaskRunRow,
-} from "../schema.js";
+} from "../database/schema.js";
 import type { TaskRevisionSpecSnapshot } from "./repository-types.js";
 
 const maxRetryContextEvents = 16;
@@ -121,12 +121,6 @@ export const buildRunInputHash = (input: {
   specHash: string;
   skillSnapshot: RunSkillSnapshot[];
 }): string => hash(JSON.stringify(input));
-
-export const truncateRetryContextText = (value: string, maximum: number): string => {
-  const normalized = value.trim();
-  if (normalized.length <= maximum) return normalized;
-  return `${normalized.slice(0, Math.max(0, maximum - 24))}\n[已截断历史输出]`;
-};
 
 export const parseRetryContext = (value: unknown): TaskRevisionSpecSnapshot["retryContext"] => {
   if (value === undefined || value === null) return null;

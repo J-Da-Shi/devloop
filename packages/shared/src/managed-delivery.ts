@@ -4,13 +4,9 @@ export const taskExecutionModes = ["MANAGED", "STANDARD"] as const;
 export const taskExecutionModeSchema = z.enum(taskExecutionModes);
 export type TaskExecutionMode = z.infer<typeof taskExecutionModeSchema>;
 
-export const budgetConfidenceLevels = ["LOW", "MEDIUM", "HIGH"] as const;
-export const budgetConfidenceSchema = z.enum(budgetConfidenceLevels);
-export type BudgetConfidence = z.infer<typeof budgetConfidenceSchema>;
+export type BudgetConfidence = "LOW" | "MEDIUM" | "HIGH";
 
-export const budgetMeasurementSources = ["ELAPSED_TIME_ESTIMATE", "PROVIDER_REPORTED"] as const;
-export const budgetMeasurementSourceSchema = z.enum(budgetMeasurementSources);
-export type BudgetMeasurementSource = z.infer<typeof budgetMeasurementSourceSchema>;
+export type BudgetMeasurementSource = "ELAPSED_TIME_ESTIMATE" | "PROVIDER_REPORTED";
 
 export interface TaskBudgetEstimate {
   currency: "CNY";
@@ -50,15 +46,3 @@ export interface ManagedDeliverySettings {
   version: number;
   updatedAt: string;
 }
-
-export const defaultManagedDeliverySettings = {
-  maxTaskBudgetCents: 10_000,
-  warningPercent: 80,
-  budgetOverrunPercent: 25,
-  autoRetryLimit: 2,
-  runnerHourlyRatesCents: {
-    codex: 2_000,
-    "claude-code": 2_000,
-    fake: 0,
-  },
-} as const;

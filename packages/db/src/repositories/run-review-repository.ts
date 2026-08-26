@@ -13,7 +13,7 @@ import {
   taskRevisions,
   taskRuns,
   tasks,
-} from "../schema.js";
+} from "../database/schema.js";
 import { hash, mapTask, now } from "./repository-codecs.js";
 import { RunCompletionRepository } from "./run-completion-repository.js";
 import type {
