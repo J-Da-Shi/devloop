@@ -24,9 +24,9 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
-    "@vitejs/plugin-react": "6.1.0",
-    "sass": "1.103.1",
+    "@vitejs/plugin-react": "6.1.1",
+    "sass": "1.104.1",
     "tailwindcss": "4.3.3",
-    "vite": "8.2.2"
+    "vite": "8.3.0"
   }
 }
