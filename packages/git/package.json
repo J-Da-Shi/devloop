@@ -17,6 +17,6 @@
   },
   "dependencies": {
     "@devloop/shared": "workspace:*",
-    "execa": "10.0.1"
+    "execa": "10.1.0"
   }
 }
