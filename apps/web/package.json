@@ -11,16 +11,16 @@
   },
   "dependencies": {
     "@devloop/shared": "workspace:*",
-    "@hookform/resolvers": "5.7.1",
-    "@tanstack/react-query": "5.101.4",
-    "@tanstack/react-router": "1.170.25",
-    "antd": "6.6.0",
-    "lucide-react": "1.31.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "react-hook-form": "7.85.0",
-    "zod": "4.4.3",
-    "zustand": "5.0.14"
+    "@hookform/resolvers": "7.0.6",
+    "@tanstack/react-query": "5.107.1",
+    "@tanstack/react-router": "1.170.46",
+    "antd": "6.7.0",
+    "lucide-react": "1.72.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-hook-form": "7.92.0",
+    "zod": "4.6.7",
+    "zustand": "5.1.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
